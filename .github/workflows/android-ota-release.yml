@@ -79,7 +79,15 @@ jobs:
           EOF
 
       - name: Build rustore-release APK
-        run: flutter build apk --flavor rustore --release
+        run: >
+          flutter build apk --flavor rustore --release
+          --dart-define=RODNYA_RUNTIME_PRESET=prod_custom_api
+          --dart-define=RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false
+          --dart-define=RODNYA_GOOGLE_WEB_CLIENT_ID=676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com
+          --dart-define=RODNYA_APP_STORE=rustore
+          --dart-define=RODNYA_ENABLE_RUSTORE_BILLING=false
+          --dart-define=RODNYA_ENABLE_RUSTORE_REVIEW=true
+          --dart-define=RODNYA_ENABLE_RUSTORE_UPDATES=true
 
       - name: Compute version + sha256
         id: meta

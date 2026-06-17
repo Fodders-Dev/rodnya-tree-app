@@ -182,6 +182,7 @@ class CallCoordinatorService extends ChangeNotifier
   bool get isReconnectingRoom => _isReconnectingRoom;
   bool get joinedOnAnotherDevice => _joinedOnAnotherDevice;
   bool get microphoneEnabled => _microphoneEnabled;
+
   /// True если попытка enable microphone в активном звонке отказала
   /// silently — `setMicrophoneEnabled(true)` либо вернул null
   /// publication, либо `isMicrophoneEnabled()` после await вернул
@@ -445,10 +446,12 @@ class CallCoordinatorService extends ChangeNotifier
   Future<CallInvite> startCall({
     required String chatId,
     required CallMediaMode mediaMode,
+    List<String>? participantIds,
   }) async {
     final invite = await _callService.startCall(
       chatId: chatId,
       mediaMode: mediaMode,
+      participantIds: participantIds,
     );
     await _applyCall(invite);
     return invite;
@@ -1067,7 +1070,8 @@ class CallCoordinatorService extends ChangeNotifier
       // CA1 FR3: дефолт маршрута на коннекте — ушной для аудио, динамик
       // для видео; применяется внутри attachRoom (даже без сохранённой
       // преференции).
-      await _audioRouteService.attachRoom(room, isVideo: call.mediaMode.isVideo);
+      await _audioRouteService.attachRoom(room,
+          isVideo: call.mediaMode.isVideo);
       await refreshInputDevices();
       await _applyCallPreferences(room, call);
     } catch (error) {
@@ -1654,8 +1658,7 @@ class CallCoordinatorService extends ChangeNotifier
   /// Не gate'ит call connect — denied BT permission означает только
   /// что BT гарнитуры не показываются в audio device picker. User
   /// останется на speaker/earpiece, не surfaceит fatal error.
-  static Future<void>
-      _requestBluetoothConnectPermissionIfNeeded() async {
+  static Future<void> _requestBluetoothConnectPermissionIfNeeded() async {
     if (kIsWeb) {
       return;
     }

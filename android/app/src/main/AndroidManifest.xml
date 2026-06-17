@@ -197,6 +197,29 @@
                 <data android:pathPrefix="/invite/"/>
             </intent-filter>
 
+            <!-- Legacy tree/person invite links are hash-routed:
+                 https://rodnya-tree.ru/#/invite?treeId=...&personId=...
+                 Android App Links do not match fragments, so the
+                 actual path seen by the OS is just "/". This narrow
+                 root filter lets installed APKs receive those links;
+                 Dart app_links then restores the fragment route and
+                 sends it through the existing /invite guard. The
+                 /invite path variant keeps older non-hash links
+                 app-openable too. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="rodnya-tree.ru"
+                    android:path="/"/>
+                <data
+                    android:scheme="https"
+                    android:host="rodnya-tree.ru"
+                    android:path="/invite"/>
+            </intent-filter>
+
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

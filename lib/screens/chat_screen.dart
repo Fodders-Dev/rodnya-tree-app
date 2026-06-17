@@ -594,7 +594,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _handleRecordingLongPressStart(LongPressStartDetails details) async {
+  Future<void> _handleRecordingLongPressStart(
+      LongPressStartDetails details) async {
     // FX1/C3a FR1: привязываем запись к пальцу, опущенному именно НА микрофон
     // (_micPointerId от локального Listener'а мик-кнопки), а не к любому
     // pointer-down в композере. Сам цикл move/release дальше ведёт
@@ -713,7 +714,10 @@ class _ChatScreenState extends State<ChatScreen> {
     await _callCoordinator.resync(chatId: chatId);
   }
 
-  Future<void> _startCall(CallMediaMode mediaMode) async {
+  Future<void> _startCall(
+    CallMediaMode mediaMode, {
+    List<String>? participantIds,
+  }) async {
     final chatId = _chatId;
     if (chatId == null || chatId.isEmpty) {
       return;
@@ -722,6 +726,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await _callCoordinator.startCall(
         chatId: chatId,
         mediaMode: mediaMode,
+        participantIds: participantIds,
       );
     } catch (error) {
       if (!mounted) {
@@ -729,6 +734,78 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       showAppSnackBar(context, error.toString(), isError: true);
     }
+  }
+
+  Future<void> _startCallFromHeader(CallMediaMode mediaMode) async {
+    if (!widget.isGroup) {
+      await _startCall(mediaMode);
+      return;
+    }
+
+    final candidates = _groupCallInviteCandidates();
+    if (candidates.isEmpty) {
+      showAppSnackBar(
+        context,
+        'В этом чате пока некого позвать на звонок.',
+        isError: true,
+      );
+      return;
+    }
+    if (candidates.length == 1) {
+      await _startCall(
+        mediaMode,
+        participantIds: <String>[candidates.single.userId],
+      );
+      return;
+    }
+
+    final selectedParticipantIds = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _GroupCallParticipantPicker(
+        mediaMode: mediaMode,
+        participants: candidates,
+      ),
+    );
+    if (!mounted ||
+        selectedParticipantIds == null ||
+        selectedParticipantIds.isEmpty) {
+      return;
+    }
+    await _startCall(
+      mediaMode,
+      participantIds: selectedParticipantIds,
+    );
+  }
+
+  List<ChatParticipantSummary> _groupCallInviteCandidates() {
+    final details = _chatDetails;
+    final currentUserId = _currentUserId?.trim();
+    if (details == null || currentUserId == null || currentUserId.isEmpty) {
+      return const <ChatParticipantSummary>[];
+    }
+    final participantsById = <String, ChatParticipantSummary>{
+      for (final participant in details.participants)
+        if (participant.userId.trim().isNotEmpty)
+          participant.userId.trim(): participant,
+    };
+
+    final ids = details.participantIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty && id != currentUserId)
+        .toSet()
+        .toList(growable: false);
+    return ids
+        .map(
+          (id) =>
+              participantsById[id] ??
+              ChatParticipantSummary(
+                userId: id,
+                displayName: _participantLabelForUserId(id),
+              ),
+        )
+        .toList(growable: false);
   }
 
   void _exitSelectionMode() {
@@ -3787,8 +3864,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // contain *new* ids that aren't in the set yet — those are the
         // ones the bubble enter animation should fire on.
         if (!_remoteHistoryHydrated && remoteMessages.isNotEmpty) {
-          _seenRemoteMessageIds
-              .addAll(remoteMessages.map((m) => m.id));
+          _seenRemoteMessageIds.addAll(remoteMessages.map((m) => m.id));
           _remoteHistoryHydrated = true;
         }
         _schedulePinnedSync(remoteMessages);
@@ -3922,96 +3998,96 @@ class _ChatScreenState extends State<ChatScreen> {
                 bottom: isPeerTyping ? 20 : 0,
               ),
               child: ListView.builder(
-              controller: _messagesScrollController,
-              reverse: true,
-              padding: EdgeInsets.fromLTRB(
-                0,
-                hasActiveSearch ? 52 : 8,
-                0,
-                8,
-              ),
-              // Pre-render ~1.4 screens of bubbles in each scroll
-              // direction (default is 250 px, which on a 1.5-meter
-              // chat with photo carousels looked like a fresh build
-              // every flick — the user reported jank when scrolling
-              // through long histories). 1500 dp is roughly 3 phone
-              // viewports of buffer; the trade-off is RAM, but
-              // bubbles already cap their text + share an image
-              // cache so the cost stays bounded.
-              cacheExtent: 1500,
-              itemCount: filteredRemoteMessages.length +
-                  filteredOptimisticMessages.length +
-                  serverOnlySearchResults.length +
-                  (hasUnreadDivider ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index < filteredOptimisticMessages.length) {
-                  final localMessage = filteredOptimisticMessages[index];
-                  return _buildOptimisticBubble(localMessage);
-                }
+                controller: _messagesScrollController,
+                reverse: true,
+                padding: EdgeInsets.fromLTRB(
+                  0,
+                  hasActiveSearch ? 52 : 8,
+                  0,
+                  8,
+                ),
+                // Pre-render ~1.4 screens of bubbles in each scroll
+                // direction (default is 250 px, which on a 1.5-meter
+                // chat with photo carousels looked like a fresh build
+                // every flick — the user reported jank when scrolling
+                // through long histories). 1500 dp is roughly 3 phone
+                // viewports of buffer; the trade-off is RAM, but
+                // bubbles already cap their text + share an image
+                // cache so the cost stays bounded.
+                cacheExtent: 1500,
+                itemCount: filteredRemoteMessages.length +
+                    filteredOptimisticMessages.length +
+                    serverOnlySearchResults.length +
+                    (hasUnreadDivider ? 1 : 0),
+                itemBuilder: (context, index) {
+                  if (index < filteredOptimisticMessages.length) {
+                    final localMessage = filteredOptimisticMessages[index];
+                    return _buildOptimisticBubble(localMessage);
+                  }
 
-                final remoteIndex = index - filteredOptimisticMessages.length;
-                if (hasUnreadDivider && remoteIndex >= 0) {
-                  var remoteCursor = 0;
-                  for (var msgIdx = 0;
-                      msgIdx < filteredRemoteMessages.length;
-                      msgIdx++) {
-                    final message = filteredRemoteMessages[msgIdx];
-                    if (message.id == unreadAnchorMessageId) {
+                  final remoteIndex = index - filteredOptimisticMessages.length;
+                  if (hasUnreadDivider && remoteIndex >= 0) {
+                    var remoteCursor = 0;
+                    for (var msgIdx = 0;
+                        msgIdx < filteredRemoteMessages.length;
+                        msgIdx++) {
+                      final message = filteredRemoteMessages[msgIdx];
+                      if (message.id == unreadAnchorMessageId) {
+                        if (remoteCursor == remoteIndex) {
+                          return _buildUnreadDivider();
+                        }
+                        remoteCursor++;
+                      }
+
                       if (remoteCursor == remoteIndex) {
-                        return _buildUnreadDivider();
+                        final isMe = message.senderId == _currentUserId;
+                        return _wrapBubbleWithDayHeader(
+                          bubble: _buildRemoteBubble(
+                            message,
+                            isMe,
+                            footerLabel: _messageFooterLabel(
+                              message,
+                              isMe: isMe,
+                              isLatestOwnDirectMessage:
+                                  message.id == latestOutgoingMessageId,
+                            ),
+                          ),
+                          messages: filteredRemoteMessages,
+                          messageIndex: msgIdx,
+                        );
                       }
                       remoteCursor++;
                     }
-
-                    if (remoteCursor == remoteIndex) {
-                      final isMe = message.senderId == _currentUserId;
-                      return _wrapBubbleWithDayHeader(
-                        bubble: _buildRemoteBubble(
-                          message,
-                          isMe,
-                          footerLabel: _messageFooterLabel(
-                            message,
-                            isMe: isMe,
-                            isLatestOwnDirectMessage:
-                                message.id == latestOutgoingMessageId,
-                          ),
-                        ),
-                        messages: filteredRemoteMessages,
-                        messageIndex: msgIdx,
-                      );
-                    }
-                    remoteCursor++;
                   }
-                }
 
-                final remoteItemCount =
-                    filteredRemoteMessages.length + (hasUnreadDivider ? 1 : 0);
-                if (remoteIndex >= remoteItemCount) {
-                  final resultIndex = remoteIndex - remoteItemCount;
-                  return _buildServerSearchResultTile(
-                    serverOnlySearchResults[resultIndex],
-                  );
-                }
+                  final remoteItemCount = filteredRemoteMessages.length +
+                      (hasUnreadDivider ? 1 : 0);
+                  if (remoteIndex >= remoteItemCount) {
+                    final resultIndex = remoteIndex - remoteItemCount;
+                    return _buildServerSearchResultTile(
+                      serverOnlySearchResults[resultIndex],
+                    );
+                  }
 
-                final messageIdx = remoteIndex - (hasUnreadDivider ? 1 : 0);
-                final remoteMessage = filteredRemoteMessages[messageIdx];
-                final isMe = remoteMessage.senderId == _currentUserId;
-                return _wrapBubbleWithDayHeader(
-                  bubble: _buildRemoteBubble(
-                    remoteMessage,
-                    isMe,
-                    footerLabel: _messageFooterLabel(
+                  final messageIdx = remoteIndex - (hasUnreadDivider ? 1 : 0);
+                  final remoteMessage = filteredRemoteMessages[messageIdx];
+                  final isMe = remoteMessage.senderId == _currentUserId;
+                  return _wrapBubbleWithDayHeader(
+                    bubble: _buildRemoteBubble(
                       remoteMessage,
-                      isMe: isMe,
-                      isLatestOwnDirectMessage:
-                          remoteMessage.id == latestOutgoingMessageId,
+                      isMe,
+                      footerLabel: _messageFooterLabel(
+                        remoteMessage,
+                        isMe: isMe,
+                        isLatestOwnDirectMessage:
+                            remoteMessage.id == latestOutgoingMessageId,
+                      ),
                     ),
-                  ),
-                  messages: filteredRemoteMessages,
-                  messageIndex: messageIdx,
-                );
-              },
-            ),
+                    messages: filteredRemoteMessages,
+                    messageIndex: messageIdx,
+                  );
+                },
+              ),
             ),
             if (hasActiveSearch)
               Positioned(
@@ -4952,68 +5028,70 @@ class _ChatScreenState extends State<ChatScreen> {
       animate: isFirstAppearance,
       isMe: isMe,
       child: SwipeToReply(
-      key: messageKey,
-      isMe: isMe,
-      // Selection mode uses long-press / tap on the bubble for
-      // multi-select — the swipe gesture would conflict, so disable
-      // it via a no-op callback while in selection mode.
-      onReply:
-          _isSelectionMode ? () {} : () => _selectReplyFromMessage(message),
-      child: GestureDetector(
-        onTap: _isSelectionMode
-            ? () => _toggleRemoteMessageSelection(message)
-            : null,
-        onLongPressStart: (details) {
-          // Same TG / iOS pattern: medium-impact haptic confirms the
-          // long-press fired before the action sheet opens. Without it
-          // users hold a beat too long because nothing tells them the
-          // gesture took. Mirrors what reaction-picker already does.
-          HapticFeedback.mediumImpact();
-          if (_isSelectionMode) {
-            _toggleRemoteMessageSelection(message);
-            return;
-          }
-          _openRemoteMessageActions(
-            message,
-            anchorPosition: details.globalPosition,
-          );
-        },
-        onSecondaryTapDown: (details) {
-          if (_isSelectionMode) {
-            _toggleRemoteMessageSelection(message);
-            return;
-          }
-          _openRemoteMessageActions(
-            message,
-            anchorPosition: details.globalPosition,
-          );
-        },
-        child: _ChatBubble(
-          isMe: isMe,
-          senderLabel: widget.isGroup && !isMe
-              ? _groupSenderLabel(message.senderName, message.senderId)
+        key: messageKey,
+        isMe: isMe,
+        // Selection mode uses long-press / tap on the bubble for
+        // multi-select — the swipe gesture would conflict, so disable
+        // it via a no-op callback while in selection mode.
+        onReply:
+            _isSelectionMode ? () {} : () => _selectReplyFromMessage(message),
+        child: GestureDetector(
+          onTap: _isSelectionMode
+              ? () => _toggleRemoteMessageSelection(message)
               : null,
-          text: message.text,
-          highlightQuery: _searchController.query,
-          timeLabel: DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp)),
-          isRead: isMe && _messageReadByAnyRecipient(message),
-          isDelivered: isMe && _messageDeliveredToAnyRecipient(message),
-          remoteAttachments: message.attachments,
-          replyTo: message.replyTo,
-          onReplyTap: message.replyTo == null
-              ? null
-              : () => unawaited(_focusMessageById(message.replyTo!.messageId)),
-          isPinned: _pinnedMessage?.messageId == message.id,
-          isHighlighted: _highlightedPinnedMessageId == message.id,
-          footerLabel: footerLabel,
-          reactionGroups: _reactionGroupsForMessage(message),
-          onReactionTap: (emoji) => _toggleReactionForMessage(message, emoji),
-          showSelectionMarker: _isSelectionMode,
-          isSelected: _selectionController.isRemoteSelected(message.id),
-          onOpenRemoteAttachment: (attachments, attachment) =>
-              _openRemoteAttachmentPreview(message, attachments, attachment),
+          onLongPressStart: (details) {
+            // Same TG / iOS pattern: medium-impact haptic confirms the
+            // long-press fired before the action sheet opens. Without it
+            // users hold a beat too long because nothing tells them the
+            // gesture took. Mirrors what reaction-picker already does.
+            HapticFeedback.mediumImpact();
+            if (_isSelectionMode) {
+              _toggleRemoteMessageSelection(message);
+              return;
+            }
+            _openRemoteMessageActions(
+              message,
+              anchorPosition: details.globalPosition,
+            );
+          },
+          onSecondaryTapDown: (details) {
+            if (_isSelectionMode) {
+              _toggleRemoteMessageSelection(message);
+              return;
+            }
+            _openRemoteMessageActions(
+              message,
+              anchorPosition: details.globalPosition,
+            );
+          },
+          child: _ChatBubble(
+            isMe: isMe,
+            senderLabel: widget.isGroup && !isMe
+                ? _groupSenderLabel(message.senderName, message.senderId)
+                : null,
+            text: message.text,
+            highlightQuery: _searchController.query,
+            timeLabel: DateFormat.Hm('ru')
+                .format(toLocalForDisplay(message.timestamp)),
+            isRead: isMe && _messageReadByAnyRecipient(message),
+            isDelivered: isMe && _messageDeliveredToAnyRecipient(message),
+            remoteAttachments: message.attachments,
+            replyTo: message.replyTo,
+            onReplyTap: message.replyTo == null
+                ? null
+                : () =>
+                    unawaited(_focusMessageById(message.replyTo!.messageId)),
+            isPinned: _pinnedMessage?.messageId == message.id,
+            isHighlighted: _highlightedPinnedMessageId == message.id,
+            footerLabel: footerLabel,
+            reactionGroups: _reactionGroupsForMessage(message),
+            onReactionTap: (emoji) => _toggleReactionForMessage(message, emoji),
+            showSelectionMarker: _isSelectionMode,
+            isSelected: _selectionController.isRemoteSelected(message.id),
+            onOpenRemoteAttachment: (attachments, attachment) =>
+                _openRemoteAttachmentPreview(message, attachments, attachment),
+          ),
         ),
-      ),
       ),
     );
   }
@@ -5098,8 +5176,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final diff = today.difference(messageDay).inDays;
     if (diff == 0) return 'Сегодня';
     if (diff == 1) return 'Вчера';
-    final pattern =
-        localTimestamp.year == now.year ? 'd MMMM' : 'd MMMM yyyy';
+    final pattern = localTimestamp.year == now.year ? 'd MMMM' : 'd MMMM yyyy';
     return DateFormat(pattern, 'ru').format(localTimestamp);
   }
 
@@ -5141,7 +5218,8 @@ class _ChatScreenState extends State<ChatScreen> {
   ) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final timeLabel = DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp));
+    final timeLabel =
+        DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp));
     final palette = _callSummaryPalette(scheme, callMetadata);
     final mediaIcon =
         callMetadata.isVideo ? Icons.videocam_rounded : Icons.call_rounded;
@@ -5389,7 +5467,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildOptimisticBubble(_OutgoingMessage message) {
-    final timeLabel = DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp));
+    final timeLabel =
+        DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp));
     final theme = Theme.of(context);
     final statusMeta = _statusMetaForOutgoingMessage(theme, message);
     final progressValue = message.progress?.value;
@@ -5418,137 +5497,137 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
         child: Align(
-        alignment: Alignment.centerRight,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            SwipeToReply(
-              key: bubbleKey,
-              isMe: true,
-              onReply: _isSelectionMode
-                  ? () {}
-                  : () => _selectReplyFromOutgoingMessage(message),
-              child: GestureDetector(
-                onTap: _isSelectionMode
-                    ? () => _toggleOutgoingMessageSelection(message)
-                    : null,
-                onLongPressStart: (details) {
-                  HapticFeedback.mediumImpact();
-                  if (_isSelectionMode) {
-                    _toggleOutgoingMessageSelection(message);
-                    return;
-                  }
-                  _openOutgoingMessageActions(
-                    message,
-                    anchorPosition: details.globalPosition,
-                  );
-                },
-                onSecondaryTapDown: (details) {
-                  if (_isSelectionMode) {
-                    _toggleOutgoingMessageSelection(message);
-                    return;
-                  }
-                  _openOutgoingMessageActions(
-                    message,
-                    anchorPosition: details.globalPosition,
-                  );
-                },
-                child: _ChatBubble(
-                  isMe: true,
-                  text: message.text,
-                  highlightQuery: _searchController.query,
-                  timeLabel: timeLabel,
-                  isRead: false,
-                  isDelivered: false,
-                  remoteAttachments: message.forwardedAttachments,
-                  localAttachments: message.attachments,
-                  replyTo: message.replyTo,
-                  onReplyTap: message.replyTo == null
-                      ? null
-                      : () => unawaited(
-                            _focusMessageById(message.replyTo!.messageId),
-                          ),
-                  isPinned: false,
-                  isHighlighted: false,
-                  reactionGroups: const <_ReactionGroup>[],
-                  showSelectionMarker: _isSelectionMode,
-                  isSelected:
-                      _selectionController.isOutgoingSelected(message.localId),
-                  onOpenLocalAttachment: (files, file) =>
-                      _openLocalAttachmentPreview(files, file),
-                  footerLabel:
-                      _autoDeleteSettings.option == ChatAutoDeleteOption.off
-                          ? null
-                          : 'Автоудаление: ${_autoDeleteSettings.option.label}',
+          alignment: Alignment.centerRight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              SwipeToReply(
+                key: bubbleKey,
+                isMe: true,
+                onReply: _isSelectionMode
+                    ? () {}
+                    : () => _selectReplyFromOutgoingMessage(message),
+                child: GestureDetector(
+                  onTap: _isSelectionMode
+                      ? () => _toggleOutgoingMessageSelection(message)
+                      : null,
+                  onLongPressStart: (details) {
+                    HapticFeedback.mediumImpact();
+                    if (_isSelectionMode) {
+                      _toggleOutgoingMessageSelection(message);
+                      return;
+                    }
+                    _openOutgoingMessageActions(
+                      message,
+                      anchorPosition: details.globalPosition,
+                    );
+                  },
+                  onSecondaryTapDown: (details) {
+                    if (_isSelectionMode) {
+                      _toggleOutgoingMessageSelection(message);
+                      return;
+                    }
+                    _openOutgoingMessageActions(
+                      message,
+                      anchorPosition: details.globalPosition,
+                    );
+                  },
+                  child: _ChatBubble(
+                    isMe: true,
+                    text: message.text,
+                    highlightQuery: _searchController.query,
+                    timeLabel: timeLabel,
+                    isRead: false,
+                    isDelivered: false,
+                    remoteAttachments: message.forwardedAttachments,
+                    localAttachments: message.attachments,
+                    replyTo: message.replyTo,
+                    onReplyTap: message.replyTo == null
+                        ? null
+                        : () => unawaited(
+                              _focusMessageById(message.replyTo!.messageId),
+                            ),
+                    isPinned: false,
+                    isHighlighted: false,
+                    reactionGroups: const <_ReactionGroup>[],
+                    showSelectionMarker: _isSelectionMode,
+                    isSelected: _selectionController
+                        .isOutgoingSelected(message.localId),
+                    onOpenLocalAttachment: (files, file) =>
+                        _openLocalAttachmentPreview(files, file),
+                    footerLabel: _autoDeleteSettings.option ==
+                            ChatAutoDeleteOption.off
+                        ? null
+                        : 'Автоудаление: ${_autoDeleteSettings.option.label}',
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Status icon cross-fades + scales when the message
-                // walks the ladder (pending → sent → failed). Keyed by
-                // icon code so AnimatedSwitcher actually swaps.
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, animation) => ScaleTransition(
-                    scale:
-                        Tween<double>(begin: 0.6, end: 1.0).animate(animation),
-                    child: FadeTransition(opacity: animation, child: child),
-                  ),
-                  child: Icon(
-                    statusMeta.icon,
-                    key: ValueKey<int>(statusMeta.icon.codePoint),
-                    size: 14,
-                    color: statusMeta.color,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // S4: failed-строка («Не отправлено» + «Повторить»)
-                // переполняла узкий баббл — лейбл сжимаем, кнопка
-                // остаётся целой тап-целью.
-                Flexible(
-                  child: AnimatedDefaultTextStyle(
+              const SizedBox(height: 2),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Status icon cross-fades + scales when the message
+                  // walks the ladder (pending → sent → failed). Keyed by
+                  // icon code so AnimatedSwitcher actually swaps.
+                  AnimatedSwitcher(
                     duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    style: theme.textTheme.bodySmall!.copyWith(
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => ScaleTransition(
+                      scale: Tween<double>(begin: 0.6, end: 1.0)
+                          .animate(animation),
+                      child: FadeTransition(opacity: animation, child: child),
+                    ),
+                    child: Icon(
+                      statusMeta.icon,
+                      key: ValueKey<int>(statusMeta.icon.codePoint),
+                      size: 14,
                       color: statusMeta.color,
-                      fontWeight:
-                          message.status == _OutgoingMessageStatus.failed
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                    ),
-                    child: Text(
-                      statusMeta.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                ),
-                if (message.status == _OutgoingMessageStatus.failed) ...[
-                  const SizedBox(width: 6),
-                  TextButton(
-                    onPressed: () => unawaited(
-                      _sendQueue.retry(message.chatId, message.localId),
+                  const SizedBox(width: 4),
+                  // S4: failed-строка («Не отправлено» + «Повторить»)
+                  // переполняла узкий баббл — лейбл сжимаем, кнопка
+                  // остаётся целой тап-целью.
+                  Flexible(
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      style: theme.textTheme.bodySmall!.copyWith(
+                        color: statusMeta.color,
+                        fontWeight:
+                            message.status == _OutgoingMessageStatus.failed
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                      ),
+                      child: Text(
+                        statusMeta.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                    child: const Text('Повторить'),
                   ),
+                  if (message.status == _OutgoingMessageStatus.failed) ...[
+                    const SizedBox(width: 6),
+                    TextButton(
+                      onPressed: () => unawaited(
+                        _sendQueue.retry(message.chatId, message.localId),
+                      ),
+                      child: const Text('Повторить'),
+                    ),
+                  ],
                 ],
-              ],
-            ),
-            if (showProgressBar) ...[
-              const SizedBox(height: 4),
-              SizedBox(
-                width: 140,
-                child: LinearProgressIndicator(value: progressValue),
               ),
+              if (showProgressBar) ...[
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: 140,
+                  child: LinearProgressIndicator(value: progressValue),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
-      ),
       ),
     );
   }
@@ -6134,131 +6213,131 @@ class _ChatScreenState extends State<ChatScreen> {
       selection = await showBlurredActionsSheet<_MessageSheetSelection>(
         context: context,
         builder: (context) => SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Быстрые реакции',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Быстрые реакции',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _quickReactionEmoji
-                        .map(
-                          (emoji) => ChoiceChip(
-                            label: Text(emoji),
-                            selected: _hasCurrentUserReaction(message, emoji),
-                            onSelected: (_) => Navigator.of(context).pop(
-                              _MessageSheetSelection(
-                                action: _MessageAction.react,
-                                emoji: emoji,
-                              ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _quickReactionEmoji
+                      .map(
+                        (emoji) => ChoiceChip(
+                          label: Text(emoji),
+                          selected: _hasCurrentUserReaction(message, emoji),
+                          onSelected: (_) => Navigator.of(context).pop(
+                            _MessageSheetSelection(
+                              action: _MessageAction.react,
+                              emoji: emoji,
                             ),
                           ),
-                        )
-                        .toList(),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.reply_rounded),
+                title: const Text('Ответить'),
+                onTap: () => Navigator.of(context).pop(
+                  const _MessageSheetSelection(
+                    action: _MessageAction.reply,
                   ),
                 ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.forward_rounded),
+                title: const Text('Переслать'),
+                onTap: () => Navigator.of(context).pop(
+                  const _MessageSheetSelection(
+                    action: _MessageAction.forward,
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.checklist_rounded),
+                title: const Text('Выбрать'),
+                onTap: () => Navigator.of(context).pop(
+                  const _MessageSheetSelection(
+                    action: _MessageAction.select,
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                ),
+                title: Text(isPinned ? 'Открепить' : 'Закрепить'),
+                onTap: () => Navigator.of(context).pop(
+                  const _MessageSheetSelection(action: _MessageAction.pin),
+                ),
+              ),
+              if (isOwnMessage)
                 ListTile(
-                  leading: const Icon(Icons.reply_rounded),
-                  title: const Text('Ответить'),
+                  leading: const Icon(Icons.edit_outlined),
+                  title: const Text('Редактировать'),
                   onTap: () => Navigator.of(context).pop(
                     const _MessageSheetSelection(
-                      action: _MessageAction.reply,
+                      action: _MessageAction.edit,
                     ),
                   ),
                 ),
+              if (canCopy)
                 ListTile(
-                  leading: const Icon(Icons.forward_rounded),
-                  title: const Text('Переслать'),
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('Копировать текст'),
                   onTap: () => Navigator.of(context).pop(
                     const _MessageSheetSelection(
-                      action: _MessageAction.forward,
+                      action: _MessageAction.copy,
                     ),
                   ),
                 ),
+              if (canReport)
                 ListTile(
-                  leading: const Icon(Icons.checklist_rounded),
-                  title: const Text('Выбрать'),
+                  leading: const Icon(Icons.flag_outlined),
+                  title: const Text('Пожаловаться'),
                   onTap: () => Navigator.of(context).pop(
                     const _MessageSheetSelection(
-                      action: _MessageAction.select,
+                      action: _MessageAction.report,
                     ),
                   ),
                 ),
+              if (canBlock)
                 ListTile(
-                  leading: Icon(
-                    isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                  ),
-                  title: Text(isPinned ? 'Открепить' : 'Закрепить'),
+                  leading: const Icon(Icons.block_outlined),
+                  title: const Text('Заблокировать'),
                   onTap: () => Navigator.of(context).pop(
-                    const _MessageSheetSelection(action: _MessageAction.pin),
+                    const _MessageSheetSelection(
+                      action: _MessageAction.block,
+                    ),
                   ),
                 ),
-                if (isOwnMessage)
-                  ListTile(
-                    leading: const Icon(Icons.edit_outlined),
-                    title: const Text('Редактировать'),
-                    onTap: () => Navigator.of(context).pop(
-                      const _MessageSheetSelection(
-                        action: _MessageAction.edit,
-                      ),
+              if (isOwnMessage)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded),
+                  title: const Text('Удалить сообщение'),
+                  onTap: () => Navigator.of(context).pop(
+                    const _MessageSheetSelection(
+                      action: _MessageAction.delete,
                     ),
                   ),
-                if (canCopy)
-                  ListTile(
-                    leading: const Icon(Icons.copy_rounded),
-                    title: const Text('Копировать текст'),
-                    onTap: () => Navigator.of(context).pop(
-                      const _MessageSheetSelection(
-                        action: _MessageAction.copy,
-                      ),
-                    ),
-                  ),
-                if (canReport)
-                  ListTile(
-                    leading: const Icon(Icons.flag_outlined),
-                    title: const Text('Пожаловаться'),
-                    onTap: () => Navigator.of(context).pop(
-                      const _MessageSheetSelection(
-                        action: _MessageAction.report,
-                      ),
-                    ),
-                  ),
-                if (canBlock)
-                  ListTile(
-                    leading: const Icon(Icons.block_outlined),
-                    title: const Text('Заблокировать'),
-                    onTap: () => Navigator.of(context).pop(
-                      const _MessageSheetSelection(
-                        action: _MessageAction.block,
-                      ),
-                    ),
-                  ),
-                if (isOwnMessage)
-                  ListTile(
-                    leading: const Icon(Icons.delete_outline_rounded),
-                    title: const Text('Удалить сообщение'),
-                    onTap: () => Navigator.of(context).pop(
-                      const _MessageSheetSelection(
-                        action: _MessageAction.delete,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+                ),
+            ],
           ),
+        ),
       );
     }
     if (!mounted || selection == null) {
@@ -6361,45 +6440,45 @@ class _ChatScreenState extends State<ChatScreen> {
       action = await showBlurredActionsSheet<_MessageAction>(
         context: context,
         builder: (context) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.reply_rounded),
+              title: const Text('Ответить'),
+              onTap: () => Navigator.of(context).pop(_MessageAction.reply),
+            ),
+            ListTile(
+              leading: const Icon(Icons.forward_rounded),
+              title: const Text('Переслать'),
+              onTap: () => Navigator.of(context).pop(_MessageAction.forward),
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_rounded),
+              title: const Text('Выбрать'),
+              onTap: () => Navigator.of(context).pop(_MessageAction.select),
+            ),
+            if (canCopy)
               ListTile(
-                leading: const Icon(Icons.reply_rounded),
-                title: const Text('Ответить'),
-                onTap: () => Navigator.of(context).pop(_MessageAction.reply),
+                leading: const Icon(Icons.copy_rounded),
+                title: const Text('Копировать текст'),
+                onTap: () => Navigator.of(context).pop(_MessageAction.copy),
               ),
+            if (message.status == _OutgoingMessageStatus.failed)
               ListTile(
-                leading: const Icon(Icons.forward_rounded),
-                title: const Text('Переслать'),
-                onTap: () => Navigator.of(context).pop(_MessageAction.forward),
+                leading: const Icon(Icons.refresh_rounded),
+                title: const Text('Повторить отправку'),
+                onTap: () => Navigator.of(context).pop(_MessageAction.retry),
               ),
+            if (message.status != _OutgoingMessageStatus.sent)
               ListTile(
-                leading: const Icon(Icons.checklist_rounded),
-                title: const Text('Выбрать'),
-                onTap: () => Navigator.of(context).pop(_MessageAction.select),
+                leading: const Icon(Icons.delete_outline_rounded),
+                title: const Text('Убрать из очереди'),
+                onTap: () => Navigator.of(context).pop(_MessageAction.delete),
               ),
-              if (canCopy)
-                ListTile(
-                  leading: const Icon(Icons.copy_rounded),
-                  title: const Text('Копировать текст'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.copy),
-                ),
-              if (message.status == _OutgoingMessageStatus.failed)
-                ListTile(
-                  leading: const Icon(Icons.refresh_rounded),
-                  title: const Text('Повторить отправку'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.retry),
-                ),
-              if (message.status != _OutgoingMessageStatus.sent)
-                ListTile(
-                  leading: const Icon(Icons.delete_outline_rounded),
-                  title: const Text('Убрать из очереди'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.delete),
-                ),
-              const SizedBox(height: 8),
-            ],
-          ),
+            const SizedBox(height: 8),
+          ],
+        ),
       );
     }
     if (!mounted || action == null) {
@@ -8469,8 +8548,8 @@ class _ChatBubble extends StatelessWidget {
         a.type != ChatAttachmentType.image &&
         a.type != ChatAttachmentType.video);
     if (hasNonMediaRemote) return false;
-    final hasAnyMedia = remoteAttachments.isNotEmpty ||
-        localAttachments.isNotEmpty;
+    final hasAnyMedia =
+        remoteAttachments.isNotEmpty || localAttachments.isNotEmpty;
     return hasAnyMedia;
   }
 
@@ -8579,9 +8658,8 @@ class _ChatBubble extends StatelessWidget {
                         height: 24,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: isSelected
-                              ? scheme.primary
-                              : Colors.transparent,
+                          color:
+                              isSelected ? scheme.primary : Colors.transparent,
                           border: Border.all(
                             color: isSelected
                                 ? scheme.primary
@@ -8632,17 +8710,17 @@ class _ChatBubble extends StatelessWidget {
                   decoration: (_isVideoNoteOnly || _isNakedMediaOnly)
                       ? null
                       : BoxDecoration(
-                    color: outgoingGradient == null ? bubbleColor : null,
-                    gradient: outgoingGradient,
-                    border: highlightBorder,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(18),
-                      topRight: const Radius.circular(18),
-                      bottomLeft: Radius.circular(isMe ? 18 : 6),
-                      bottomRight: Radius.circular(isMe ? 6 : 18),
-                    ),
-                    boxShadow: bubbleShadow,
-                  ),
+                          color: outgoingGradient == null ? bubbleColor : null,
+                          gradient: outgoingGradient,
+                          border: highlightBorder,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(18),
+                            topRight: const Radius.circular(18),
+                            bottomLeft: Radius.circular(isMe ? 18 : 6),
+                            bottomRight: Radius.circular(isMe ? 6 : 18),
+                          ),
+                          boxShadow: bubbleShadow,
+                        ),
                   child: Column(
                     crossAxisAlignment: isMe
                         ? CrossAxisAlignment.end
@@ -8739,54 +8817,54 @@ class _ChatBubble extends StatelessWidget {
                       // visible on tap via the lightbox / message
                       // detail sheet.
                       if (!_isNakedMediaOnly && !_isVideoNoteOnly) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              timeLabel,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: metaColor,
+                                // M3 (50+): labelSmall (11) мелковат для
+                                // времени — 12.5 читаемо, баббл не распухает.
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            if (isMe) ...[
+                              const SizedBox(width: 4),
+                              // Telegram-style read receipts:
+                              //   sent only       → single tick
+                              //   delivered       → double tick (faded)
+                              //   read by anyone  → double tick in a calm
+                              //                     blue (cuts through the
+                              //                     accent-green bubble bg)
+                              //
+                              // AnimatedSwitcher cross-fades + scales the
+                              // icon as the state ladder advances, and
+                              // AnimatedDefaultTextStyle isn't quite the
+                              // right tool for icon-color so we read
+                              // status into a key that the switcher uses
+                              // to decide when to swap.
+                              _ReadReceiptTick(
+                                isRead: isRead,
+                                isDelivered: isDelivered,
+                                readColor: const Color(0xFF6FC4FF),
+                                dimColor:
+                                    scheme.onPrimary.withValues(alpha: 0.72),
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (footerLabel != null && footerLabel!.isNotEmpty) ...[
+                          const SizedBox(height: 2),
                           Text(
-                            timeLabel,
+                            footerLabel!,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: metaColor,
-                              // M3 (50+): labelSmall (11) мелковат для
-                              // времени — 12.5 читаемо, баббл не распухает.
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                          if (isMe) ...[
-                            const SizedBox(width: 4),
-                            // Telegram-style read receipts:
-                            //   sent only       → single tick
-                            //   delivered       → double tick (faded)
-                            //   read by anyone  → double tick in a calm
-                            //                     blue (cuts through the
-                            //                     accent-green bubble bg)
-                            //
-                            // AnimatedSwitcher cross-fades + scales the
-                            // icon as the state ladder advances, and
-                            // AnimatedDefaultTextStyle isn't quite the
-                            // right tool for icon-color so we read
-                            // status into a key that the switcher uses
-                            // to decide when to swap.
-                            _ReadReceiptTick(
-                              isRead: isRead,
-                              isDelivered: isDelivered,
-                              readColor: const Color(0xFF6FC4FF),
-                              dimColor: scheme.onPrimary
-                                  .withValues(alpha: 0.72),
-                            ),
-                          ],
                         ],
-                      ),
-                      if (footerLabel != null && footerLabel!.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          footerLabel!,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: metaColor,
-                          ),
-                        ),
-                      ],
                       ],
                     ],
                   ),
@@ -9138,6 +9216,214 @@ String _displayName(String? value) {
   return normalized.length > 24
       ? '${normalized.substring(0, 21)}...'
       : normalized;
+}
+
+class _GroupCallParticipantPicker extends StatefulWidget {
+  const _GroupCallParticipantPicker({
+    required this.mediaMode,
+    required this.participants,
+  });
+
+  final CallMediaMode mediaMode;
+  final List<ChatParticipantSummary> participants;
+
+  @override
+  State<_GroupCallParticipantPicker> createState() =>
+      _GroupCallParticipantPickerState();
+}
+
+class _GroupCallParticipantPickerState
+    extends State<_GroupCallParticipantPicker> {
+  final Set<String> _selectedIds = <String>{};
+
+  bool get _isVideo => widget.mediaMode.isVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final size = MediaQuery.sizeOf(context);
+    final selectedCount = _selectedIds.length;
+    final canStart = selectedCount > 0;
+    final actionLabel = selectedCount == 1
+        ? 'Позвонить 1 участнику'
+        : 'Позвонить выбранным ($selectedCount)';
+
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: size.height * 0.86),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            18,
+            8,
+            18,
+            18 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: scheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _isVideo ? Icons.videocam_outlined : Icons.call_outlined,
+                      color: scheme.onPrimaryContainer,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Кого позвать?',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _isVideo
+                              ? 'Видеозвонок пойдёт только выбранным.'
+                              : 'Аудиозвонок пойдёт только выбранным.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Закрыть',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _selectedIds
+                          ..clear()
+                          ..addAll(widget.participants.map((p) => p.userId));
+                      });
+                    },
+                    icon: const Icon(Icons.done_all_rounded, size: 18),
+                    label: const Text('Все'),
+                  ),
+                  const SizedBox(width: 6),
+                  TextButton(
+                    onPressed: _selectedIds.isEmpty
+                        ? null
+                        : () => setState(_selectedIds.clear),
+                    child: const Text('Сбросить'),
+                  ),
+                  const Spacer(),
+                  Text(
+                    selectedCount == 0
+                        ? 'Никто не выбран'
+                        : 'Выбрано: $selectedCount',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: widget.participants.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 4),
+                  itemBuilder: (context, index) {
+                    final participant = widget.participants[index];
+                    final selected = _selectedIds.contains(participant.userId);
+                    final avatarImage =
+                        buildAvatarImageProvider(participant.photoUrl);
+                    final initial = participant.displayName.trim().isNotEmpty
+                        ? participant.displayName.trim()[0].toUpperCase()
+                        : '?';
+                    return CheckboxListTile(
+                      value: selected,
+                      onChanged: (_) => setState(() {
+                        if (selected) {
+                          _selectedIds.remove(participant.userId);
+                        } else {
+                          _selectedIds.add(participant.userId);
+                        }
+                      }),
+                      controlAffinity: ListTileControlAffinity.trailing,
+                      secondary: CircleAvatar(
+                        backgroundImage: avatarImage,
+                        child: avatarImage == null ? Text(initial) : null,
+                      ),
+                      title: Text(
+                        participant.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      subtitle: Text(
+                        participant.isOnline ? 'в сети' : 'участник чата',
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Отмена'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton.icon(
+                      onPressed: canStart
+                          ? () => Navigator.of(context).pop(
+                                _selectedIds.toList(growable: false),
+                              )
+                          : null,
+                      icon: Icon(
+                        _isVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                      ),
+                      label: Text(actionLabel),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _CallSummaryPalette {

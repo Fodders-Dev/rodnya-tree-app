@@ -3,11 +3,10 @@ import 'package:rodnya/backend/backend_runtime_config.dart';
 import 'package:rodnya/services/invitation_link_service.dart';
 
 void main() {
-  // Web routing is hash-based — `rodnya-tree.ru/#/tree/view/...` is
-  // what the running app shows in its address bar. Invite links MUST
-  // put `/invite?...` in the URL fragment so hash strategy actually
-  // routes the recipient to the invitation handler. A path-segment
-  // link (`/invite?...`) gets swallowed by SPA fallback to `/`.
+  // Web routing is hash-based — `web/index.html` rewrites this canonical
+  // `/invite?...` URL to `/#/invite?...` before Flutter boots. Keeping the
+  // public link path-based lets Android App Links match installed APKs
+  // directly instead of depending only on the legacy root/hash filter.
   test('HttpInvitationLinkService builds invite URL on root domain', () {
     final service = HttpInvitationLinkService(
       runtimeConfig: const BackendRuntimeConfig(
@@ -22,7 +21,7 @@ void main() {
 
     expect(
       inviteUri.toString(),
-      'https://family.example.ru/#/invite?treeId=tree-1&personId=person-2',
+      'https://family.example.ru/invite?treeId=tree-1&personId=person-2',
     );
   });
 
@@ -40,7 +39,7 @@ void main() {
 
     expect(
       inviteUri.toString(),
-      'https://family.example.ru/app/#/invite?treeId=tree-1&personId=person-2',
+      'https://family.example.ru/app/invite?treeId=tree-1&personId=person-2',
     );
   });
 }

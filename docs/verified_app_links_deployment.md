@@ -1,11 +1,11 @@
 # Verified App Links — deployment guide
 
-The Android app already declares an `<intent-filter android:autoVerify="true">`
-for `https://rodnya-tree.ru/oauth/*`, AND `_mobileOauthCallback` is now
-the https URL. The only missing piece for the OS to grant us exclusive
-ownership of those paths (so no other app can intercept the OAuth
-callback) is publishing the matching `assetlinks.json` on the marketing
-site so Android's autoVerify pass succeeds.
+The Android app declares `<intent-filter android:autoVerify="true">`
+entries for `https://rodnya-tree.ru/oauth/*`, invite links, and the
+legacy hash-routed root invite (`https://rodnya-tree.ru/#/invite?...`).
+`_mobileOauthCallback` is now the https URL. The missing deployment piece
+for Android to grant exclusive ownership is publishing the matching
+`assetlinks.json` on the marketing site so autoVerify succeeds.
 
 > **Front-end note**: production currently uses nginx, not Caddy.
 > The active site config is in
@@ -36,6 +36,12 @@ links from email/SMS that happen to match `rodnya-tree.ru/oauth/...`
 — the OS routes those to the app instead of the browser regardless of
 verification status — but full autoVerify is what closes the OAuth
 deep-link spoofing hole during the auth handshake itself.
+
+The invite filters also let installed Android builds open existing
+browser-style invite links directly in the app. Android cannot match URL
+fragments, so the manifest receives the root path `/`; Flutter's
+`AppLinksDynamicLinkService` then restores the `#/invite?...` fragment
+into the normal `/invite?...` GoRouter route.
 
 ---
 
@@ -149,3 +155,15 @@ another app (Chrome / Firefox / something else) also handles `https://`.
 If the chooser DOES appear, verification has not happened yet. Re-run
 `pm verify-app-links --re-verify` and check the JSON file's
 `Content-Type` header.
+
+Invite-link cold-launch test:
+
+```
+adb shell am start -W -a android.intent.action.VIEW \
+  -d "https://rodnya-tree.ru/#/invite?treeId=c1575d9c-db1f-42f9-8d98-0490448e7385&personId=0d0768cf-e8cd-46fa-9e58-7a651e201085" \
+  com.ahjkuio.rodnya_family_app
+```
+
+Expected: Родня opens and routes to the invite acceptance flow. Without
+the APK that contains the root invite filter, Android will keep opening
+this legacy link in the browser.

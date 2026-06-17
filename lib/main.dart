@@ -14,6 +14,7 @@ import 'package:provider/provider.dart';
 import 'providers/theme_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'navigation/app_router.dart';
+import 'navigation/deep_link_handler.dart';
 import 'services/local_storage_service.dart';
 import 'utils/client_instance_id.dart';
 import 'package:get_it/get_it.dart';
@@ -23,6 +24,7 @@ import 'package:flutter/scheduler.dart'; // Для postFrameCallback
 import 'package:shared_preferences/shared_preferences.dart';
 import 'backend/interfaces/app_startup_service_interface.dart';
 import 'backend/interfaces/auth_service_interface.dart';
+import 'backend/interfaces/dynamic_link_service_interface.dart';
 import 'backend/interfaces/story_service_interface.dart';
 import 'backend/backend_runtime_config.dart';
 import 'services/app_startup_service.dart';
@@ -187,6 +189,7 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   late final AppRouter _appRouter;
+  DeepLinkHandler? _deepLinkHandler;
   VoidCallback? _routerE2EListener;
   StreamSubscription<InvitationProcessOutcome>? _invitationOutcomesSub;
 
@@ -202,6 +205,13 @@ class _MyAppState extends State<MyApp> {
       unawaited(
         GetIt.I<AppWarmupCoordinator>().start(scaffoldMessengerKey),
       );
+    });
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !GetIt.I.isRegistered<DynamicLinkServiceInterface>()) {
+        return;
+      }
+      _deepLinkHandler = DeepLinkHandler(router: _appRouter.router);
+      unawaited(_deepLinkHandler!.initDynamicLinks());
     });
 
     // Subscribe to invitation outcomes ASAP so we don't miss the
@@ -220,6 +230,8 @@ class _MyAppState extends State<MyApp> {
     }
     unawaited(_invitationOutcomesSub?.cancel());
     _invitationOutcomesSub = null;
+    _deepLinkHandler?.dispose();
+    _deepLinkHandler = null;
     super.dispose();
   }
 
@@ -233,8 +245,7 @@ class _MyAppState extends State<MyApp> {
       return;
     }
     final service = GetIt.I<InvitationService>();
-    _invitationOutcomesSub =
-        service.outcomes.listen(_handleInvitationOutcome);
+    _invitationOutcomesSub = service.outcomes.listen(_handleInvitationOutcome);
   }
 
   Future<void> _handleInvitationOutcome(

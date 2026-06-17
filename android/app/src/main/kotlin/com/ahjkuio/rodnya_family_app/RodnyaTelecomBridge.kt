@@ -1,5 +1,6 @@
 package com.ahjkuio.rodnya_family_app
 
+import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -58,7 +59,7 @@ object RodnyaTelecomBridge {
                 }
                 "dismissCall" -> {
                     val callId = call.argument<String>("callId") ?: ""
-                    result.success(dismissCall(callId))
+                    result.success(dismissCall(activity, callId))
                 }
                 "consumePendingAction" -> {
                     result.success(consumePendingAction(activity))
@@ -95,6 +96,7 @@ object RodnyaTelecomBridge {
             .putString(PREF_CALL_ID, normalizedCallId)
             .putString(PREF_CHAT_ID, chatId?.trim().orEmpty())
             .apply()
+        cancelIncomingCallNotification(context, normalizedCallId)
     }
 
     fun startMainActivityForAction(
@@ -188,11 +190,23 @@ object RodnyaTelecomBridge {
         }
     }
 
-    private fun dismissCall(callId: String): Boolean {
+    fun cancelIncomingCallNotification(context: Context, callId: String) {
+        val normalizedCallId = callId.trim()
+        if (normalizedCallId.isEmpty()) {
+            return
+        }
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return
+        notificationManager.cancel(normalizedCallId.hashCode() and 0x7fffffff)
+    }
+
+    private fun dismissCall(context: Context, callId: String): Boolean {
         val normalizedCallId = callId.trim()
         if (normalizedCallId.isEmpty()) {
             return false
         }
+        cancelIncomingCallNotification(context, normalizedCallId)
         return RodnyaCallRegistry.dismiss(normalizedCallId)
     }
 
@@ -239,6 +253,10 @@ class RodnyaConnectionService : ConnectionService() {
         val callId = incomingExtras.getString(EXTRA_CALL_ID)?.trim().orEmpty()
         if (callId.isNotEmpty()) {
             RodnyaCallRegistry.remove(callId)
+            RodnyaTelecomBridge.cancelIncomingCallNotification(
+                applicationContext,
+                callId
+            )
         }
         super.onCreateIncomingConnectionFailed(connectionManagerPhoneAccount, request)
     }
@@ -338,5 +356,6 @@ private class RodnyaCallConnection(
         setDisconnected(DisconnectCause(cause))
         destroy()
         RodnyaCallRegistry.remove(callId)
+        RodnyaTelecomBridge.cancelIncomingCallNotification(context, callId)
     }
 }

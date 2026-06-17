@@ -856,6 +856,7 @@ class _CountingCallService implements CallServiceInterface {
   Future<CallInvite> startCall({
     required String chatId,
     required CallMediaMode mediaMode,
+    List<String>? participantIds,
   }) async =>
       activeCall!;
 

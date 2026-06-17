@@ -676,6 +676,7 @@ class _FakeCallService implements CallServiceInterface {
   Future<CallInvite> startCall({
     required String chatId,
     required CallMediaMode mediaMode,
+    List<String>? participantIds,
   }) async =>
       _buildCall(
         state: CallState.ringing,

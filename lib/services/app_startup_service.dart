@@ -15,6 +15,7 @@ import '../backend/interfaces/app_startup_service_interface.dart';
 import '../backend/interfaces/call_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/circle_service_interface.dart';
+import '../backend/interfaces/dynamic_link_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
@@ -38,6 +39,7 @@ import '../startup/app_startup_pipeline.dart';
 import '../startup/app_warmup_coordinator.dart';
 import 'app_status_service.dart';
 import 'app_update_service.dart';
+import 'app_links_dynamic_link_service.dart';
 import 'android_incoming_call_service.dart';
 import 'audio_route_service.dart';
 import 'chat_message_cache.dart';
@@ -107,6 +109,9 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceSingleton<TreeMutationHistory>(TreeMutationHistory());
     _registerOrReplaceSingleton<InvitationLinkServiceInterface>(
       HttpInvitationLinkService(runtimeConfig: runtimeConfig),
+    );
+    _registerOrReplaceSingleton<DynamicLinkServiceInterface>(
+      AppLinksDynamicLinkService(),
     );
     final rustoreService = RustoreService();
     _registerOrReplaceSingleton<RustoreService>(rustoreService);

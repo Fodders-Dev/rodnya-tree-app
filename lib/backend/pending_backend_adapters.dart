@@ -754,6 +754,7 @@ class PendingBackendCallService implements CallServiceInterface {
   Future<CallInvite> startCall({
     required String chatId,
     required CallMediaMode mediaMode,
+    List<String>? participantIds,
   }) {
     throw UnsupportedError(_pendingProviderMessage('calls'));
   }

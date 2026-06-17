@@ -20,6 +20,7 @@ import 'package:rodnya/backend/interfaces/safety_service_interface.dart';
 import 'package:rodnya/models/call_event.dart';
 import 'package:rodnya/models/call_invite.dart';
 import 'package:rodnya/models/call_media_mode.dart';
+import 'package:rodnya/models/call_state.dart';
 import 'package:rodnya/models/chat_attachment.dart';
 import 'package:rodnya/models/chat_details.dart';
 import 'package:rodnya/models/chat_message.dart';
@@ -478,6 +479,9 @@ class _SentChatRequest {
 
 class _FakeCallService implements CallServiceInterface {
   CallInvite? activeCall;
+  String? startedChatId;
+  CallMediaMode? startedMediaMode;
+  List<String>? startedParticipantIds;
 
   @override
   String? get currentUserId => 'user-1';
@@ -528,8 +532,30 @@ class _FakeCallService implements CallServiceInterface {
   Future<CallInvite> startCall({
     required String chatId,
     required CallMediaMode mediaMode,
-  }) {
-    throw UnimplementedError();
+    List<String>? participantIds,
+  }) async {
+    startedChatId = chatId;
+    startedMediaMode = mediaMode;
+    startedParticipantIds = participantIds;
+    final now = DateTime(2026, 4, 20, 10);
+    final normalizedParticipants = <String>[
+      currentUserId!,
+      ...?participantIds,
+    ];
+    activeCall = CallInvite(
+      id: 'call-1',
+      chatId: chatId,
+      initiatorId: currentUserId!,
+      recipientId: participantIds == null || participantIds.isEmpty
+          ? 'user-2'
+          : participantIds.first,
+      participantIds: normalizedParticipants,
+      mediaMode: mediaMode,
+      state: CallState.cancelled,
+      createdAt: now,
+      updatedAt: now,
+    );
+    return activeCall!;
   }
 }
 
@@ -1089,6 +1115,60 @@ void main() {
 
     expect(find.byTooltip('Групповой аудиозвонок'), findsOneWidget);
     expect(find.byTooltip('Групповой видеозвонок'), findsOneWidget);
+  });
+
+  testWidgets('ChatScreen starts group call only for selected participants',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 1920);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final chatService = _FakeChatService();
+    final callService = getIt<CallServiceInterface>() as _FakeCallService;
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        const ChatScreen(
+          chatId: 'chat-group-1',
+          title: 'Семья Кузнецовых',
+          chatType: 'group',
+          initialChatDetails: ChatDetails(
+            chatId: 'chat-group-1',
+            type: 'group',
+            title: 'Семья Кузнецовых',
+            participantIds: ['user-1', 'user-2', 'user-3'],
+            participants: [
+              ChatParticipantSummary(userId: 'user-1', displayName: 'Артем'),
+              ChatParticipantSummary(userId: 'user-2', displayName: 'Андрей'),
+              ChatParticipantSummary(userId: 'user-3', displayName: 'Дарья'),
+            ],
+            branchRoots: [],
+            treeId: 'tree-1',
+          ),
+        ),
+      ),
+    );
+
+    chatService.emitMessages(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Групповой аудиозвонок'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Кого позвать?'), findsOneWidget);
+    expect(find.text('Андрей'), findsOneWidget);
+    expect(find.text('Дарья'), findsOneWidget);
+    expect(find.text('Никто не выбран'), findsOneWidget);
+
+    await tester.tap(find.text('Андрей'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Позвонить 1 участнику'));
+    await tester.pumpAndSettle();
+
+    expect(callService.startedChatId, 'chat-group-1');
+    expect(callService.startedMediaMode, CallMediaMode.audio);
+    expect(callService.startedParticipantIds, ['user-2']);
   });
 
   testWidgets('ChatScreen stores per-chat notification mode from info sheet',
@@ -2061,8 +2141,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets(
-      'C2: тап по кружку играет видео inline, не открывая просмотрщик',
+  testWidgets('C2: тап по кружку играет видео inline, не открывая просмотрщик',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));

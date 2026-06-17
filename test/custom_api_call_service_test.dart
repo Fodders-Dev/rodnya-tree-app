@@ -139,6 +139,46 @@ void main() {
     expect(requestBodies.last, isEmpty);
   });
 
+  test('CustomApiCallService sends selected group call participants', () async {
+    Map<String, dynamic>? requestBody;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/calls' && request.method == 'POST') {
+        requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'call': _callPayload(
+              state: 'ringing',
+              mediaMode: 'audio',
+            ),
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+    final authService = await _createAuthService(client);
+    final service = CustomApiCallService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await service.startCall(
+      chatId: 'chat-1',
+      mediaMode: CallMediaMode.audio,
+      participantIds: const [' user-2 ', '', 'user-3', 'user-2'],
+    );
+
+    expect(requestBody, {
+      'chatId': 'chat-1',
+      'mediaMode': 'audio',
+      'participantIds': ['user-2', 'user-3'],
+    });
+  });
+
   test('CustomApiCallService emits call events from realtime payloads',
       () async {
     final client = MockClient((request) async {

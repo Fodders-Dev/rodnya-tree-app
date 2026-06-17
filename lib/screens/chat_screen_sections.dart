@@ -73,8 +73,7 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
                 child: peerAvatarImage == null
                     ? widget.isGroup
                         ? const Icon(Icons.group_outlined)
-                        : Text(
-                            widget.title.isNotEmpty ? widget.title[0] : '?')
+                        : Text(widget.title.isNotEmpty ? widget.title[0] : '?')
                     : null,
               ),
               if (showOnlineDot)
@@ -146,9 +145,7 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
     }
     // Trim a trailing "…" or "..." so the animated dots take over the
     // ellipsis role and we don't end up with "печатает… ...".
-    final trimmed = raw
-        .replaceFirst(RegExp(r'\s*[…\.]+\s*$'), '')
-        .trimRight();
+    final trimmed = raw.replaceFirst(RegExp(r'\s*[…\.]+\s*$'), '').trimRight();
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -199,19 +196,18 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
     // standard density.
     final isWide = _isWideLayout(context);
     final infoEnabled = !_isLoadingChatDetails && _chatDetails != null;
-    final density =
-        isWide ? VisualDensity.standard : VisualDensity.compact;
+    final density = isWide ? VisualDensity.standard : VisualDensity.compact;
     return [
       if (_canStartCallInChat) ...[
         IconButton(
           visualDensity: density,
-          onPressed: () => _startCall(CallMediaMode.audio),
+          onPressed: () => unawaited(_startCallFromHeader(CallMediaMode.audio)),
           tooltip: widget.isGroup ? 'Групповой аудиозвонок' : 'Аудиозвонок',
           icon: const Icon(Icons.call_outlined),
         ),
         IconButton(
           visualDensity: density,
-          onPressed: () => _startCall(CallMediaMode.video),
+          onPressed: () => unawaited(_startCallFromHeader(CallMediaMode.video)),
           tooltip: widget.isGroup ? 'Групповой видеозвонок' : 'Видеозвонок',
           icon: const Icon(Icons.videocam_outlined),
         ),

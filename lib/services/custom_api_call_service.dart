@@ -109,13 +109,22 @@ class CustomApiCallService implements CallServiceInterface {
   Future<CallInvite> startCall({
     required String chatId,
     required CallMediaMode mediaMode,
+    List<String>? participantIds,
   }) async {
+    final normalizedParticipantIds = participantIds
+        ?.map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
     final response = await _requestJson(
       method: 'POST',
       path: '/v1/calls',
       body: {
         'chatId': chatId,
         'mediaMode': mediaMode.value,
+        if (normalizedParticipantIds != null &&
+            normalizedParticipantIds.isNotEmpty)
+          'participantIds': normalizedParticipantIds,
       },
     );
     return _parseCall(response);

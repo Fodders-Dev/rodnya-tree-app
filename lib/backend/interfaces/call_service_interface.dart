@@ -17,6 +17,7 @@ abstract class CallServiceInterface {
   Future<CallInvite> startCall({
     required String chatId,
     required CallMediaMode mediaMode,
+    List<String>? participantIds,
   });
 
   Future<CallInvite> acceptCall(String callId);
