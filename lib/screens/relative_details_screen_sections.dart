@@ -169,9 +169,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
 
     final person = _person!;
     final isDeceased = !person.isAlive || person.deathDate != null;
-    final fullName = dossier.displayName.isNotEmpty
-        ? dossier.displayName
-        : person.name;
+    final fullName =
+        dossier.displayName.isNotEmpty ? dossier.displayName : person.name;
     final loc = _composeRelativeLocation(dossier);
     final years = _composeYears(person);
 
@@ -254,7 +253,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               // the header (§3.2.1, revised from C1: these are the card's
               // skeleton, kept on view). Self-hides if nothing is filled.
               _buildBasicInfoSection(),
-              // «Биография» — read-first article (§3.1 order: шапка →
+              // «Семейные истории» — read-first article (§3.1 order: шапка →
               // Основная информация → биография → … → Семья). Empty-CTA
               // suppressed: the header's primary CTA already offers it.
               if (_person != null)
@@ -281,8 +280,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 ),
               if (_duplicateSuggestions.isNotEmpty)
                 Padding(
-                  padding:
-                      const EdgeInsets.fromLTRB(12, 18, 12, 0),
+                  padding: const EdgeInsets.fromLTRB(12, 18, 12, 0),
                   child: _buildDuplicateSuggestionBanner(),
                 ),
               // §3.1 read-first: «Семья» sits right under the biography
@@ -297,8 +295,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               // редактируемой карточке; исчезает при полной анкете).
               // Паддинг внутри builder'а — скрытая плашка стоит 0dp.
               _buildCompletenessNudge(dossier, galleryEntries),
-              if (_kinshipSectionHasContent())
-                _buildKinshipSection(),
+              if (_kinshipSectionHasContent()) _buildKinshipSection(),
               // «О человеке» (structured facts) moved to the «Основная
               // информация» ⋯-screen (§3.2.1) — keeps the main card
               // read-first.
@@ -321,8 +318,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                   child: _buildLinkedProfileSection(),
                 ),
               if (_graphTreeService != null &&
-                  (person.id != _currentUserPersonId ||
-                      _canEditOrDelete()))
+                  (person.id != _currentUserPersonId || _canEditOrDelete()))
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
                   child: _buildRelationToolsSection(),
@@ -462,10 +458,24 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
             ),
           ],
           const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const Key('profile-ask-story'),
+              onPressed: () => _askFamilyStory(
+                name: fullName,
+                relation: directRelationLabel,
+                gender: person.gender.name,
+              ),
+              icon: const Icon(Icons.question_answer_outlined, size: 18),
+              label: const Text('Спросить историю'),
+            ),
+          ),
+          if (canEditStory) const SizedBox(height: 8),
           if (canEditStory)
             SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
+              child: OutlinedButton.icon(
                 key: const Key('profile-add-story'),
                 onPressed: () => _openBiographyEditor(
                   name: fullName,
@@ -560,11 +570,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
   }
 
   String _avatarInitials(String name) {
-    final parts = name
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((p) => p.isNotEmpty)
-        .toList();
+    final parts =
+        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
     return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
@@ -623,6 +630,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     required String name,
     String? relation,
     String? gender,
+    FamilyStoryQuestion? initialQuestion,
   }) {
     final person = _person;
     if (person == null) return;
@@ -633,9 +641,101 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
           personName: name,
           personRelation: relation,
           personGender: gender,
+          initialStoryTitle: initialQuestion?.title,
+          initialStoryQuestion: initialQuestion?.question,
+          initialStoryHint: initialQuestion == null
+              ? null
+              : buildFamilyStoryEditorHint(initialQuestion),
         ),
       ),
     );
+  }
+
+  Future<void> _askFamilyStory({
+    required String name,
+    String? relation,
+    String? gender,
+  }) async {
+    final action = await showFamilyStoryQuestionsSheet(
+      context,
+      personName: name,
+      relation: relation,
+    );
+    if (action == null || !mounted) return;
+    switch (action.type) {
+      case FamilyStoryQuestionActionType.share:
+        await _shareFamilyStoryQuestion(
+          question: action.question,
+          name: name,
+          relation: relation,
+          gender: gender,
+        );
+        break;
+      case FamilyStoryQuestionActionType.saveAnswer:
+        _openBiographyEditor(
+          name: name,
+          relation: relation,
+          gender: gender,
+          initialQuestion: action.question,
+        );
+        break;
+    }
+  }
+
+  Future<void> _shareFamilyStoryQuestion({
+    required FamilyStoryQuestion question,
+    required String name,
+    String? relation,
+    String? gender,
+  }) async {
+    final message = buildFamilyStoryShareMessage(
+      question: question,
+      personName: name,
+      relation: relation,
+    );
+    try {
+      final box = context.findRenderObject() as RenderBox?;
+      await SharePlus.instance.share(
+        ShareParams(
+          text: message,
+          subject: 'Вопрос для семейной истории',
+          sharePositionOrigin:
+              box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Вопрос готов к отправке.'),
+          action: SnackBarAction(
+            label: 'Сохранить ответ',
+            onPressed: () => _openBiographyEditor(
+              name: name,
+              relation: relation,
+              gender: gender,
+              initialQuestion: question,
+            ),
+          ),
+        ),
+      );
+    } catch (error) {
+      debugPrint('Не удалось открыть отправку семейного вопроса: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Не удалось открыть отправку.'),
+          action: SnackBarAction(
+            label: 'Сохранить ответ',
+            onPressed: () => _openBiographyEditor(
+              name: name,
+              relation: relation,
+              gender: gender,
+              initialQuestion: question,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   // AppBar ⋯ overflow — the §3.2 card menu. Each item maps to an existing
@@ -911,8 +1011,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     addAbout('Языки', d.languages);
     addAbout('Интересы', d.interests);
 
-    final groups =
-        [passport, who, about].where((g) => g.isNotEmpty).toList();
+    final groups = [passport, who, about].where((g) => g.isNotEmpty).toList();
     if (groups.isEmpty) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
@@ -1146,9 +1245,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final descriptor = _viewerDescriptor!;
     final label = (descriptor.primaryRelationLabel ?? '').trim();
     final summary = (descriptor.pathSummary ?? '').trim();
-    final modifier = descriptor.isBlood
-        ? 'кровное родство'
-        : 'родственная связь';
+    final modifier =
+        descriptor.isBlood ? 'кровное родство' : 'родственная связь';
     final altCount = descriptor.alternatePathCount;
     final altSuffix = altCount > 0
         ? altCount == 1
@@ -2476,4 +2574,3 @@ class _DeleteRelativeButton extends StatelessWidget {
     );
   }
 }
-

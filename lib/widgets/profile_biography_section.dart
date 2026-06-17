@@ -1,4 +1,4 @@
-// Viewer phase — SUB-CHUNK 1 (2026-06-01): the «Биография» section on a
+// Viewer phase — SUB-CHUNK 1 (2026-06-01): the «Семейные истории» section on a
 // relative's profile. Read-first — visible to ANY card viewer (read is
 // can-view-person; the backend GET is gated by tree access, not edit).
 //
@@ -132,7 +132,7 @@ class _ProfileBiographySectionState extends State<ProfileBiographySection> {
           Row(
             children: [
               Text(
-                'Биография',
+                'Семейные истории',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontFamily: 'Lora',
                   fontWeight: FontWeight.w800,
@@ -163,7 +163,7 @@ class _ProfileBiographySectionState extends State<ProfileBiographySection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Биография ещё не написана.',
+          'Семейных историй пока нет.',
           style: theme.textTheme.bodyMedium?.copyWith(
             fontFamily: 'Lora',
             color: theme.colorScheme.onSurfaceVariant,

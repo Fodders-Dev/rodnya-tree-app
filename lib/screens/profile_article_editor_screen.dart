@@ -41,6 +41,9 @@ class ProfileArticleEditorScreen extends StatefulWidget {
     this.pickMultiImageOverride,
     this.voiceInputOverride,
     this.audioRecordOverride,
+    this.initialStoryTitle,
+    this.initialStoryQuestion,
+    this.initialStoryHint,
     this.saveDebounce = const Duration(seconds: 5),
   });
 
@@ -76,6 +79,13 @@ class ProfileArticleEditorScreen extends StatefulWidget {
   final Future<AudioRecordResult?> Function(BuildContext context)?
       audioRecordOverride;
 
+  /// Optional entry point from «Спросить историю»: after the article loads,
+  /// the editor appends a section header + an empty paragraph with this
+  /// question as the placeholder so the answer is saved on the right card.
+  final String? initialStoryTitle;
+  final String? initialStoryQuestion;
+  final String? initialStoryHint;
+
   /// Debounce before a dirty block auto-saves (overridable for tests).
   final Duration saveDebounce;
 
@@ -100,6 +110,7 @@ class _ProfileArticleEditorScreenState
   bool _hasLoaded = false;
   bool _saving = false;
   bool _conflictNoticed = false;
+  bool _initialStorySeeded = false;
   bool _photoUploading = false;
   String? _busyBlockId; // photo block with an in-flight replace/date patch
   String? _error;
@@ -168,6 +179,7 @@ class _ProfileArticleEditorScreenState
         _loading = false;
         _hasLoaded = true;
       });
+      await _seedInitialStoryPrompt();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -176,6 +188,29 @@ class _ProfileArticleEditorScreenState
         _error = _describe(error);
       });
     }
+  }
+
+  Future<void> _seedInitialStoryPrompt() async {
+    if (_initialStorySeeded) return;
+    final title = widget.initialStoryTitle?.trim() ?? '';
+    final question = widget.initialStoryQuestion?.trim() ?? '';
+    final hint = widget.initialStoryHint?.trim() ?? '';
+    if (title.isEmpty && question.isEmpty && hint.isEmpty) return;
+    _initialStorySeeded = true;
+
+    final header = title.isEmpty ? 'Семейная история' : title;
+    final paragraphHint = hint.isNotEmpty
+        ? hint
+        : question.isNotEmpty
+            ? 'Вопрос: $question\n\nВставьте сюда ответ родственника.'
+            : 'Вставьте сюда ответ родственника.';
+    await _addBlock('header', initialText: header);
+    if (!mounted) return;
+    await _addBlock(
+      'paragraph',
+      afterIndex: _blocks.length - 1,
+      hint: paragraphHint,
+    );
   }
 
   String _initialTextFor(ArticleBlock b) {
@@ -499,7 +534,9 @@ class _ProfileArticleEditorScreenState
         widget.personId,
         type: 'gallery',
         content: ArticleBlock.galleryContent(
-          items: [for (final url in urls) <String, dynamic>{'url': url}],
+          items: [
+            for (final url in urls) <String, dynamic>{'url': url}
+          ],
         ),
       );
       if (!mounted) return;
@@ -929,9 +966,8 @@ class _ProfileArticleEditorScreenState
           ],
         ),
         body: _buildBody(theme),
-        bottomNavigationBar: _hasLoaded && _error == null
-            ? _buildToolbar(theme, bg)
-            : null,
+        bottomNavigationBar:
+            _hasLoaded && _error == null ? _buildToolbar(theme, bg) : null,
       ),
     );
   }
@@ -1201,7 +1237,9 @@ class _ProfileArticleEditorScreenState
         PopupMenuItem(
           value: 'delete',
           child: Text(
-            block.isDivider ? 'Удалить разделитель' : 'Удалить ${_deleteNoun(block)}',
+            block.isDivider
+                ? 'Удалить разделитель'
+                : 'Удалить ${_deleteNoun(block)}',
           ),
         ),
       ],

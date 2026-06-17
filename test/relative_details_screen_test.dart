@@ -831,8 +831,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Кузнецов Артем', skipOffstage: false), findsOneWidget);
-      expect(find.text('Кузнецова Валентина', skipOffstage: false),
-          findsWidgets);
+      expect(
+          find.text('Кузнецова Валентина', skipOffstage: false), findsWidgets);
       expect(find.text('Кузнецова Наталья Геннадьевна', skipOffstage: false),
           findsOneWidget);
       expect(find.text('Сын', skipOffstage: false), findsOneWidget);
@@ -841,12 +841,12 @@ void main() {
       expect(find.text('Мать', skipOffstage: false), findsWidgets);
       expect(find.text('ФОТОГРАФИИ', skipOffstage: false), findsOneWidget);
       expect(find.text('2 фото', skipOffstage: false), findsOneWidget);
-      expect(find.text('ИСТОРИЯ ИЗМЕНЕНИЙ', skipOffstage: false),
-          findsOneWidget);
+      expect(
+          find.text('ИСТОРИЯ ИЗМЕНЕНИЙ', skipOffstage: false), findsOneWidget);
       expect(find.text('Добавлено фото', skipOffstage: false), findsOneWidget);
       expect(find.text('Открыть историю', skipOffstage: false), findsOneWidget);
-      expect(find.text('СВЯЗАННЫЙ ПРОФИЛЬ', skipOffstage: false),
-          findsOneWidget);
+      expect(
+          find.text('СВЯЗАННЫЙ ПРОФИЛЬ', skipOffstage: false), findsOneWidget);
       expect(find.text('СВЯЗИ И РОДСТВО', skipOffstage: false), findsOneWidget);
       expect(find.text('Добавить родственника', skipOffstage: false),
           findsOneWidget);
@@ -1249,6 +1249,49 @@ void main() {
     },
   );
 
+  testWidgets(
+    'header «Спросить историю» opens question sheet and answer editor',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'grandmother'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final askButton =
+          find.byKey(const Key('profile-ask-story'), skipOffstage: false);
+      expect(askButton, findsOneWidget);
+
+      await tester.ensureVisible(askButton);
+      await tester.tap(askButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Спросить историю'), findsWidgets);
+      expect(find.text('Что ты хочешь, чтобы дети и внуки помнили?'),
+          findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('family-story-question-remember_for_children')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('family-story-save-answer')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProfileArticleEditorScreen), findsOneWidget);
+    },
+  );
+
   // Viewer §3.1 (sub-chunk 2a): deceased → memorial framing «† Память: …»,
   // years (not age) in the relation line, and the «Добавить воспоминание»
   // CTA wording.
@@ -1312,6 +1355,8 @@ void main() {
 
       expect(find.byKey(const Key('profile-add-story'), skipOffstage: false),
           findsNothing);
+      expect(find.byKey(const Key('profile-ask-story'), skipOffstage: false),
+          findsOneWidget);
       expect(find.byKey(const Key('profile-appbar-edit')), findsNothing);
       expect(find.byKey(const Key('profile-appbar-menu')), findsOneWidget);
     },
@@ -1467,8 +1512,7 @@ void main() {
     expect(find.text('Дата рождения'), findsNothing);
     expect(find.text('Образование'), findsNothing);
     // Order: section sits below the header.
-    final headerY =
-        tester.getTopLeft(find.byKey(const Key('profile-name'))).dy;
+    final headerY = tester.getTopLeft(find.byKey(const Key('profile-name'))).dy;
     final infoY =
         tester.getTopLeft(find.byKey(const Key('basic-info-title'))).dy;
     expect(infoY > headerY, isTrue);

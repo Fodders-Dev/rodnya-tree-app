@@ -135,11 +135,21 @@ ArticleBlock _divider(String id) => ArticleBlock(
       updatedAt: 't',
     );
 
-Widget _wrap(_FakeArticleService svc, {Duration? debounce}) => MaterialApp(
+Widget _wrap(
+  _FakeArticleService svc, {
+  Duration? debounce,
+  String? initialStoryTitle,
+  String? initialStoryQuestion,
+  String? initialStoryHint,
+}) =>
+    MaterialApp(
       home: ProfileArticleEditorScreen(
         personId: 'p1',
         personName: 'Лидия',
         serviceOverride: svc,
+        initialStoryTitle: initialStoryTitle,
+        initialStoryQuestion: initialStoryQuestion,
+        initialStoryHint: initialStoryHint,
         saveDebounce: debounce ?? const Duration(milliseconds: 200),
       ),
     );
@@ -170,7 +180,8 @@ void main() {
 
   testWidgets('paragraph edit auto-saves after debounce', (tester) async {
     final svc = _FakeArticleService(blocks: [_paragraph('b1', 'старт')]);
-    await tester.pumpWidget(_wrap(svc, debounce: const Duration(milliseconds: 200)));
+    await tester
+        .pumpWidget(_wrap(svc, debounce: const Duration(milliseconds: 200)));
     await tester.pumpAndSettle();
 
     await tester.enterText(
@@ -411,6 +422,30 @@ void main() {
     expect(find.text('Детство'), findsOneWidget);
   });
 
+  testWidgets('initial story question seeds header + answer paragraph',
+      (tester) async {
+    final svc = _FakeArticleService();
+    await tester.pumpWidget(
+      _wrap(
+        svc,
+        initialStoryTitle: 'Что важно помнить',
+        initialStoryQuestion: 'Что ты хочешь, чтобы дети и внуки помнили?',
+        initialStoryHint: 'Вопрос: Что ты хочешь, чтобы дети и внуки помнили?',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.where((c) => c == 'append:header').length, 1);
+    expect(svc.calls.where((c) => c == 'append:paragraph').length, 1);
+    expect(find.text('Что важно помнить'), findsOneWidget);
+    final answerField =
+        tester.widget<TextField>(find.byKey(const Key('article-block-new-1')));
+    expect(
+      answerField.decoration?.hintText,
+      contains('Что ты хочешь, чтобы дети и внуки помнили?'),
+    );
+  });
+
   // ===== Phase 2b-1: photo blocks =====
 
   testWidgets('add photo: source → pick → upload → photo block appended',
@@ -547,8 +582,7 @@ void main() {
     expect(find.byKey(const Key('article-block-b1')), findsNothing);
   });
 
-  testWidgets('deleting the last block returns to empty state',
-      (tester) async {
+  testWidgets('deleting the last block returns to empty state', (tester) async {
     final svc = _FakeArticleService(blocks: [_paragraph('b1', '')]);
     await tester.pumpWidget(_wrap(svc));
     await tester.pumpAndSettle();
@@ -770,8 +804,7 @@ class _FakeStorage implements StorageServiceInterface {
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 ArticleBlock _photo(String id, {String url = 'https://img/ph1.jpg'}) =>

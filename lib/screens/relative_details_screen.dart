@@ -15,6 +15,7 @@ import '../providers/tree_provider.dart'; // Для treeId
 import '../services/custom_api_auth_service.dart' show CustomApiException;
 import '../services/tree_mutation_history.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 import '../utils/invitation_share.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
@@ -44,6 +45,8 @@ import '../utils/photo_url.dart';
 import '../utils/relative_details_route.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/profile_biography_section.dart';
+import '../widgets/family_story_questions_sheet.dart';
+import '../models/family_story_question.dart';
 import 'profile_all_photos_screen.dart';
 import 'profile_article_editor_screen.dart';
 import 'profile_article_history_screen.dart';
@@ -482,41 +485,42 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     }
 
     if (_identityDuplicateService != null && _person != null) {
-        try {
-          final suggestions = await _identityDuplicateService!
-              .getDuplicateSuggestions(_currentTreeId!);
-          _duplicateSuggestions = suggestions
-              .where((suggestion) => suggestion.involves(_person!.id))
-              .toList(growable: false);
-        } catch (duplicateError) {
-          debugPrint(
-            'Не удалось загрузить возможные совпадения для ${widget.personId}: $duplicateError',
-          );
-          _duplicateSuggestions = const <PersonDuplicateSuggestion>[];
-        }
+      try {
+        final suggestions = await _identityDuplicateService!
+            .getDuplicateSuggestions(_currentTreeId!);
+        _duplicateSuggestions = suggestions
+            .where((suggestion) => suggestion.involves(_person!.id))
+            .toList(growable: false);
+      } catch (duplicateError) {
+        debugPrint(
+          'Не удалось загрузить возможные совпадения для ${widget.personId}: $duplicateError',
+        );
+        _duplicateSuggestions = const <PersonDuplicateSuggestion>[];
       }
+    }
 
-      // Phase 3.4 chunk 5: load identity conflicts for this person.
-      // Best-effort — failure ничего не блокирует (badge/banner
-      // просто не появятся). Filter by targetPersonId — это
-      // конкретный person на текущей tree'е.
-      if (_person != null && _familyService is IdentityConflictsCapableFamilyTreeService) {
-        try {
-          final capable =
-              _familyService as IdentityConflictsCapableFamilyTreeService;
-          final allConflicts = await capable.getIdentityConflictsForTree(
-            treeId: _currentTreeId!,
-          );
-          _personConflicts = allConflicts
-              .where((c) => c.targetPersonId == _person!.id && !c.isResolved)
-              .toList(growable: false);
-        } catch (conflictsError) {
-          debugPrint(
-            'Не удалось загрузить расхождения для ${widget.personId}: $conflictsError',
-          );
-          _personConflicts = const <IdentityFieldConflict>[];
-        }
+    // Phase 3.4 chunk 5: load identity conflicts for this person.
+    // Best-effort — failure ничего не блокирует (badge/banner
+    // просто не появятся). Filter by targetPersonId — это
+    // конкретный person на текущей tree'е.
+    if (_person != null &&
+        _familyService is IdentityConflictsCapableFamilyTreeService) {
+      try {
+        final capable =
+            _familyService as IdentityConflictsCapableFamilyTreeService;
+        final allConflicts = await capable.getIdentityConflictsForTree(
+          treeId: _currentTreeId!,
+        );
+        _personConflicts = allConflicts
+            .where((c) => c.targetPersonId == _person!.id && !c.isResolved)
+            .toList(growable: false);
+      } catch (conflictsError) {
+        debugPrint(
+          'Не удалось загрузить расхождения для ${widget.personId}: $conflictsError',
+        );
+        _personConflicts = const <IdentityFieldConflict>[];
       }
+    }
 
     try {
       if (_person != null) {
@@ -784,8 +788,8 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
             if (!mounted) return;
             setState(() {
               _personConflicts = fresh
-                  .where((c) =>
-                      c.targetPersonId == _person!.id && !c.isResolved)
+                  .where(
+                      (c) => c.targetPersonId == _person!.id && !c.isResolved)
                   .toList(growable: false);
             });
           } catch (_) {
@@ -1990,7 +1994,9 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           message: isFriendsTree
               ? 'Присоединяйтесь к нашему кругу друзей в Родне! ${inviteUrl.toString()}'
               : 'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
-          subject: isFriendsTree ? 'Приглашение в круг друзей' : 'Приглашение в Родню',
+          subject: isFriendsTree
+              ? 'Приглашение в круг друзей'
+              : 'Приглашение в Родню',
         );
       }
     } catch (e) {
