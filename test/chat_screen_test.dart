@@ -68,6 +68,20 @@ class _MemoryChatDraftStore implements ChatDraftStore {
   }
 }
 
+class _BlockingReadChatDraftStore extends _MemoryChatDraftStore {
+  final Completer<void> readStarted = Completer<void>();
+  final Completer<ChatDraftSnapshot?> draftToReturn =
+      Completer<ChatDraftSnapshot?>();
+
+  @override
+  Future<ChatDraftSnapshot?> getDraft(String key) async {
+    if (!readStarted.isCompleted) {
+      readStarted.complete();
+    }
+    return draftToReturn.future;
+  }
+}
+
 class _MemoryChatPinStore implements ChatPinStore {
   final Map<String, ChatPinnedMessageSnapshot> _pins =
       <String, ChatPinnedMessageSnapshot>{};
@@ -825,6 +839,40 @@ void main() {
 
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.controller?.text, 'Не забыть написать семье');
+  });
+
+  testWidgets('ChatScreen does not overwrite typed text with late draft',
+      (tester) async {
+    final chatService = _FakeChatService();
+    final draftStore = _BlockingReadChatDraftStore();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: draftStore,
+          pinStore: _MemoryChatPinStore(),
+        ),
+      ),
+    );
+
+    chatService._messagesController.add(const <ChatMessage>[]);
+    await draftStore.readStarted.future;
+    await tester.enterText(find.byType(TextField), 'Пишу новое сообщение');
+    await tester.pump();
+
+    draftStore.draftToReturn.complete(
+      ChatDraftSnapshot(
+        text: 'Старый черновик',
+        updatedAt: DateTime(2026, 4, 11, 12),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller?.text, 'Пишу новое сообщение');
   });
 
   testWidgets('ChatScreen lets user choose video attachment from picker sheet',

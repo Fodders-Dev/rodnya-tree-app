@@ -205,6 +205,131 @@ void main() {
     expect(unreadAfterRead, 0);
   });
 
+  test('CustomApiChatService keeps sent message when stale refresh returns',
+      () async {
+    final releaseMessagesFetch = Completer<void>();
+    var messagesFetchStarted = false;
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'GET') {
+        messagesFetchStarted = true;
+        await releaseMessagesFetch.future;
+        return http.Response(
+          jsonEncode({
+            'messages': [
+              {
+                'id': 'message-old',
+                'chatId': 'chat-1',
+                'senderId': 'other-user',
+                'text': 'Старое сообщение',
+                'timestamp': '2026-03-27T12:00:00.000Z',
+                'isRead': false,
+                'participants': ['other-user', 'user-1'],
+                'senderName': 'Собеседник',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'message': {
+              'id': 'message-new',
+              'chatId': 'chat-1',
+              'senderId': 'user-1',
+              'text': body['text'],
+              'timestamp': '2026-03-27T12:05:00.000Z',
+              'isRead': false,
+              'participants': ['other-user', 'user-1'],
+              'senderName': 'Dev User',
+              'clientMessageId': body['clientMessageId'],
+            },
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final snapshots = <List<ChatMessage>>[];
+    final subscription =
+        chatService.getMessagesStream('chat-1').listen(snapshots.add);
+    addTearDown(subscription.cancel);
+
+    for (var i = 0; i < 20 && !messagesFetchStarted; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(messagesFetchStarted, isTrue);
+
+    await chatService.sendMessageToChat(
+      chatId: 'chat-1',
+      text: 'Быстрый ответ',
+      clientMessageId: 'local-1',
+    );
+    for (var i = 0; i < 20 && snapshots.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(snapshots.last.map((message) => message.text), ['Быстрый ответ']);
+
+    releaseMessagesFetch.complete();
+    for (var i = 0;
+        i < 20 &&
+            !snapshots.any(
+              (snapshot) => snapshot.any(
+                (message) => message.text == 'Старое сообщение',
+              ),
+            );
+        i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(
+      snapshots.last.map((message) => message.text),
+      ['Быстрый ответ', 'Старое сообщение'],
+    );
+  });
+
   test('CustomApiChatService replays fresh previews to new subscribers',
       () async {
     var chatRequestCount = 0;

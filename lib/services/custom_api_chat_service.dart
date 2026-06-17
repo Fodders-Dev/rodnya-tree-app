@@ -39,6 +39,7 @@ class _ChatMessageStreamState {
   bool isFetching = false;
   bool hasQueuedRefresh = false;
   List<ChatMessage> messages = const <ChatMessage>[];
+  int messagesVersion = 0;
 }
 
 class _UploadedAttachmentMetadata {
@@ -95,6 +96,7 @@ class CustomApiChatService
   final AppStatusService? _appStatusService;
   final Duration _pollInterval;
   final Duration _realtimeFallbackPollInterval;
+
   /// Snapshot of the most recently emitted previews — keeps us from
   /// re-hydrating the cache on every realtime tick when nothing changed.
   List<ChatPreview>? _lastEmittedPreviews;
@@ -1274,6 +1276,7 @@ class CustomApiChatService
     }
 
     state.isFetching = true;
+    final versionAtRequestStart = state.messagesVersion;
     try {
       final normalizedAfterId = afterId?.trim();
       final hasAfterId =
@@ -1283,9 +1286,16 @@ class CustomApiChatService
         limit: hasAfterId ? 200 : 100,
         afterId: hasAfterId ? normalizedAfterId : null,
       );
+      final pageMessages = page.messages;
       state.messages = hasAfterId
-          ? _mergeMessageLists(state.messages, page.messages)
-          : page.messages;
+          ? _mergeMessageLists(state.messages, pageMessages)
+          : state.messagesVersion == versionAtRequestStart
+              ? pageMessages
+              : _mergeMessageListsPreservingExisting(
+                  state.messages,
+                  pageMessages,
+                );
+      state.messagesVersion++;
       if (!hasAfterId) {
         _cacheMessages(
           (cache) => cache.write(state.chatId, state.messages),
@@ -1350,6 +1360,7 @@ class CustomApiChatService
     }
     nextMessages.sort(_sortMessagesDescending);
     state.messages = nextMessages;
+    state.messagesVersion++;
     _cacheMessages(
       (cache) => cache.appendOne(state.chatId, incomingMessage),
     );
@@ -1366,6 +1377,7 @@ class CustomApiChatService
         .where((message) => message.id != messageId)
         .toList(growable: false);
     state.messages = nextMessages;
+    state.messagesVersion++;
     _cacheMessages(
       (cache) => cache.removeOne(state.chatId, messageId),
     );
@@ -1393,6 +1405,7 @@ class CustomApiChatService
     );
     nextMessages[messageIndex] = nextMessage;
     state.messages = nextMessages;
+    state.messagesVersion++;
     // Reactions arrive in bursts — debounce the Hive write instead of
     // flushing on every event.
     _scheduleDebouncedMessageCacheFlush(state);
@@ -1427,6 +1440,7 @@ class CustomApiChatService
     final nextMessage = message.copyWith(deliveredTo: deliveredTo);
     nextMessages[messageIndex] = nextMessage;
     state.messages = nextMessages;
+    state.messagesVersion++;
     // Delivery receipts can arrive several times per second when a chat
     // catches up after a reconnect — coalesce into a single Hive write.
     _scheduleDebouncedMessageCacheFlush(state);
@@ -1460,6 +1474,7 @@ class CustomApiChatService
       );
     }).toList(growable: false);
     state.messages = nextMessages;
+    state.messagesVersion++;
     // Read markers can fire for every visible message on focus — debounce
     // the Hive flush so a single chat-open doesn't translate into N writes.
     _scheduleDebouncedMessageCacheFlush(state);
@@ -1494,6 +1509,31 @@ class CustomApiChatService
       }
     }
     for (final message in incomingMessages) {
+      if (message.id.trim().isNotEmpty) {
+        byId[message.id] = message;
+      }
+    }
+
+    final nextMessages = byId.values.toList();
+    nextMessages.sort(_sortMessagesDescending);
+    return nextMessages;
+  }
+
+  List<ChatMessage> _mergeMessageListsPreservingExisting(
+    List<ChatMessage> existingMessages,
+    List<ChatMessage> incomingMessages,
+  ) {
+    if (incomingMessages.isEmpty) {
+      return existingMessages;
+    }
+
+    final byId = <String, ChatMessage>{};
+    for (final message in incomingMessages) {
+      if (message.id.trim().isNotEmpty) {
+        byId[message.id] = message;
+      }
+    }
+    for (final message in existingMessages) {
       if (message.id.trim().isNotEmpty) {
         byId[message.id] = message;
       }

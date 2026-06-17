@@ -138,13 +138,15 @@ class SharedPreferencesChatDraftStore implements ChatDraftStore {
 }
 
 class HybridChatDraftStore implements ChatDraftStore {
-  const HybridChatDraftStore({
+  HybridChatDraftStore({
     required this.localStore,
     required this.remoteClient,
   });
 
   final ChatDraftStore localStore;
   final RemoteChatDraftClient remoteClient;
+  final Map<String, Future<void>> _pendingRemoteOperations =
+      <String, Future<void>>{};
 
   static String? chatIdFromKey(String key) {
     const prefix = 'chat:';
@@ -167,8 +169,38 @@ class HybridChatDraftStore implements ChatDraftStore {
     return localStore.clearDraft(key);
   }
 
+  Future<void> _waitForPendingRemoteOperation(String key) async {
+    final pending = _pendingRemoteOperations[key];
+    if (pending == null) {
+      return;
+    }
+    try {
+      await pending;
+    } catch (_) {
+      // Remote draft sync is best-effort; reads should still continue.
+    }
+  }
+
+  Future<void> _enqueueRemoteOperation(
+    String key,
+    Future<void> Function() operation,
+  ) {
+    final previous = _pendingRemoteOperations[key] ?? Future<void>.value();
+    late final Future<void> tracked;
+    tracked = previous.catchError((_) {}).then((_) => operation()).whenComplete(
+      () {
+        if (identical(_pendingRemoteOperations[key], tracked)) {
+          _pendingRemoteOperations.remove(key);
+        }
+      },
+    );
+    _pendingRemoteOperations[key] = tracked;
+    return tracked;
+  }
+
   @override
   Future<ChatDraftSnapshot?> getDraft(String key) async {
+    await _waitForPendingRemoteOperation(key);
     final localDraft = await localStore.getDraft(key);
     final chatId = chatIdFromKey(key);
     if (chatId == null) {
@@ -193,6 +225,14 @@ class HybridChatDraftStore implements ChatDraftStore {
 
   @override
   Future<Map<String, ChatDraftSnapshot>> getAllDrafts() async {
+    final pending = List<Future<void>>.from(_pendingRemoteOperations.values);
+    if (pending.isNotEmpty) {
+      try {
+        await Future.wait(pending);
+      } catch (_) {
+        // Remote draft sync is best-effort; local drafts should still render.
+      }
+    }
     final merged = await localStore.getAllDrafts();
     try {
       final remoteDrafts = await remoteClient.getChatDrafts();
@@ -217,11 +257,13 @@ class HybridChatDraftStore implements ChatDraftStore {
     if (chatId == null) {
       return;
     }
-    try {
-      await remoteClient.saveChatDraft(chatId: chatId, text: text);
-    } catch (_) {
-      // Keep local draft; the next edit/load can retry remote sync.
-    }
+    await _enqueueRemoteOperation(key, () async {
+      try {
+        await remoteClient.saveChatDraft(chatId: chatId, text: text);
+      } catch (_) {
+        // Keep local draft; the next edit/load can retry remote sync.
+      }
+    });
   }
 
   @override
@@ -231,10 +273,12 @@ class HybridChatDraftStore implements ChatDraftStore {
     if (chatId == null) {
       return;
     }
-    try {
-      await remoteClient.clearChatDraft(chatId);
-    } catch (_) {
-      // Local clear is still authoritative for current device.
-    }
+    await _enqueueRemoteOperation(key, () async {
+      try {
+        await remoteClient.clearChatDraft(chatId);
+      } catch (_) {
+        // Local clear is still authoritative for current device.
+      }
+    });
   }
 }

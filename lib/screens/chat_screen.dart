@@ -172,6 +172,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final Set<String> _handledVoiceSendIds = <String>{};
   Timer? _draftSaveTimer;
   bool _isApplyingDraft = false;
+  int _draftPersistenceVersion = 0;
   String? _lastPersistedDraftKey;
   final ScrollController _messagesScrollController = ScrollController();
   final GlobalKey _unreadDividerKey = GlobalKey();
@@ -1948,10 +1949,14 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    final restoreVersion = _draftPersistenceVersion;
     ChatDraftSnapshot? bestDraft;
     String? bestDraftKey;
     for (final key in keys) {
       final snapshot = await _draftStore.getDraft(key);
+      if (restoreVersion != _draftPersistenceVersion) {
+        return;
+      }
       if (snapshot == null) {
         continue;
       }
@@ -1965,6 +1970,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final preferredKey = _primaryDraftKey();
     if (bestDraft == null) {
       _lastPersistedDraftKey = preferredKey;
+      return;
+    }
+    if (restoreVersion != _draftPersistenceVersion ||
+        _messageController.text.isNotEmpty) {
       return;
     }
 
@@ -1989,23 +1998,30 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _handleTypingChanged();
+    final version = ++_draftPersistenceVersion;
     _draftSaveTimer?.cancel();
     _draftSaveTimer = Timer(const Duration(milliseconds: 250), () {
-      unawaited(_persistCurrentDraft());
+      unawaited(_persistCurrentDraft(version));
     });
   }
 
-  Future<void> _persistCurrentDraft() async {
+  Future<void> _persistCurrentDraft(int version) async {
     final draftKey = _primaryDraftKey();
     if (draftKey == null) {
       return;
     }
 
     final text = _messageController.text;
+    if (version != _draftPersistenceVersion) {
+      return;
+    }
     if (text.trim().isEmpty) {
       await _draftStore.clearDraft(draftKey);
     } else {
       await _draftStore.saveDraft(draftKey, text);
+    }
+    if (version != _draftPersistenceVersion) {
+      return;
     }
 
     final previousKey = _lastPersistedDraftKey;
@@ -2016,6 +2032,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _clearActiveDraft() async {
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = null;
+    _draftPersistenceVersion++;
     final keys = _draftCandidateKeys();
     for (final key in keys) {
       await _draftStore.clearDraft(key);
