@@ -20,6 +20,13 @@ abstract class CallServiceInterface {
     List<String>? participantIds,
   });
 
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) {
+    throw UnsupportedError('nudgeCallParticipants is not supported');
+  }
+
   Future<CallInvite> acceptCall(String callId);
 
   Future<CallInvite> rejectCall(String callId);

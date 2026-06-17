@@ -8,6 +8,7 @@ import 'package:livekit_client/livekit_client.dart';
 import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
 import 'package:rodnya/backend/interfaces/call_service_interface.dart';
 import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
 import 'package:rodnya/models/chat_message.dart' as rodnya_chat;
 import 'package:rodnya/models/chat_preview.dart';
 import 'package:rodnya/models/chat_send_progress.dart';
@@ -285,6 +286,59 @@ void main() {
     expect(find.text('Ожидаем участников звонка...'), findsOneWidget);
   });
 
+  testWidgets('CallScreen shows group roster and nudges waiting members',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(
+        state: CallState.active,
+        participantIds: const ['user-1', 'user-2', 'user-3'],
+      ),
+      roomValue: _FakeRoom(),
+    );
+    final chatService = _FakeInCallChatService(
+      messages: const <rodnya_chat.ChatMessage>[],
+      details: ChatDetails(
+        chatId: 'chat-1',
+        type: 'group',
+        title: 'Семейный созвон',
+        participantIds: const ['user-1', 'user-2', 'user-3'],
+        participants: const <ChatParticipantSummary>[
+          ChatParticipantSummary(userId: 'user-1', displayName: 'Арина'),
+          ChatParticipantSummary(userId: 'user-2', displayName: 'Борис'),
+          ChatParticipantSummary(userId: 'user-3', displayName: 'Вера'),
+        ],
+        branchRoots: const <ChatBranchRootSummary>[],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Семейный созвон',
+          coordinator: coordinator,
+          chatService: chatService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Вы'), findsOneWidget);
+    expect(find.text('Борис'), findsOneWidget);
+    expect(find.text('Вера'), findsOneWidget);
+    expect(find.text('1 в звонке · 2 ждут'), findsOneWidget);
+    expect(find.text('Ждём'), findsNWidgets(2));
+
+    await tester.tap(find.text('Позвать ещё'));
+    await tester.pumpAndSettle();
+
+    expect(coordinator.nudgeCallCount, 1);
+    expect(
+      coordinator.nudgedParticipantIds,
+      unorderedEquals(<String>['user-2', 'user-3']),
+    );
+  });
+
   testWidgets('CallScreen opens in-call chat sheet and sends a text message',
       (tester) async {
     final coordinator = _FakeCallCoordinator(
@@ -522,6 +576,8 @@ class _FakeCallCoordinator extends CallCoordinatorService {
   int refreshInputDevicesCallCount = 0;
   int selectedMicrophoneCallCount = 0;
   int selectedCameraCallCount = 0;
+  int nudgeCallCount = 0;
+  List<String>? nudgedParticipantIds;
 
   @override
   String? get currentUserId => 'user-1';
@@ -623,6 +679,16 @@ class _FakeCallCoordinator extends CallCoordinatorService {
     _currentCall = call;
     notifyListeners();
   }
+
+  @override
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) async {
+    nudgeCallCount += 1;
+    nudgedParticipantIds = participantIds;
+    return _currentCall!;
+  }
 }
 
 class _FakeRoom extends Fake implements Room {
@@ -684,15 +750,25 @@ class _FakeCallService implements CallServiceInterface {
       );
 
   @override
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) async =>
+      _buildCall(state: CallState.ringing);
+
+  @override
   Future<void> stopRealtimeBridge() async {}
 }
 
 class _FakeInCallChatService extends ChatServiceInterface {
   _FakeInCallChatService({
     required List<rodnya_chat.ChatMessage> messages,
-  }) : _messages = messages;
+    ChatDetails? details,
+  })  : _messages = messages,
+        _details = details;
 
   final List<rodnya_chat.ChatMessage> _messages;
+  final ChatDetails? _details;
   final List<String> sentTexts = <String>[];
   int markReadCalls = 0;
 
@@ -749,6 +825,24 @@ class _FakeInCallChatService extends ChatServiceInterface {
   @override
   Future<String?> getOrCreateChat(String otherUserId) async {
     return 'chat-$otherUserId';
+  }
+
+  @override
+  Future<ChatDetails> getChatDetails(String chatId) async {
+    final details = _details;
+    if (details != null) {
+      return details;
+    }
+    return ChatDetails(
+      chatId: chatId,
+      type: 'direct',
+      participantIds: const <String>['user-1', 'user-2'],
+      participants: const <ChatParticipantSummary>[
+        ChatParticipantSummary(userId: 'user-1', displayName: 'Арина'),
+        ChatParticipantSummary(userId: 'user-2', displayName: 'Нина'),
+      ],
+      branchRoots: const <ChatBranchRootSummary>[],
+    );
   }
 }
 

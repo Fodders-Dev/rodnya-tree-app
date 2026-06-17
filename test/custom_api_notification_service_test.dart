@@ -1072,5 +1072,13 @@ class _FakeNotificationCallService implements CallServiceInterface {
   }
 
   @override
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<void> stopRealtimeBridge() async {}
 }

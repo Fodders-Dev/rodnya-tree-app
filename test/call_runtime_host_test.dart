@@ -275,5 +275,12 @@ class _HostFakeCallService implements CallServiceInterface {
       );
 
   @override
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) async =>
+      _buildCall(state: CallState.ringing);
+
+  @override
   Future<void> stopRealtimeBridge() async {}
 }

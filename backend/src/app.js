@@ -2991,6 +2991,73 @@ function createApp({
     });
   });
 
+  app.post("/v1/calls/:callId/nudge", requireAuth, async (req, res) => {
+    const call = await requireCallAccess(req, res, req.params.callId);
+    if (!call) {
+      return;
+    }
+
+    const state = String(call.state || "").trim();
+    if (["ended", "missed", "rejected", "cancelled", "failed"].includes(state)) {
+      res.status(409).json({message: "Звонок уже завершён"});
+      return;
+    }
+
+    const callParticipantIds = normalizeParticipantIds(call.participantIds || []);
+    const requestedParticipantIds = Array.isArray(req.body?.participantIds)
+      ? normalizeParticipantIds(req.body.participantIds)
+      : [];
+    const recipientIds = (requestedParticipantIds.length > 0
+      ? requestedParticipantIds
+      : callParticipantIds
+    ).filter((participantId) => participantId !== req.auth.user.id);
+
+    if (
+      recipientIds.length === 0 ||
+      recipientIds.some((participantId) => !callParticipantIds.includes(participantId))
+    ) {
+      res.status(400).json({message: "Не удалось определить участников дозвона"});
+      return;
+    }
+
+    const callerName = displayNameForCallParticipant(req.auth.user);
+    const isGroupCall = callParticipantIds.length > 2;
+    for (const inviteeId of recipientIds) {
+      await createAndDispatchNotification({
+        userId: inviteeId,
+        type: "call_invite",
+        title: callerName,
+        body: isGroupCall
+          ? (call.mediaMode === "video" ? "Вас снова зовут в групповой видеозвонок" : "Вас снова зовут в групповой аудиозвонок")
+          : (call.mediaMode === "video" ? "Вас снова зовут в видеозвонок" : "Вас снова зовут в аудиозвонок"),
+        data: {
+          chatId: call.chatId,
+          callId: call.id,
+          mediaMode: call.mediaMode,
+        },
+      });
+      realtimeHub?.publishToUser(inviteeId, ({sessionPublicId}) => ({
+        type: "call.invite.created",
+        call: mapCallRecord(call, {
+          viewerUserId: inviteeId,
+          viewerSessionId: sessionPublicId,
+        }),
+      }));
+    }
+
+    logCallEvent("invite.nudged", call, {
+      initiatorId: req.auth.user.id,
+      participantIds: recipientIds,
+    });
+
+    res.json({
+      call: mapCallRecord(call, {
+        viewerUserId: req.auth.user.id,
+        viewerSessionId: req.auth.sessionPublicId,
+      }),
+    });
+  });
+
   app.post("/v1/calls/:callId/accept", requireAuth, async (req, res) => {
     if (!resolvedLiveKitService.isConfigured) {
       res.status(503).json({message: "Звонки пока не настроены на сервере"});

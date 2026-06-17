@@ -635,6 +635,27 @@ test("group call starts from group chat and creates LiveKit sessions for every p
     assert.equal(carolCall.call.session, null);
     assert.equal(carolCall.call.joinedOnAnotherDevice, false);
 
+    const nudgeResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.call.id}/nudge`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${caller.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({participantIds: [carol.user.id]}),
+      },
+    );
+    assert.equal(nudgeResponse.status, 200);
+    const nudgedCall = await nudgeResponse.json();
+    assert.equal(nudgedCall.call.id, startedCall.call.id);
+    assert.equal(nudgedCall.call.state, "active");
+    assert.equal(
+      createdSessions.length,
+      2,
+      "nudge must not create a second LiveKit session or room",
+    );
+
     for (const identity of [callerIdentity, bobIdentity]) {
       const joinedResponse = await fetch(`${ctx.baseUrl}/v1/livekit/webhook`, {
         method: "POST",

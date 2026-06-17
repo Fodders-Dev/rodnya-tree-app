@@ -758,6 +758,14 @@ class PendingBackendCallService implements CallServiceInterface {
   }) {
     throw UnsupportedError(_pendingProviderMessage('calls'));
   }
+
+  @override
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('calls'));
+  }
 }
 
 class PendingBackendCircleService implements CircleServiceInterface {

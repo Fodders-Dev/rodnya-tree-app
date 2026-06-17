@@ -212,6 +212,13 @@ class _IncomingCallService implements CallServiceInterface {
       activeCall!;
 
   @override
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) async =>
+      activeCall!;
+
+  @override
   Future<void> stopRealtimeBridge() async {}
 }
 

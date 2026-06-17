@@ -571,6 +571,17 @@ class _FakeCallService implements CallServiceInterface {
     );
     return activeCall!;
   }
+
+  @override
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) async {
+    if (activeCall != null) {
+      return activeCall!;
+    }
+    throw UnimplementedError();
+  }
 }
 
 class _FakeSafetyService implements SafetyServiceInterface {

@@ -49,7 +49,7 @@ class CallCoordinatorService extends ChangeNotifier
     AndroidIncomingCallService? androidIncomingCallService,
     CallForegroundService? callForegroundService,
     CallVibrationTrigger? vibrationTrigger,
-    Duration ringingRecoveryInterval = const Duration(seconds: 5),
+    Duration ringingRecoveryInterval = const Duration(seconds: 2),
     Duration activeCallRecoveryInterval = const Duration(seconds: 2),
   })  : _callService = callService,
         _realtimeService = realtimeService,
@@ -454,6 +454,20 @@ class CallCoordinatorService extends ChangeNotifier
       participantIds: participantIds,
     );
     await _applyCall(invite);
+    return invite;
+  }
+
+  Future<CallInvite> nudgeCallParticipants(
+    String callId, {
+    List<String>? participantIds,
+  }) async {
+    final invite = await _callService.nudgeCallParticipants(
+      callId,
+      participantIds: participantIds,
+    );
+    if (_currentCall?.id == invite.id) {
+      await _applyCall(invite);
+    }
     return invite;
   }
 

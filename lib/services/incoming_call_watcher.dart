@@ -17,7 +17,7 @@ class IncomingCallWatcher with WidgetsBindingObserver {
     required CallCoordinatorService coordinator,
     CustomApiRealtimeService? realtimeService,
     Stream<CustomApiRealtimeEvent>? realtimeEvents,
-    Duration pollInterval = const Duration(seconds: 30),
+    Duration pollInterval = const Duration(seconds: 5),
     IncomingCallFallbackTimerFactory? timerFactory,
   })  : _coordinator = coordinator,
         _realtimeEvents = realtimeEvents ?? realtimeService?.events,

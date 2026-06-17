@@ -13,6 +13,7 @@ import '../backend/interfaces/chat_service_interface.dart';
 import '../models/call_invite.dart';
 import '../models/call_media_mode.dart';
 import '../models/call_state.dart';
+import '../models/chat_details.dart';
 import '../services/audio_route_service.dart';
 import '../services/call_coordinator_service.dart';
 import '../services/call_pip_service.dart';
@@ -78,6 +79,10 @@ class _CallScreenState extends State<CallScreen> {
   Offset? _pipDragStartOffset;
   Offset _pipDragAccumulated = Offset.zero;
   bool _pipShowsLocal = true;
+  Map<String, ChatParticipantSummary> _callParticipantsById =
+      const <String, ChatParticipantSummary>{};
+  String? _participantDetailsChatId;
+  bool _isNudgingGroupParticipants = false;
   static const double _pipWidth = 120;
   static const double _pipHeight = 180;
   // Drag-vs-tap disambiguation threshold для PIP gesture. Был 6.0 —
@@ -116,6 +121,7 @@ class _CallScreenState extends State<CallScreen> {
     );
     widget.coordinator.addListener(_handleCoordinatorChanged);
     unawaited(widget.coordinator.activateCall(_resolvedCall));
+    unawaited(_loadCallParticipantSummaries());
     _syncRinger();
   }
 
@@ -231,6 +237,7 @@ class _CallScreenState extends State<CallScreen> {
           HapticFeedback.heavyImpact();
         });
       }
+
       pulse();
       _ringerTimer = Timer.periodic(
         const Duration(milliseconds: 1400),
@@ -341,6 +348,7 @@ class _CallScreenState extends State<CallScreen> {
     setState(() {
       _call = coordinatorCall;
     });
+    unawaited(_loadCallParticipantSummaries());
     // Re-evaluate ringer status whenever the call state mutates —
     // accept / decline / cancel / "joined on other device" all need
     // to silence the loop immediately.
@@ -433,7 +441,8 @@ class _CallScreenState extends State<CallScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Не удалось переключить камеру. Проверьте разрешение.'),
+            content:
+                Text('Не удалось переключить камеру. Проверьте разрешение.'),
           ),
         );
       }
@@ -490,11 +499,158 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
+  Future<void> _loadCallParticipantSummaries({bool force = false}) async {
+    final chatId = _resolvedCall.chatId.trim();
+    if (chatId.isEmpty) {
+      return;
+    }
+    if (!force && _participantDetailsChatId == chatId) {
+      return;
+    }
+    final chatService = _chatService;
+    if (chatService == null) {
+      return;
+    }
+
+    _participantDetailsChatId = chatId;
+    try {
+      final details = await chatService.getChatDetails(chatId);
+      if (!mounted || _resolvedCall.chatId != chatId) {
+        return;
+      }
+      setState(() {
+        _callParticipantsById = <String, ChatParticipantSummary>{
+          for (final participant in details.participants)
+            if (participant.userId.trim().isNotEmpty)
+              participant.userId.trim(): participant,
+        };
+      });
+    } catch (_) {
+      // The call screen can work without chat details; ids fall back
+      // to generic labels. Avoid retry-spam on every coordinator tick.
+    }
+  }
+
   void _openSystemSettings() {
     unawaited(openAppSettings());
   }
 
   bool get _isGroupCall => _resolvedCall.isGroupCall;
+
+  List<String> get _waitingGroupParticipantIds => _groupCallParticipants
+      .where(
+        (participant) =>
+            !participant.isCurrentUser &&
+            participant.state == _GroupCallParticipantConnectionState.waiting,
+      )
+      .map((participant) => participant.userId)
+      .toList(growable: false);
+
+  List<_GroupCallParticipantStatus> get _groupCallParticipants {
+    final currentUserId = _currentUserId?.trim();
+    final participantIds = <String>{
+      for (final id in _resolvedCall.participantIds)
+        if (id.trim().isNotEmpty) id.trim(),
+      if (currentUserId != null && currentUserId.isNotEmpty) currentUserId,
+    }.toList(growable: false);
+    participantIds.sort((left, right) {
+      if (left == currentUserId) return -1;
+      if (right == currentUserId) return 1;
+      return _participantLabelForCallUser(left)
+          .compareTo(_participantLabelForCallUser(right));
+    });
+
+    return participantIds.map((userId) {
+      final isCurrentUser = userId == currentUserId;
+      final remoteParticipant = _remoteParticipantForUser(userId);
+      final isConnected = isCurrentUser || remoteParticipant != null;
+      final state = isConnected
+          ? _GroupCallParticipantConnectionState.connected
+          : (_resolvedCall.state == CallState.active ||
+                  _resolvedCall.state == CallState.ringing)
+              ? _GroupCallParticipantConnectionState.waiting
+              : _GroupCallParticipantConnectionState.notConnected;
+      return _GroupCallParticipantStatus(
+        userId: userId,
+        displayName:
+            isCurrentUser ? 'Вы' : _participantLabelForCallUser(userId),
+        photoUrl: _callParticipantsById[userId]?.photoUrl,
+        state: state,
+        isCurrentUser: isCurrentUser,
+      );
+    }).toList(growable: false);
+  }
+
+  RemoteParticipant? _remoteParticipantForUser(String userId) {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      return null;
+    }
+    return _remoteParticipants.firstWhereOrNull((participant) {
+      final identity = participant.identity.trim();
+      return identity == normalizedUserId ||
+          identity.startsWith('$normalizedUserId#');
+    });
+  }
+
+  String _participantLabelForCallUser(String userId) {
+    final normalizedUserId = userId.trim();
+    final summary = _callParticipantsById[normalizedUserId];
+    final displayName = summary?.displayName.trim();
+    if (displayName != null && displayName.isNotEmpty) {
+      return displayName;
+    }
+    final remoteParticipant = _remoteParticipantForUser(normalizedUserId);
+    if (remoteParticipant != null) {
+      return resolveRemoteParticipantLabel(
+        name: remoteParticipant.name,
+        identity: remoteParticipant.identity,
+        index: 0,
+      );
+    }
+    if (normalizedUserId.length <= 8) {
+      return 'Участник';
+    }
+    return 'Участник ${normalizedUserId.substring(0, 6)}';
+  }
+
+  Future<void> _nudgeWaitingGroupParticipants() async {
+    final waitingIds = _waitingGroupParticipantIds;
+    if (waitingIds.isEmpty || _isNudgingGroupParticipants) {
+      return;
+    }
+    setState(() => _isNudgingGroupParticipants = true);
+    try {
+      await widget.coordinator.nudgeCallParticipants(
+        _resolvedCall.id,
+        participantIds: waitingIds,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Повторно зовём: ${_formatParticipantCount(waitingIds.length)}',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Не удалось позвать повторно: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isNudgingGroupParticipants = false);
+      }
+    }
+  }
 
   List<RemoteParticipant> get _remoteParticipants =>
       widget.coordinator.room?.remoteParticipants.values.toList() ??
@@ -704,8 +860,7 @@ class _CallScreenState extends State<CallScreen> {
             // on screen to look at.
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: (_isVideoCall &&
-                      _resolvedCall.state == CallState.active)
+              onTap: (_isVideoCall && _resolvedCall.state == CallState.active)
                   ? _toggleVideoChromeVisibility
                   : null,
               // Stage normally shows the remote feed; when the user
@@ -749,8 +904,8 @@ class _CallScreenState extends State<CallScreen> {
                     duration: const Duration(milliseconds: 240),
                     curve: Curves.easeOutCubic,
                     opacity: (_isVideoCall &&
-                                _resolvedCall.state == CallState.active &&
-                                !_videoChromeVisible)
+                            _resolvedCall.state == CallState.active &&
+                            !_videoChromeVisible)
                         ? 0.0
                         : 1.0,
                     child: IgnorePointer(
@@ -758,59 +913,72 @@ class _CallScreenState extends State<CallScreen> {
                           _resolvedCall.state == CallState.active &&
                           !_videoChromeVisible,
                       child: GlassPanel(
-                    borderRadius: BorderRadius.circular(28),
-                    padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-                    child: Column(
-                      children: [
-                        Text(
-                          widget.title,
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _statusLabel(),
-                          style:
-                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        borderRadius: BorderRadius.circular(28),
+                        padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                        child: Column(
+                          children: [
+                            Text(
+                              widget.title,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineSmall
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _statusLabel(),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(
                                     color: Colors.white.withValues(alpha: 0.82),
                                   ),
-                          textAlign: TextAlign.center,
+                              textAlign: TextAlign.center,
+                            ),
+                            if (_isGroupCall) ...[
+                              const SizedBox(height: 12),
+                              _GroupCallRoster(
+                                participants: _groupCallParticipants,
+                                isNudging: _isNudgingGroupParticipants,
+                                onNudgeWaiting:
+                                    _waitingGroupParticipantIds.isEmpty
+                                        ? null
+                                        : _nudgeWaitingGroupParticipants,
+                              ),
+                            ],
+                            if (_resolvedCall.state == CallState.active) ...[
+                              const SizedBox(height: 12),
+                              CallConnectionQualityBadge(
+                                quality: widget
+                                    .coordinator.displayedConnectionQuality,
+                                isReconnecting:
+                                    widget.coordinator.isReconnectingRoom,
+                              ),
+                            ],
+                            if (_showReconnectBanner) ...[
+                              const SizedBox(height: 12),
+                              _ReconnectBanner(
+                                isReconnecting:
+                                    widget.coordinator.isReconnectingRoom,
+                                isRestored: widget
+                                    .coordinator.showReconnectRestoredBanner,
+                                message: widget.coordinator.connectionError,
+                              ),
+                            ],
+                            if (showPermissionSettingsCta) ...[
+                              const SizedBox(height: 12),
+                              FilledButton.icon(
+                                onPressed: _openSystemSettings,
+                                icon: const Icon(Icons.settings_rounded),
+                                label: const Text('Открыть настройки'),
+                              ),
+                            ],
+                          ],
                         ),
-                        if (_resolvedCall.state == CallState.active) ...[
-                          const SizedBox(height: 12),
-                          CallConnectionQualityBadge(
-                            quality:
-                                widget.coordinator.displayedConnectionQuality,
-                            isReconnecting:
-                                widget.coordinator.isReconnectingRoom,
-                          ),
-                        ],
-                        if (_showReconnectBanner) ...[
-                          const SizedBox(height: 12),
-                          _ReconnectBanner(
-                            isReconnecting:
-                                widget.coordinator.isReconnectingRoom,
-                            isRestored:
-                                widget.coordinator.showReconnectRestoredBanner,
-                            message: widget.coordinator.connectionError,
-                          ),
-                        ],
-                        if (showPermissionSettingsCta) ...[
-                          const SizedBox(height: 12),
-                          FilledButton.icon(
-                            onPressed: _openSystemSettings,
-                            icon: const Icon(Icons.settings_rounded),
-                            label: const Text('Открыть настройки'),
-                          ),
-                        ],
-                      ],
-                    ),
                       ),
                     ),
                   ),
@@ -977,8 +1145,8 @@ class _CallScreenState extends State<CallScreen> {
     // Currently-rendered feed in the PIP — swap flips this.
     final showLocal = _pipShowsLocal;
     final track = showLocal ? localTrack : (remoteTrack ?? localTrack);
-    final mirror = showLocal &&
-        widget.coordinator.cameraPosition == CameraPosition.front;
+    final mirror =
+        showLocal && widget.coordinator.cameraPosition == CameraPosition.front;
     // Track whether the current pointer interaction has moved enough
     // to count as a drag. Without this, a quick tap that travels even
     // a few pixels was being claimed by the pan recogniser and the
@@ -1070,9 +1238,8 @@ class _CallScreenState extends State<CallScreen> {
             child: VideoTrackRenderer(
               track,
               fit: VideoViewFit.cover,
-              mirrorMode: mirror
-                  ? VideoViewMirrorMode.mirror
-                  : VideoViewMirrorMode.off,
+              mirrorMode:
+                  mirror ? VideoViewMirrorMode.mirror : VideoViewMirrorMode.off,
             ),
           ),
         ),
@@ -1222,6 +1389,277 @@ class _RemoteTileData {
 
   final VideoTrack? track;
   final String label;
+}
+
+enum _GroupCallParticipantConnectionState {
+  connected,
+  waiting,
+  notConnected,
+}
+
+class _GroupCallParticipantStatus {
+  const _GroupCallParticipantStatus({
+    required this.userId,
+    required this.displayName,
+    required this.state,
+    required this.isCurrentUser,
+    this.photoUrl,
+  });
+
+  final String userId;
+  final String displayName;
+  final String? photoUrl;
+  final _GroupCallParticipantConnectionState state;
+  final bool isCurrentUser;
+}
+
+class _GroupCallRoster extends StatelessWidget {
+  const _GroupCallRoster({
+    required this.participants,
+    required this.isNudging,
+    this.onNudgeWaiting,
+  });
+
+  final List<_GroupCallParticipantStatus> participants;
+  final bool isNudging;
+  final VoidCallback? onNudgeWaiting;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final connectedCount = participants
+        .where(
+          (participant) =>
+              participant.state ==
+              _GroupCallParticipantConnectionState.connected,
+        )
+        .length;
+    final waitingCount = participants
+        .where(
+          (participant) =>
+              participant.state == _GroupCallParticipantConnectionState.waiting,
+        )
+        .length;
+    final visibleParticipants = participants.take(8).toList(growable: false);
+    final hiddenCount = participants.length - visibleParticipants.length;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.groups_2_rounded,
+                  size: 18,
+                  color: Colors.white.withValues(alpha: 0.88),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    waitingCount == 0
+                        ? '$connectedCount в звонке'
+                        : '$connectedCount в звонке · $waitingCount ждут',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (waitingCount > 0) ...[
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: isNudging ? null : onNudgeWaiting,
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    icon: isNudging
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.notifications_active_rounded),
+                    label: const Text('Позвать ещё'),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ...visibleParticipants.map(_GroupCallParticipantChip.new),
+                if (hiddenCount > 0)
+                  _GroupCallOverflowChip(hiddenCount: hiddenCount),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupCallParticipantChip extends StatelessWidget {
+  const _GroupCallParticipantChip(this.participant);
+
+  final _GroupCallParticipantStatus participant;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final stateColor = _stateColor(participant.state);
+    final avatarImage = buildAvatarImageProvider(participant.photoUrl);
+    final initial = participant.displayName.trim().isNotEmpty
+        ? participant.displayName.trim()[0].toUpperCase()
+        : '?';
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 188),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.11),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(6, 5, 10, 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  CircleAvatar(
+                    radius: 13,
+                    backgroundColor: Colors.white.withValues(alpha: 0.18),
+                    backgroundImage: avatarImage,
+                    child: avatarImage == null
+                        ? Text(
+                            initial,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          )
+                        : null,
+                  ),
+                  Positioned(
+                    right: -1,
+                    bottom: -1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: stateColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFF111318),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: const SizedBox(width: 8, height: 8),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      participant.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      _stateLabel(participant.state),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.72),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _stateColor(_GroupCallParticipantConnectionState state) {
+    switch (state) {
+      case _GroupCallParticipantConnectionState.connected:
+        return const Color(0xFF37B24D);
+      case _GroupCallParticipantConnectionState.waiting:
+        return const Color(0xFFF59F00);
+      case _GroupCallParticipantConnectionState.notConnected:
+        return const Color(0xFFADB5BD);
+    }
+  }
+
+  String _stateLabel(_GroupCallParticipantConnectionState state) {
+    switch (state) {
+      case _GroupCallParticipantConnectionState.connected:
+        return 'В звонке';
+      case _GroupCallParticipantConnectionState.waiting:
+        return 'Ждём';
+      case _GroupCallParticipantConnectionState.notConnected:
+        return 'Не подключился';
+    }
+  }
+}
+
+class _GroupCallOverflowChip extends StatelessWidget {
+  const _GroupCallOverflowChip({required this.hiddenCount});
+
+  final int hiddenCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Text(
+          '+$hiddenCount',
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+        ),
+      ),
+    );
+  }
 }
 
 /// G1: подпись плитки участника группового звонка — имя, иначе identity,
@@ -1563,8 +2001,7 @@ class _CallActionButtonState extends State<_CallActionButton>
     final ctrl = _pulseCtrl;
     if (ctrl == null) return;
     final disable = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    final bindingName =
-        WidgetsBinding.instance.runtimeType.toString();
+    final bindingName = WidgetsBinding.instance.runtimeType.toString();
     final inTest = bindingName.contains('TestWidgetsFlutterBinding');
     if (disable || inTest) {
       ctrl.stop();
@@ -1704,8 +2141,7 @@ class _CollapseToggle extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

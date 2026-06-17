@@ -179,6 +179,52 @@ void main() {
     });
   });
 
+  test('CustomApiCallService nudges selected call participants', () async {
+    String? requestedPath;
+    String? requestedMethod;
+    Map<String, dynamic>? requestBody;
+    final client = MockClient((request) async {
+      requestedPath = request.url.path;
+      requestedMethod = request.method;
+      requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+      if (request.url.path == '/v1/calls/call-1/nudge' &&
+          request.method == 'POST') {
+        return http.Response(
+          jsonEncode({
+            'call': _callPayload(
+              state: 'active',
+              mediaMode: 'video',
+              includeSession: true,
+            ),
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+    final authService = await _createAuthService(client);
+    final service = CustomApiCallService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final call = await service.nudgeCallParticipants(
+      'call-1',
+      participantIds: const [' user-2 ', '', 'user-3', 'user-2'],
+    );
+
+    expect(call.state, CallState.active);
+    expect(requestedPath, '/v1/calls/call-1/nudge');
+    expect(requestedMethod, 'POST');
+    expect(requestBody, {
+      'participantIds': ['user-2', 'user-3'],
+    });
+  });
+
   test('CustomApiCallService emits call events from realtime payloads',
       () async {
     final client = MockClient((request) async {

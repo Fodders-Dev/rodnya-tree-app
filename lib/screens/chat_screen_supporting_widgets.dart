@@ -366,8 +366,7 @@ class _VoiceWaveformScrubber extends StatefulWidget {
   final ValueChanged<double>? onSeekFraction;
 
   @override
-  State<_VoiceWaveformScrubber> createState() =>
-      _VoiceWaveformScrubberState();
+  State<_VoiceWaveformScrubber> createState() => _VoiceWaveformScrubberState();
 }
 
 class _VoiceWaveformScrubberState extends State<_VoiceWaveformScrubber>
@@ -403,8 +402,7 @@ class _VoiceWaveformScrubberState extends State<_VoiceWaveformScrubber>
   /// binding so widget tests' pumpAndSettle doesn't hang on the
   /// repeating controller.
   void _syncPulse() {
-    final bindingName =
-        WidgetsBinding.instance.runtimeType.toString();
+    final bindingName = WidgetsBinding.instance.runtimeType.toString();
     final inTest = bindingName.contains('TestWidgetsFlutterBinding');
     if (widget.isPlaying && !inTest) {
       if (!_pulseCtrl.isAnimating) {
@@ -438,9 +436,8 @@ class _VoiceWaveformScrubberState extends State<_VoiceWaveformScrubber>
 
           // Effective progress: while user is dragging, follow the
           // finger; otherwise mirror the player's position.
-          final visualProgress = (_dragFraction ?? widget.progress)
-              .clamp(0.0, 1.0)
-              .toDouble();
+          final visualProgress =
+              (_dragFraction ?? widget.progress).clamp(0.0, 1.0).toDouble();
 
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
@@ -503,6 +500,7 @@ class _VoiceWaveformPainter extends CustomPainter {
   final double progress;
   final Color activeColor;
   final Color inactiveColor;
+
   /// 0..1 — current phase of the breathing pulse animation. Only used
   /// when [isPlaying] is true to give bars near the playback head a
   /// subtle "alive" feel; off otherwise.
@@ -852,6 +850,23 @@ class _LocalMediaGrid extends StatelessWidget {
 /// log file). On tap the bubble expands to the full text inline.
 const int _kLongMessageCollapseAt = 600;
 
+final RegExp _chatMessageUrlPattern = RegExp(
+  r'((?:https?://|www\.)[^\s<>()]+|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s<>()]*)?)',
+  caseSensitive: false,
+);
+
+class _ChatMessageUrlMatch {
+  const _ChatMessageUrlMatch({
+    required this.start,
+    required this.end,
+    required this.text,
+  });
+
+  final int start;
+  final int end;
+  final String text;
+}
+
 class _HighlightedMessageText extends StatefulWidget {
   const _HighlightedMessageText({
     required this.text,
@@ -869,6 +884,7 @@ class _HighlightedMessageText extends StatefulWidget {
 }
 
 class _HighlightedMessageTextState extends State<_HighlightedMessageText> {
+  final List<TapGestureRecognizer> _linkRecognizers = <TapGestureRecognizer>[];
   bool _expanded = false;
 
   bool get _isLong => widget.text.length > _kLongMessageCollapseAt;
@@ -886,6 +902,12 @@ class _HighlightedMessageTextState extends State<_HighlightedMessageText> {
   }
 
   @override
+  void dispose() {
+    _disposeLinkRecognizers();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(covariant _HighlightedMessageText oldWidget) {
     super.didUpdateWidget(oldWidget);
     // When the user types into the search bar we want any long
@@ -893,80 +915,33 @@ class _HighlightedMessageTextState extends State<_HighlightedMessageText> {
     // a match buried past the truncation point is invisible.
     final query = widget.query.trim();
     if (!_expanded && query.isNotEmpty && _isLong) {
-      final hit = widget.text
-          .toLowerCase()
-          .indexOf(query.toLowerCase());
+      final hit = widget.text.toLowerCase().indexOf(query.toLowerCase());
       if (hit >= _kLongMessageCollapseAt) {
         _expanded = true;
       }
     }
   }
 
+  void _disposeLinkRecognizers() {
+    for (final recognizer in _linkRecognizers) {
+      recognizer.dispose();
+    }
+    _linkRecognizers.clear();
+  }
+
   @override
   Widget build(BuildContext context) {
+    _disposeLinkRecognizers();
     final normalizedQuery = widget.query.trim();
     final body = _renderedText;
     final color = widget.color;
 
-    Widget textWidget;
-    if (normalizedQuery.isEmpty) {
-      textWidget = Text(
-        body,
-        // M3 (50+): 16/1.35 — раньше 14.5 по веб-референсу, но на
-        // 720×1560 старшим читать тяжело; 16 — минимум для сообщений.
-        style: TextStyle(
-          color: color,
-          fontSize: 16,
-          height: 1.35,
-        ),
-      );
-    } else {
-      final lowerText = body.toLowerCase();
-      final lowerQuery = normalizedQuery.toLowerCase();
-      final spans = <TextSpan>[];
-      var currentIndex = 0;
-
-      while (currentIndex < body.length) {
-        final nextMatch = lowerText.indexOf(lowerQuery, currentIndex);
-        if (nextMatch == -1) {
-          spans.add(
-            TextSpan(
-              text: body.substring(currentIndex),
-              style: TextStyle(color: color),
-            ),
-          );
-          break;
-        }
-        if (nextMatch > currentIndex) {
-          spans.add(
-            TextSpan(
-              text: body.substring(currentIndex, nextMatch),
-              style: TextStyle(color: color),
-            ),
-          );
-        }
-        final matchEnd = nextMatch + normalizedQuery.length;
-        spans.add(
-          TextSpan(
-            text: body.substring(nextMatch, matchEnd),
-            style: TextStyle(
-              color: color,
-              backgroundColor: Colors.amber.withValues(alpha: 0.55),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        );
-        currentIndex = matchEnd;
-      }
-
-      textWidget = RichText(
-        text: TextSpan(
-          // M3: тот же 16, что и обычный текст сообщения.
-          style: const TextStyle(fontSize: 16, height: 1.35),
-          children: spans,
-        ),
-      );
-    }
+    final textWidget = _buildTextWidget(
+      context: context,
+      body: body,
+      normalizedQuery: normalizedQuery,
+      color: color,
+    );
 
     if (!_isLong) return textWidget;
 
@@ -995,6 +970,260 @@ class _HighlightedMessageTextState extends State<_HighlightedMessageText> {
         ),
       ],
     );
+  }
+
+  Widget _buildTextWidget({
+    required BuildContext context,
+    required String body,
+    required String normalizedQuery,
+    required Color color,
+  }) {
+    final urlMatches = _findUrlMatches(body);
+    if (normalizedQuery.isEmpty && urlMatches.isEmpty) {
+      return Text(
+        body,
+        // M3 (50+): 16/1.35 — раньше 14.5 по веб-референсу, но на
+        // 720×1560 старшим читать тяжело; 16 — минимум для сообщений.
+        style: TextStyle(
+          color: color,
+          fontSize: 16,
+          height: 1.35,
+        ),
+      );
+    }
+
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final textBrightness = ThemeData.estimateBrightnessForColor(color);
+    final linkColor = textBrightness == Brightness.dark
+        ? scheme.primary
+        : scheme.primaryContainer;
+    final baseStyle = TextStyle(
+      color: color,
+      fontSize: 16,
+      height: 1.35,
+    );
+    final linkStyle = baseStyle.copyWith(
+      color: linkColor,
+      fontWeight: FontWeight.w800,
+      decoration: TextDecoration.underline,
+      decorationColor: linkColor.withValues(alpha: 0.7),
+    );
+    final spans = <TextSpan>[];
+    var currentIndex = 0;
+
+    for (final match in urlMatches) {
+      if (match.start < currentIndex) {
+        continue;
+      }
+      if (match.start > currentIndex) {
+        _appendHighlightedSpans(
+          spans: spans,
+          text: body.substring(currentIndex, match.start),
+          query: normalizedQuery,
+          style: baseStyle,
+        );
+      }
+
+      final recognizer = TapGestureRecognizer()
+        ..onTap = () => unawaited(_openMessageUrl(match.text));
+      _linkRecognizers.add(recognizer);
+      _appendHighlightedSpans(
+        spans: spans,
+        text: match.text,
+        query: normalizedQuery,
+        style: linkStyle,
+        recognizer: recognizer,
+      );
+      currentIndex = match.end;
+    }
+
+    if (currentIndex < body.length) {
+      _appendHighlightedSpans(
+        spans: spans,
+        text: body.substring(currentIndex),
+        query: normalizedQuery,
+        style: baseStyle,
+      );
+    }
+
+    return RichText(
+      text: TextSpan(children: spans),
+    );
+  }
+
+  List<_ChatMessageUrlMatch> _findUrlMatches(String text) {
+    final matches = <_ChatMessageUrlMatch>[];
+    for (final match in _chatMessageUrlPattern.allMatches(text)) {
+      final raw = match.group(0);
+      if (raw == null || raw.trim().isEmpty) {
+        continue;
+      }
+      final trimmed = _trimTrailingUrlPunctuation(raw);
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      matches.add(
+        _ChatMessageUrlMatch(
+          start: match.start,
+          end: match.start + trimmed.length,
+          text: trimmed,
+        ),
+      );
+    }
+    return matches;
+  }
+
+  String _trimTrailingUrlPunctuation(String value) {
+    var end = value.length;
+    while (end > 0) {
+      final char = value[end - 1];
+      if (char == '.' ||
+          char == ',' ||
+          char == '!' ||
+          char == '?' ||
+          char == ';' ||
+          char == ':' ||
+          char == ')' ||
+          char == ']' ||
+          char == '}' ||
+          char == '"' ||
+          char == '\'' ||
+          char == '»') {
+        end -= 1;
+        continue;
+      }
+      break;
+    }
+    return value.substring(0, end);
+  }
+
+  void _appendHighlightedSpans({
+    required List<TextSpan> spans,
+    required String text,
+    required String query,
+    required TextStyle style,
+    GestureRecognizer? recognizer,
+  }) {
+    if (text.isEmpty) {
+      return;
+    }
+    if (query.isEmpty) {
+      spans.add(
+        TextSpan(
+          text: text,
+          style: style,
+          recognizer: recognizer,
+        ),
+      );
+      return;
+    }
+
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    var currentIndex = 0;
+    while (currentIndex < text.length) {
+      final nextMatch = lowerText.indexOf(lowerQuery, currentIndex);
+      if (nextMatch == -1) {
+        spans.add(
+          TextSpan(
+            text: text.substring(currentIndex),
+            style: style,
+            recognizer: recognizer,
+          ),
+        );
+        break;
+      }
+      if (nextMatch > currentIndex) {
+        spans.add(
+          TextSpan(
+            text: text.substring(currentIndex, nextMatch),
+            style: style,
+            recognizer: recognizer,
+          ),
+        );
+      }
+      final matchEnd = nextMatch + query.length;
+      spans.add(
+        TextSpan(
+          text: text.substring(nextMatch, matchEnd),
+          style: style.copyWith(
+            backgroundColor: Colors.amber.withValues(alpha: 0.55),
+            fontWeight: FontWeight.w800,
+          ),
+          recognizer: recognizer,
+        ),
+      );
+      currentIndex = matchEnd;
+    }
+  }
+
+  Future<void> _openMessageUrl(String rawUrl) async {
+    final uri = _normalizeMessageUrl(rawUrl);
+    if (uri == null) {
+      return;
+    }
+
+    final internalRoute = _internalRouteFor(uri);
+    if (internalRoute != null) {
+      if (!mounted) {
+        return;
+      }
+      GoRouter.of(context).go(internalRoute);
+      return;
+    }
+
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) {
+        await launchUrl(uri);
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть ссылку.')),
+      );
+    }
+  }
+
+  Uri? _normalizeMessageUrl(String rawUrl) {
+    var value = rawUrl.trim();
+    if (value.isEmpty) {
+      return null;
+    }
+    if (value.startsWith('www.')) {
+      value = 'https://$value';
+    } else if (!value.contains('://')) {
+      value = 'https://$value';
+    }
+    final uri = Uri.tryParse(value);
+    if (uri == null || uri.host.trim().isEmpty) {
+      return null;
+    }
+    return uri;
+  }
+
+  String? _internalRouteFor(Uri uri) {
+    final host = uri.host.toLowerCase();
+    final isRodnyaHost =
+        host == 'rodnya-tree.ru' || host == 'www.rodnya-tree.ru';
+    if (!isRodnyaHost) {
+      return null;
+    }
+
+    final fragment = uri.fragment.trim();
+    if (fragment.startsWith('/')) {
+      return fragment;
+    }
+
+    final path = uri.path.trim().isEmpty ? '/' : uri.path.trim();
+    final route = uri.hasQuery ? '$path?${uri.query}' : path;
+    return route == '/' ? null : route;
   }
 }
 
@@ -2220,8 +2449,7 @@ class _AttachmentViewerThumbnail extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            border:
-                Border.all(color: borderColor, width: isSelected ? 2 : 1),
+            border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
             color: Colors.white.withValues(alpha: 0.08),
           ),
           child: Stack(
@@ -2473,7 +2701,8 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
       // If we're at the end of the file, restart from 0.
       final pos = controller.value.position;
       final dur = controller.value.duration;
-      if (dur > Duration.zero && pos >= dur - const Duration(milliseconds: 250)) {
+      if (dur > Duration.zero &&
+          pos >= dur - const Duration(milliseconds: 250)) {
         await controller.seekTo(Duration.zero);
       }
       await controller.play();
@@ -2560,7 +2789,8 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
         }
         final duration = controller.value.duration;
         final position = _seeking ? _scrubPosition : controller.value.position;
-        final maxMs = duration.inMilliseconds <= 0 ? 1 : duration.inMilliseconds;
+        final maxMs =
+            duration.inMilliseconds <= 0 ? 1 : duration.inMilliseconds;
         final scrubMs = position.inMilliseconds.clamp(0, maxMs).toDouble();
         return Center(
           child: ConstrainedBox(
@@ -2700,8 +2930,7 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
                     },
                     onChanged: (value) {
                       setState(() {
-                        _scrubPosition =
-                            Duration(milliseconds: value.round());
+                        _scrubPosition = Duration(milliseconds: value.round());
                       });
                     },
                     onChangeEnd: (value) async {
@@ -2727,9 +2956,7 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
                 onPressed: _toggleMute,
                 tooltip: _isMuted ? 'Включить звук' : 'Выключить звук',
                 icon: Icon(
-                  _isMuted
-                      ? Icons.volume_off_rounded
-                      : Icons.volume_up_rounded,
+                  _isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
                   color: Colors.white,
                 ),
               ),
@@ -3013,7 +3240,8 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
-                    if (widget.posterUrl != null && widget.posterUrl!.isNotEmpty)
+                    if (widget.posterUrl != null &&
+                        widget.posterUrl!.isNotEmpty)
                       _AttachmentImage(
                         url: widget.posterUrl,
                         fit: BoxFit.cover,
@@ -3251,8 +3479,7 @@ class _SwipeDownDismissibleImage extends StatefulWidget {
       _SwipeDownDismissibleImageState();
 }
 
-class _SwipeDownDismissibleImageState
-    extends State<_SwipeDownDismissibleImage>
+class _SwipeDownDismissibleImageState extends State<_SwipeDownDismissibleImage>
     with SingleTickerProviderStateMixin {
   final TransformationController _transform = TransformationController();
   late final AnimationController _snap;
@@ -3319,6 +3546,7 @@ class _SwipeDownDismissibleImageState
       if (!mounted) return;
       setState(() => _dragOffset = tween.value);
     }
+
     tween.addListener(listener);
     await _snap.forward();
     tween.removeListener(listener);
@@ -3350,8 +3578,7 @@ class _SwipeDownDismissibleImageState
           // gestures fall through means the parent PageView still
           // handles swipe-between-pages.
           behavior: HitTestBehavior.translucent,
-          onVerticalDragUpdate:
-              _isAtRestingScale ? _handleDragUpdate : null,
+          onVerticalDragUpdate: _isAtRestingScale ? _handleDragUpdate : null,
           onVerticalDragEnd: _isAtRestingScale ? _handleDragEnd : null,
           child: Transform.translate(
             offset: _dragOffset,
