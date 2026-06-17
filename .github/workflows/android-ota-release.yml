@@ -68,8 +68,23 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          missing=()
+          for name in \
+            RELEASE_KEYSTORE_BASE64 \
+            RELEASE_STORE_PASSWORD \
+            RELEASE_KEY_ALIAS \
+            RELEASE_KEY_PASSWORD
+          do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing release signing secrets: ${missing[*]}"
+            exit 1
+          fi
           mkdir -p android/KEYS
-          printenv RELEASE_KEYSTORE_BASE64 | base64 -d > android/KEYS/my-release-key.jks
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > android/KEYS/my-release-key.jks
           umask 077
           cat > android/release-signing.properties <<EOF
           storeFile=KEYS/my-release-key.jks
