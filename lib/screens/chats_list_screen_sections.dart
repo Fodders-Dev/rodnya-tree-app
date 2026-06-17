@@ -34,24 +34,12 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
     );
 
     if (!_isWideLayout(context)) {
-      return Column(
-        children: [
-          _buildChatsOverview(
-            theme,
-            isFriendsTree: isFriendsTree,
-            selectedTreeName: selectedTreeName,
-            showLoadingPulse: showInitialLoading,
-          ),
-          _buildSearchBar(theme),
-          _buildFilterBar(theme),
-          Expanded(
-            child: showInitialLoading
-                ? _buildInitialLoadingState(theme)
-                : _chatPreviews.isEmpty && _searchQuery.isEmpty
-                    ? _buildEmptyState(theme)
-                    : _buildChatList(theme, currentUserId),
-          ),
-        ],
+      return _buildMobileShell(
+        theme: theme,
+        currentUserId: currentUserId,
+        isFriendsTree: isFriendsTree,
+        selectedTreeName: selectedTreeName,
+        showInitialLoading: showInitialLoading,
       );
     }
 
@@ -156,6 +144,35 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
     );
   }
 
+  Widget _buildMobileShell({
+    required ThemeData theme,
+    required String currentUserId,
+    required bool isFriendsTree,
+    required String? selectedTreeName,
+    required bool showInitialLoading,
+  }) {
+    return Column(
+      children: [
+        _buildChatsOverview(
+          theme,
+          isFriendsTree: isFriendsTree,
+          selectedTreeName: selectedTreeName,
+          showLoadingPulse: showInitialLoading,
+          compact: true,
+        ),
+        _buildSearchBar(theme, compact: true),
+        _buildFilterBar(theme, compact: true),
+        Expanded(
+          child: showInitialLoading
+              ? _buildInitialLoadingState(theme)
+              : _chatPreviews.isEmpty && _searchQuery.isEmpty
+                  ? _buildEmptyState(theme)
+                  : _buildChatList(theme, currentUserId),
+        ),
+      ],
+    );
+  }
+
   Widget _buildDesktopHint(
     ThemeData theme, {
     required IconData icon,
@@ -204,6 +221,7 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
     required bool isFriendsTree,
     required String? selectedTreeName,
     required bool showLoadingPulse,
+    bool compact = false,
   }) {
     // Slim overview: just the active context pill plus a single unread/all
     // status chip. Detailed counts live further down inside individual list
@@ -213,34 +231,49 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
       (sum, chat) => sum + chat.unreadCount,
     );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          _buildContextPill(
-            theme,
-            isFriendsTree: isFriendsTree,
-            label: selectedTreeName ??
-                (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'),
-          ),
-          _buildChatStatChip(
-            theme,
-            icon: unreadCount > 0
-                ? Icons.mark_chat_unread_outlined
-                : Icons.mark_chat_read_outlined,
-            label: unreadCount > 0
-                ? _countLabel(
-                    unreadCount,
-                    one: 'непрочитанный',
-                    few: 'непрочитанных',
-                    many: 'непрочитанных',
-                  )
-                : 'Все прочитано',
-            highlighted: unreadCount > 0,
-          ),
-        ],
+      padding: EdgeInsets.fromLTRB(12, compact ? 6 : 10, 12, 0),
+      child: SizedBox(
+        height: compact ? 34 : null,
+        child: Row(
+          children: [
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _buildContextPill(
+                  theme,
+                  isFriendsTree: isFriendsTree,
+                  label: selectedTreeName ??
+                      (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'),
+                  compact: compact,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: _buildChatStatChip(
+                  theme,
+                  icon: unreadCount > 0
+                      ? Icons.mark_chat_unread_outlined
+                      : Icons.mark_chat_read_outlined,
+                  label: unreadCount > 0
+                      ? (compact
+                          ? '$unreadCount новых'
+                          : _countLabel(
+                              unreadCount,
+                              one: 'непрочитанный',
+                              few: 'непрочитанных',
+                              many: 'непрочитанных',
+                            ))
+                      : (compact ? 'Прочитано' : 'Все прочитано'),
+                  highlighted: unreadCount > 0,
+                  compact: compact,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -249,9 +282,13 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
     ThemeData theme, {
     required bool isFriendsTree,
     required String label,
+    bool compact = false,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 9 : 10,
+        vertical: compact ? 5 : 6,
+      ),
       decoration: BoxDecoration(
         color: theme.colorScheme.primary.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(999),
@@ -274,7 +311,10 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelLarge?.copyWith(
+              style: (compact
+                      ? theme.textTheme.labelMedium
+                      : theme.textTheme.labelLarge)
+                  ?.copyWith(
                 color: theme.colorScheme.primary,
                 fontWeight: FontWeight.w700,
               ),
@@ -290,9 +330,13 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
     required IconData icon,
     required String label,
     bool highlighted = false,
+    bool compact = false,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 9 : 10,
+        vertical: compact ? 5 : 6,
+      ),
       decoration: BoxDecoration(
         color: highlighted
             ? theme.colorScheme.primary.withValues(alpha: 0.10)
@@ -304,11 +348,17 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
         children: [
           Icon(icon, size: 16, color: theme.colorScheme.primary),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: highlighted ? theme.colorScheme.primary : null,
-              fontWeight: FontWeight.w700,
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: (compact
+                      ? theme.textTheme.labelMedium
+                      : theme.textTheme.labelLarge)
+                  ?.copyWith(
+                color: highlighted ? theme.colorScheme.primary : null,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -316,79 +366,137 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
     );
   }
 
-  Widget _buildSearchBar(ThemeData theme) {
+  Widget _buildSearchBar(ThemeData theme, {bool compact = false}) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      padding: EdgeInsets.fromLTRB(12, compact ? 5 : 8, 12, compact ? 6 : 10),
       child: GlassPanel(
         padding: EdgeInsets.zero,
         blur: 12,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(compact ? 16 : 18),
         color: theme.colorScheme.surface.withValues(alpha: 0.72),
-        child: TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          onChanged: (value) {
-            _setSearchQuery(value.trim().toLowerCase());
-          },
-          decoration: InputDecoration(
-            hintText: context.read<TreeProvider>().selectedTreeKind ==
-                    TreeKind.friends
-                ? 'Поиск чатов и людей круга'
-                : 'Поиск чатов и людей',
-            prefixIcon: const Icon(Icons.search, size: 20),
-            suffixIcon: _searchQuery.isNotEmpty
-                ? IconButton(
-                    tooltip: 'Очистить поиск',
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () {
-                      _clearSearchQuery();
-                    },
-                  )
-                : null,
-            filled: false,
-            contentPadding:
-                const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-            border: InputBorder.none,
+        child: SizedBox(
+          height: compact ? 44 : null,
+          child: TextField(
+            controller: _searchController,
+            focusNode: _searchFocusNode,
+            textAlignVertical: TextAlignVertical.center,
+            onChanged: (value) {
+              _setSearchQuery(value.trim().toLowerCase());
+            },
+            decoration: InputDecoration(
+              hintText: context.read<TreeProvider>().selectedTreeKind ==
+                      TreeKind.friends
+                  ? 'Поиск чатов и людей круга'
+                  : 'Поиск чатов и людей',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      tooltip: 'Очистить поиск',
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        _clearSearchQuery();
+                      },
+                    )
+                  : null,
+              filled: false,
+              isDense: compact,
+              contentPadding: EdgeInsets.symmetric(
+                vertical: compact ? 0 : 14,
+                horizontal: 14,
+              ),
+              border: InputBorder.none,
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildFilterBar(ThemeData theme) {
+  Widget _buildFilterBar(ThemeData theme, {bool compact = false}) {
     final archivedCount = _archivedPreviewCount();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          ChoiceChip(
-            label: const Text('Все'),
-            selected: _activeFilter == _ChatsVisibilityFilter.all,
-            onSelected: (_) {
-              _setActiveFilter(_ChatsVisibilityFilter.all);
-            },
-          ),
-          ChoiceChip(
-            label: const Text('Непрочитанные'),
-            selected: _activeFilter == _ChatsVisibilityFilter.unread,
-            onSelected: (_) {
-              _setActiveFilter(_ChatsVisibilityFilter.unread);
-            },
-          ),
-          ChoiceChip(
-            label: Text(
-              archivedCount > 0 ? 'Архив ($archivedCount)' : 'Архив',
+      padding: EdgeInsets.fromLTRB(12, 0, 12, compact ? 4 : 12),
+      child: compact
+          ? SizedBox(
+              height: 38,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                children: _buildFilterChips(
+                  theme,
+                  archivedCount: archivedCount,
+                  compact: true,
+                ),
+              ),
+            )
+          : Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _buildFilterChips(
+                theme,
+                archivedCount: archivedCount,
+              ),
             ),
-            selected: _activeFilter == _ChatsVisibilityFilter.archived,
-            onSelected: (_) {
-              _setActiveFilter(_ChatsVisibilityFilter.archived);
-            },
-          ),
-        ],
-      ),
     );
+  }
+
+  List<Widget> _buildFilterChips(
+    ThemeData theme, {
+    required int archivedCount,
+    bool compact = false,
+  }) {
+    final chipPadding = compact
+        ? const EdgeInsets.symmetric(horizontal: 10)
+        : const EdgeInsets.symmetric(horizontal: 12);
+    return [
+      Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          key: const ValueKey<String>('chats-filter-all'),
+          label: const Text('Все'),
+          selected: _activeFilter == _ChatsVisibilityFilter.all,
+          onSelected: (_) {
+            _setActiveFilter(_ChatsVisibilityFilter.all);
+          },
+          labelPadding: chipPadding,
+          visualDensity: compact
+              ? const VisualDensity(horizontal: -2, vertical: -2)
+              : null,
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          key: const ValueKey<String>('chats-filter-unread'),
+          label: const Text('Непрочитанные'),
+          selected: _activeFilter == _ChatsVisibilityFilter.unread,
+          onSelected: (_) {
+            _setActiveFilter(_ChatsVisibilityFilter.unread);
+          },
+          labelPadding: chipPadding,
+          visualDensity: compact
+              ? const VisualDensity(horizontal: -2, vertical: -2)
+              : null,
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          key: const ValueKey<String>('chats-filter-archive'),
+          label: Text(
+            archivedCount > 0 ? 'Архив ($archivedCount)' : 'Архив',
+          ),
+          selected: _activeFilter == _ChatsVisibilityFilter.archived,
+          onSelected: (_) {
+            _setActiveFilter(_ChatsVisibilityFilter.archived);
+          },
+          labelPadding: chipPadding,
+          visualDensity: compact
+              ? const VisualDensity(horizontal: -2, vertical: -2)
+              : null,
+        ),
+      ),
+    ];
   }
 
   Widget _buildFilterEmptyState(

@@ -674,7 +674,35 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Семья Кузнецовых'), findsAtLeastNWidgets(1));
-    expect(find.text('Все прочитано'), findsOneWidget);
+    expect(find.text('Прочитано'), findsOneWidget);
+  });
+
+  testWidgets('Mobile chat filters stay in one compact row', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    final allTop = tester
+        .getTopLeft(
+          find.byKey(const ValueKey<String>('chats-filter-all')),
+        )
+        .dy;
+    final unreadTop = tester
+        .getTopLeft(
+          find.byKey(const ValueKey<String>('chats-filter-unread')),
+        )
+        .dy;
+    final archiveTop = tester
+        .getTopLeft(
+          find.byKey(const ValueKey<String>('chats-filter-archive')),
+        )
+        .dy;
+
+    expect(unreadTop, allTop);
+    expect(archiveTop, allTop);
   });
 
   testWidgets('ChatsListScreen shows draft preview and draft count',
