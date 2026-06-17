@@ -40,6 +40,19 @@ class CompleteProfileScreen extends StatefulWidget {
 }
 
 class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
+  static const List<String> _priorityCountryCodes = [
+    'RU',
+    'BY',
+    'KZ',
+    'AM',
+    'KG',
+    'UZ',
+    'TJ',
+    'AZ',
+    'GE',
+    'MD',
+  ];
+
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final ProfileServiceInterface _profileService =
       GetIt.I<ProfileServiceInterface>();
@@ -54,7 +67,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
 
   Gender _selectedGender = Gender.unknown;
   DateTime? _birthDate;
-  String? _selectedCountry;
+  String? _selectedCountry = 'Россия';
   String? _countryCode = '+7';
 
   bool _isLoading = false;
@@ -97,7 +110,8 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         _usernameController.text = data.username;
         _selectedGender = data.gender;
         _birthDate = data.birthDate;
-        _selectedCountry = data.countryName;
+        final countryName = data.countryName?.trim() ?? '';
+        _selectedCountry = countryName.isNotEmpty ? countryName : 'Россия';
 
         if (data.phoneNumber.isNotEmpty) {
           final phoneNumber = data.phoneNumber;
@@ -642,6 +656,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
     showCountryPicker(
       context: context,
       showPhoneCode: true,
+      favorite: _priorityCountryCodes,
+      useRootNavigator: true,
+      useSafeArea: true,
       countryListTheme: CountryListThemeData(
         backgroundColor:
             Theme.of(context).colorScheme.surface.withValues(alpha: 0.98),
@@ -668,7 +685,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
       onSelect: (Country country) {
         setState(() {
           _countryCode = '+${country.phoneCode}';
-          _selectedCountry = country.name;
+          _selectedCountry = country.nameLocalized?.trim().isNotEmpty == true
+              ? country.nameLocalized!.trim()
+              : country.name;
         });
       },
     );

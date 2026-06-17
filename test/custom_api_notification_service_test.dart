@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -602,6 +603,110 @@ void main() {
       await service.startForegroundSync();
       expect(registeredDeviceCalls, 1);
 
+      await service.dispose();
+    },
+  );
+
+  test(
+    'CustomApiNotificationService registers refreshed rustore push token',
+    () async {
+      final registeredTokens = <String>[];
+      final tokenUpdates = StreamController<String>.broadcast();
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/push/devices' &&
+            request.method == 'POST') {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          registeredTokens.add(body['token'].toString());
+
+          return http.Response(
+            jsonEncode({
+              'device': {
+                'id': 'device-${registeredTokens.length}',
+                'provider': 'rustore',
+                'platform': 'android',
+              },
+            }),
+            201,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        if (request.url.path == '/v1/notifications' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'notifications': const []}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        if (request.url.path == '/v1/notifications/unread-count' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'totalUnread': 0}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final service = await CustomApiNotificationService.create(
+        preferences: prefs,
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+        pollInterval: const Duration(hours: 1),
+        remotePushTokenProvider: () async => null,
+        remotePushTokenUpdates: tokenUpdates.stream,
+      );
+
+      await service.startForegroundSync();
+      expect(registeredTokens, isEmpty);
+
+      tokenUpdates.add('rustore-token-late');
+      for (var i = 0; i < 10 && registeredTokens.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(registeredTokens, ['rustore-token-late']);
+
+      tokenUpdates.add('rustore-token-late');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        registeredTokens,
+        ['rustore-token-late'],
+        reason: 'same token/user fingerprint should not be duplicated',
+      );
+
+      await tokenUpdates.close();
       await service.dispose();
     },
   );

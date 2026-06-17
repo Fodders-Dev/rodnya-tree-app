@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:country_picker/country_picker.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -144,6 +146,48 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('trees invitations'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'CompleteProfileScreen показывает Россию по умолчанию и русский список стран',
+    (tester) async {
+      final router = GoRouter(
+        initialLocation: '/complete_profile',
+        routes: [
+          GoRoute(
+            path: '/complete_profile',
+            builder: (context, state) => const CompleteProfileScreen(),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp.router(
+          routerConfig: router,
+          locale: const Locale('ru', 'RU'),
+          supportedLocales: const [Locale('ru', 'RU'), Locale('en', 'US')],
+          localizationsDelegates: const [
+            CountryLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Россия'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Россия'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Россия'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Россия'), findsWidgets);
+      expect(find.text('Беларусь'), findsOneWidget);
+      expect(find.text('Казахстан'), findsOneWidget);
+      expect(find.text('Afghanistan'), findsNothing);
     },
   );
 }

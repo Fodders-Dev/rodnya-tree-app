@@ -163,6 +163,8 @@ class RustoreService {
   bool _foregroundWarmupStarted = false;
   final StreamController<RustorePushMessage> _pushMessagesController =
       StreamController<RustorePushMessage>.broadcast();
+  final StreamController<String> _pushTokensController =
+      StreamController<String>.broadcast();
   // StreamSubscription больше не нужен
   final Future<void> Function() _reviewInitialize;
   final Future<void> Function() _reviewRequest;
@@ -173,6 +175,7 @@ class RustoreService {
   late final Future<SharedPreferences> _prefs = SharedPreferences.getInstance();
 
   Stream<RustorePushMessage> get pushMessages => _pushMessagesController.stream;
+  Stream<String> get pushTokens => _pushTokensController.stream;
 
   // Проверка наличия обновлений (возвращает UpdateInfo или null)
   Future<update.UpdateInfo?> checkForUpdate() async {
@@ -569,8 +572,10 @@ class RustoreService {
         RustorePushClient.attachCallbacks(
           onNewToken: (token) {
             debugPrint('[RuStore Push v6.5.0] New token received: $token');
-            // Device registration is owned by CustomApiNotificationService.
-            // Keep this listener passive until token-refresh subscription lives there.
+            final normalizedToken = token.trim();
+            if (normalizedToken.isNotEmpty && !_pushTokensController.isClosed) {
+              _pushTokensController.add(normalizedToken);
+            }
           },
           onMessageReceived: (message) {
             final pushMessage = RustorePushMessage.fromMessage(message);
@@ -647,6 +652,10 @@ class RustoreService {
       // Используем RustorePushClient
       final String token = await RustorePushClient.getToken();
       debugPrint('RuStore Push Token: $token');
+      final normalizedToken = token.trim();
+      if (normalizedToken.isNotEmpty && !_pushTokensController.isClosed) {
+        _pushTokensController.add(normalizedToken);
+      }
       return token;
     } catch (e) {
       debugPrint('Error getting RuStore Push Token: $e');

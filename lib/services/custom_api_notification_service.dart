@@ -68,6 +68,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     http.Client? httpClient,
     Duration? pollInterval,
     RemotePushTokenProvider? remotePushTokenProvider,
+    Stream<String>? remotePushTokenUpdates,
     ChatNotificationCallback? onChatNotification,
     GenericNotificationCallback? onGenericNotification,
     BrowserNotificationBridge? browserNotificationBridge,
@@ -83,6 +84,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         _httpClient = httpClient ?? http.Client(),
         _pollInterval = pollInterval ?? const Duration(seconds: 20),
         _remotePushTokenProvider = remotePushTokenProvider,
+        _remotePushTokenUpdates = remotePushTokenUpdates,
         _onChatNotification = onChatNotification,
         _onGenericNotification = onGenericNotification,
         _androidIncomingCallService = androidIncomingCallService,
@@ -116,6 +118,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     http.Client? httpClient,
     Duration? pollInterval,
     RemotePushTokenProvider? remotePushTokenProvider,
+    Stream<String>? remotePushTokenUpdates,
     ChatNotificationCallback? onChatNotification,
     GenericNotificationCallback? onGenericNotification,
     BrowserNotificationBridge? browserNotificationBridge,
@@ -133,6 +136,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       httpClient: httpClient,
       pollInterval: pollInterval,
       remotePushTokenProvider: remotePushTokenProvider,
+      remotePushTokenUpdates: remotePushTokenUpdates,
       onChatNotification: onChatNotification,
       onGenericNotification: onGenericNotification,
       browserNotificationBridge: browserNotificationBridge,
@@ -149,6 +153,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final http.Client _httpClient;
   final Duration _pollInterval;
   final RemotePushTokenProvider? _remotePushTokenProvider;
+  final Stream<String>? _remotePushTokenUpdates;
   final ChatNotificationCallback? _onChatNotification;
   final GenericNotificationCallback? _onGenericNotification;
   final AndroidIncomingCallService? _androidIncomingCallService;
@@ -163,10 +168,12 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   bool _isInitialized = false;
   bool _notificationsEnabled = true;
   bool _androidNotificationPermissionsChecked = false;
+  bool _androidNotificationsPermissionDenied = false;
   int _unreadNotificationsCount = 0;
   String? _pendingNavigationPayload;
   Timer? _pollingTimer;
   StreamSubscription<CustomApiRealtimeEvent>? _realtimeSubscription;
+  StreamSubscription<String>? _remotePushTokenSubscription;
   final Set<String> _deliveredNotificationIds = <String>{};
   final StreamController<int> _unreadNotificationsCountController =
       StreamController<int>.broadcast();
@@ -295,6 +302,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     if (!hasActiveSession) {
       return;
     }
+    _ensureRemotePushTokenListener();
 
     if (_realtimeService != null) {
       await _realtimeService!.connect();
@@ -342,6 +350,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   Future<void> stopForegroundSync() async {
     _pollingTimer?.cancel();
     _pollingTimer = null;
+    await _remotePushTokenSubscription?.cancel();
+    _remotePushTokenSubscription = null;
     await _realtimeSubscription?.cancel();
     _realtimeSubscription = null;
   }
@@ -367,13 +377,17 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     try {
       final notificationsEnabled =
           await resolvedAndroidPlugin.areNotificationsEnabled();
+      _androidNotificationsPermissionDenied = notificationsEnabled != true;
       if (notificationsEnabled != true) {
         final granted =
             await resolvedAndroidPlugin.requestNotificationsPermission();
         if (granted != true) {
+          _androidNotificationsPermissionDenied = true;
           debugPrint(
             'Custom API notifications permission denied on Android',
           );
+        } else {
+          _androidNotificationsPermissionDenied = false;
         }
       }
     } catch (error, stackTrace) {
@@ -555,7 +569,9 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   /// Эффективно «уведомления работают» — основа для UI «Включены».
   /// На web требует granted; на native — просто prefs-флаг.
   bool get notificationsEffectivelyOn {
-    if (!_isWeb) return _notificationsEnabled;
+    if (!_isWeb) {
+      return _notificationsEnabled && !_androidNotificationsPermissionDenied;
+    }
     return _notificationsEnabled &&
         _browserNotificationBridge.permissionStatus ==
             BrowserNotificationPermissionStatus.granted;
@@ -571,7 +587,12 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   /// «добавьте на Домой».
   bool get shouldShowPermissionCta =>
       !isNotificationCtaDismissed &&
-      (needsBrowserPermission || iosNeedsStandaloneForPush);
+      (needsBrowserPermission ||
+          iosNeedsStandaloneForPush ||
+          (!_isWeb &&
+              defaultTargetPlatform == TargetPlatform.android &&
+              _notificationsEnabled &&
+              _androidNotificationsPermissionDenied));
 
   Future<void> dismissNotificationCta() async {
     await _preferences.setBool(_notificationCtaDismissedStorageKey, true);
@@ -728,6 +749,28 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         _notificationsEnabled = false;
         await _preferences.setBool(_notificationsEnabledStorageKey, false);
         return false;
+      }
+    }
+
+    if (enabled && !_isWeb && defaultTargetPlatform == TargetPlatform.android) {
+      final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      try {
+        final alreadyEnabled =
+            await androidPlugin?.areNotificationsEnabled() == true;
+        final requested = alreadyEnabled
+            ? true
+            : await androidPlugin?.requestNotificationsPermission();
+        final granted = requested == true;
+        _androidNotificationsPermissionDenied = !granted;
+        if (!granted) {
+          _notificationsEnabled = false;
+          await _preferences.setBool(_notificationsEnabledStorageKey, false);
+          return false;
+        }
+      } catch (error, stackTrace) {
+        debugPrint('Failed to enable Android notifications: $error');
+        debugPrintStack(stackTrace: stackTrace);
       }
     }
 
@@ -1167,7 +1210,30 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
   }
 
-  Future<void> _registerRemotePushDevice() async {
+  void _ensureRemotePushTokenListener() {
+    if (kIsWeb || _remotePushTokenSubscription != null) {
+      return;
+    }
+    final updates = _remotePushTokenUpdates ?? _rustoreService?.pushTokens;
+    if (updates == null) {
+      return;
+    }
+
+    _remotePushTokenSubscription = updates.listen((token) {
+      final normalizedToken = token.trim();
+      if (normalizedToken.isEmpty) {
+        return;
+      }
+      unawaited(
+        _registerPushDevicesSafely(
+          registerBrowserDevice: false,
+          remoteTokenOverride: normalizedToken,
+        ),
+      );
+    });
+  }
+
+  Future<void> _registerRemotePushDevice({String? tokenOverride}) async {
     if (kIsWeb) {
       return;
     }
@@ -1182,7 +1248,9 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
-    final token = await _resolveRemotePushToken();
+    final token = tokenOverride?.trim().isNotEmpty == true
+        ? tokenOverride!.trim()
+        : await _resolveRemotePushToken();
     if (token == null || token.isEmpty) {
       return;
     }
@@ -1251,10 +1319,11 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   Future<bool> _registerPushDevicesSafely({
     bool registerRemoteDevice = true,
     bool registerBrowserDevice = true,
+    String? remoteTokenOverride,
   }) async {
     try {
       if (registerRemoteDevice) {
-        await _registerRemotePushDevice();
+        await _registerRemotePushDevice(tokenOverride: remoteTokenOverride);
       }
       if (registerBrowserDevice) {
         await _registerBrowserPushDevice();
@@ -1412,13 +1481,12 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     ]);
   }
 
-  Future<void> _deletePushDevice(String deviceId, {String? overrideToken}) async {
+  Future<void> _deletePushDevice(String deviceId,
+      {String? overrideToken}) async {
     final authService = _authService;
     final runtimeConfig = _runtimeConfig;
     final accessToken = overrideToken ?? authService?.accessToken;
-    if (runtimeConfig == null ||
-        accessToken == null ||
-        accessToken.isEmpty) {
+    if (runtimeConfig == null || accessToken == null || accessToken.isEmpty) {
       return;
     }
 
@@ -1505,9 +1573,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           presentAlert: true,
           presentBadge: true,
           presentSound: !isQuiet,
-          interruptionLevel: isQuiet
-              ? InterruptionLevel.passive
-              : InterruptionLevel.active,
+          interruptionLevel:
+              isQuiet ? InterruptionLevel.passive : InterruptionLevel.active,
         ),
       ),
       payload: payload,
@@ -1730,8 +1797,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       _navigateOverHome(router, '/discover/relatives$query');
       return;
     }
-    if (type == 'kinship_check_declined' ||
-        type == 'kinship_check_expired') {
+    if (type == 'kinship_check_declined' || type == 'kinship_check_expired') {
       _navigateOverHome(router, '/discover/relatives');
       return;
     }

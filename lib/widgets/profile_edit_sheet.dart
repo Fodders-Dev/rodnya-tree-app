@@ -153,6 +153,8 @@ Future<ProfileEditDraft?> showProfileEditSheet(
   return showModalBottomSheet<ProfileEditDraft>(
     context: context,
     isScrollControlled: true,
+    useRootNavigator: true,
+    useSafeArea: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) {
       return _ProfileEditSheet(
@@ -320,6 +322,7 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
             : RodnyaDesignTokens.light);
     final mediaQ = MediaQuery.of(context);
     final maxHeight = mediaQ.size.height * 0.92;
+    final bottomContentPadding = 32 + mediaQ.viewPadding.bottom + 88;
 
     return Padding(
       padding: EdgeInsets.only(bottom: mediaQ.viewInsets.bottom),
@@ -350,7 +353,12 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
             _buildStepIndicator(tokens),
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 6, 18, 32),
+                padding: EdgeInsets.fromLTRB(
+                  18,
+                  6,
+                  18,
+                  bottomContentPadding,
+                ),
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 220),
                   switchInCurve: Curves.easeOut,
@@ -374,15 +382,26 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            child: Text(
-              'Отмена',
-              style: AppTheme.sans(
-                color: tokens.inkMuted,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0,
+          SizedBox(
+            width: 84,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: GestureDetector(
+                onTap: _step == 0
+                    ? () => Navigator.of(context).pop()
+                    : () => setState(() {
+                          _draft = _collect();
+                          _step -= 1;
+                        }),
+                child: Text(
+                  _step == 0 ? 'Отмена' : '← Назад',
+                  style: AppTheme.sans(
+                    color: tokens.inkMuted,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0,
+                  ),
+                ),
               ),
             ),
           ),
@@ -418,7 +437,8 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
               borderRadius: BorderRadius.circular(999),
               onTap: _step < _stepNames.length - 1 ? _commitAndContinue : _save,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 child: Text(
                   _step < _stepNames.length - 1 ? 'Далее →' : 'Сохранить',
                   style: AppTheme.sans(
@@ -574,8 +594,8 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
                 child: _GenderButton(
                   label: 'Мужской',
                   active: _draft.gender == Gender.male,
-                  onTap: () =>
-                      setState(() => _draft = _draft.copyWith(gender: Gender.male)),
+                  onTap: () => setState(
+                      () => _draft = _draft.copyWith(gender: Gender.male)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -946,8 +966,18 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
 
   String _formatDate(DateTime date) {
     final months = [
-      'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
     ];
     return '${date.day} ${months[date.month - 1]} ${date.year}';
   }

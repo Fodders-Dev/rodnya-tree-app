@@ -11,6 +11,7 @@ import 'package:flutter/services.dart'
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'theme/app_theme.dart';
 import 'package:provider/provider.dart';
+import 'package:country_picker/country_picker.dart';
 import 'providers/theme_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'navigation/app_router.dart';
@@ -586,6 +587,7 @@ class _MyAppState extends State<MyApp> {
       darkTheme: AppTheme.darkTheme,
       themeMode: themeProvider.themeMode,
       localizationsDelegates: [
+        CountryLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,

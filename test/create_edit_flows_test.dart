@@ -501,6 +501,13 @@ void main() {
     expect(find.text('Только я'), findsWidgets);
     expect(find.text('Семья'), findsWidgets);
     expect(find.text('Все'), findsWidgets);
+
+    expect(find.text('← Назад'), findsOneWidget);
+    await tester.tap(find.text('← Назад'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Медиа'), findsWidgets);
+    expect(find.text('3 / 4'), findsOneWidget);
   });
 
   testWidgets('SettingsScreen shows compact settings sections', (tester) async {
