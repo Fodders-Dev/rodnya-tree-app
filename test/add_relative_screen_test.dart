@@ -596,7 +596,7 @@ void main() {
   });
 
   testWidgets(
-      'B2: для spouse на узле виден селектор статуса союза (Вместе/Расстались)',
+      'B2: для spouse на узле виден селектор статуса союза (Вместе/Расстались/До смерти)',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -629,6 +629,8 @@ void main() {
 
     expect(find.byKey(const Key('union-status-together')), findsOneWidget);
     expect(find.byKey(const Key('union-status-separated')), findsOneWidget);
+    expect(
+        find.byKey(const Key('union-status-ended-by-death')), findsOneWidget);
     // По умолчанию «Расстались» не выбрано — дата окончания скрыта.
     expect(find.byKey(const Key('union-divorce-date')), findsNothing);
   });
@@ -666,10 +668,10 @@ void main() {
 
     expect(find.byKey(const Key('union-status-together')), findsNothing);
     expect(find.byKey(const Key('union-status-separated')), findsNothing);
+    expect(find.byKey(const Key('union-status-ended-by-death')), findsNothing);
   });
 
-  testWidgets(
-      'B2: spouse + «Расстались» → createRelation с unionStatus=past',
+  testWidgets('B2: spouse + «Расстались» → createRelation с unionStatus=past',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -743,6 +745,78 @@ void main() {
     expect(familyService.createRelationCalled, isTrue);
     expect(familyService.lastCreateRelationType, RelationType.spouse);
     expect(familyService.lastCreateUnionStatus, 'past');
+  });
+
+  testWidgets(
+      'B2: spouse + «До смерти» → createRelation с unionStatus=ended_by_death',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService();
+    await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
+
+    final relatedPerson = FamilyPerson(
+      id: 'person-anchor',
+      treeId: 'tree-1',
+      name: 'Петрова Анна',
+      gender: Gender.female,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => Scaffold(
+            body: Builder(
+              builder: (ctx) => Center(
+                child: ElevatedButton(
+                  onPressed: () => ctx.push('/add'),
+                  child: const Text('go'),
+                ),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            predefinedRelation: RelationType.spouse,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('union-status-ended-by-death')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('union-divorce-date')), findsNothing);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Петров');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Иван');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('add-relative-submit')));
+    await tester.tap(find.byKey(const Key('add-relative-submit')));
+    await tester.pumpAndSettle();
+
+    expect(familyService.createRelationCalled, isTrue);
+    expect(familyService.lastCreateRelationType, RelationType.spouse);
+    expect(familyService.lastCreateUnionStatus, 'ended_by_death');
+    expect(familyService.lastCreateDivorceDate, isNull);
   });
 
   testWidgets(
@@ -1455,9 +1529,10 @@ void main() {
 /// Phase 0 cross-tree search capability — used to verify that the
 /// picker section appears + functions when the capability is
 /// available.
-class _SearchCapableFakeFamilyTreeService implements
-    FamilyTreeServiceInterface,
-    CrossTreePersonSearchCapableFamilyTreeService {
+class _SearchCapableFakeFamilyTreeService
+    implements
+        FamilyTreeServiceInterface,
+        CrossTreePersonSearchCapableFamilyTreeService {
   _SearchCapableFakeFamilyTreeService({required this.results});
 
   final List<CrossTreePersonSuggestion> results;

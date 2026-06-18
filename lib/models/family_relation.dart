@@ -106,7 +106,7 @@ class FamilyRelation extends HiveObject {
   @HiveField(18)
   final String? unionType; // spouse, partner, friend...
   @HiveField(19)
-  final String? unionStatus; // current, past
+  final String? unionStatus; // current, past, ended_by_death
 
   FamilyRelation({
     required this.id,
@@ -500,6 +500,8 @@ class FamilyRelation extends HiveObject {
         return 'Текущий союз';
       case 'past':
         return 'Прошлый союз';
+      case 'ended_by_death':
+        return 'Союз до смерти';
       default:
         return 'Статус союза не указан';
     }

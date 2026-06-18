@@ -1955,7 +1955,7 @@ const UNION_TYPES = new Set([
   "other",
 ]);
 
-const UNION_STATUSES = new Set(["current", "past"]);
+const UNION_STATUSES = new Set(["current", "past", "ended_by_death"]);
 
 function buildSortedIdKey(values) {
   return (Array.isArray(values) ? values : [])
@@ -2409,7 +2409,9 @@ function describeDirectRelationLabel({
   const normalizedParentSetType = normalizeParentSetType(parentSetType);
   // B2: статус союза 'past' на примитивном spouse/partner → метка
   // бывшего союза (тип в пикере остаётся текущим; «бывший» — свойство
-  // союза). ex_spouse/ex_partner и так попадут в нужную ветку switch.
+  // союза). ended_by_death НЕ превращаем в «бывший»: смерть завершает
+  // союз, но по-русски это не «расстались». ex_spouse/ex_partner и так
+  // попадут в нужную ветку switch.
   if (String(unionStatus || "").trim().toLowerCase() === "past") {
     if (normalizedRelationType === "spouse") {
       normalizedRelationType = "ex_spouse";
@@ -3370,10 +3372,11 @@ function buildTraversalGraph(relations) {
     }
 
     if (isUnionRelation(relation)) {
-      const isPast = normalizeUnionStatus(relation.unionStatus, {
+      const normalizedUnionStatus = normalizeUnionStatus(relation.unionStatus, {
         relationType: relation.relation1to2 || relation.relation2to1,
         divorceDate: relation.divorceDate,
-      }) === "past";
+      });
+      const isPast = normalizedUnionStatus !== "current";
       addMapSetValue(anyUnionPartnersByPerson, relation.person1Id, relation.person2Id);
       addMapSetValue(anyUnionPartnersByPerson, relation.person2Id, relation.person1Id);
       if (!isPast) {

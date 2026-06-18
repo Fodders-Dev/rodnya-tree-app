@@ -741,8 +741,7 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     final parts = picked.displayName.trim().split(RegExp(r'\s+'));
     final lastName = parts.isNotEmpty ? parts[0] : '';
     final firstName = parts.length >= 2 ? parts[1] : '';
-    final middleName =
-        parts.length >= 3 ? parts.sublist(2).join(' ') : '';
+    final middleName = parts.length >= 3 ? parts.sublist(2).join(' ') : '';
 
     _updateSectionState(() {
       _sourcePersonId = picked.id;
@@ -815,8 +814,7 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                _sourcePersonTreeName == null ||
-                        _sourcePersonTreeName!.isEmpty
+                _sourcePersonTreeName == null || _sourcePersonTreeName!.isEmpty
                     ? 'Связан с человеком из вашего другого дерева'
                     : 'Связан с человеком из «$_sourcePersonTreeName»',
                 style: theme.textTheme.bodyMedium?.copyWith(
@@ -865,8 +863,7 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
               }
             },
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
                 children: [
                   Icon(
@@ -1192,9 +1189,9 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     );
   }
 
-  /// B2: «Вместе» (current, дефолт) / «Расстались» (past) + необязательная
-  /// дата окончания. Пишем в существующее поле unionStatus — новых полей
-  /// не вводим. Виден только для союзных связей.
+  /// B2: статус союза + необязательная дата расставания. Пишем в
+  /// существующее поле unionStatus: current/past/ended_by_death.
+  /// Виден только для союзных связей.
   Widget _buildUnionStatusSelector() {
     final theme = Theme.of(context);
     return Column(
@@ -1208,36 +1205,43 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           ),
         ),
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Expanded(
-              child: ChoiceChip(
-                key: const Key('union-status-together'),
-                label: const Text('Вместе'),
-                selected: !_unionStatusIsPast,
-                onSelected: (_) => _updateSectionState(() {
-                  // B2 (ревью FR6): возврат в «Вместе» сбрасывает дату
-                  // расставания и статус — иначе остаточная дата заставит
-                  // бэк нормализовать unionStatus в 'past' и записать
-                  // текущего супруга бывшим.
-                  _unionStatusIsPast = false;
-                  _divorceDate = null;
-                }),
-              ),
+            ChoiceChip(
+              key: const Key('union-status-together'),
+              label: const Text('Вместе'),
+              selected: _unionStatus == _UnionStatusDraft.current,
+              onSelected: (_) => _updateSectionState(() {
+                // B2 (ревью FR6): возврат в «Вместе» сбрасывает дату
+                // расставания и статус — иначе остаточная дата заставит
+                // бэк нормализовать unionStatus в 'past' и записать
+                // текущего супруга бывшим.
+                _unionStatus = _UnionStatusDraft.current;
+                _divorceDate = null;
+              }),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ChoiceChip(
-                key: const Key('union-status-separated'),
-                label: const Text('Расстались'),
-                selected: _unionStatusIsPast,
-                onSelected: (_) =>
-                    _updateSectionState(() => _unionStatusIsPast = true),
-              ),
+            ChoiceChip(
+              key: const Key('union-status-separated'),
+              label: const Text('Расстались'),
+              selected: _unionStatus == _UnionStatusDraft.separated,
+              onSelected: (_) => _updateSectionState(() {
+                _unionStatus = _UnionStatusDraft.separated;
+              }),
+            ),
+            ChoiceChip(
+              key: const Key('union-status-ended-by-death'),
+              label: const Text('До смерти'),
+              selected: _unionStatus == _UnionStatusDraft.endedByDeath,
+              onSelected: (_) => _updateSectionState(() {
+                _unionStatus = _UnionStatusDraft.endedByDeath;
+                _divorceDate = null;
+              }),
             ),
           ],
         ),
-        if (_unionStatusIsPast) ...[
+        if (_unionStatusNeedsSeparationDate) ...[
           const SizedBox(height: 10),
           OutlinedButton.icon(
             key: const Key('union-divorce-date'),

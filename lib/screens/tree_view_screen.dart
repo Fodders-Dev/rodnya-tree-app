@@ -821,13 +821,14 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       relations = graphSnapshot.relations;
       treeMeta = loadResults[1] as FamilyTree?;
       semyaContext = loadResults[2] as SemyaDetails?;
-      // Ship FE7 (2026-05-26): pull caller's hide list AFTER semya
-      // context resolves — needed to seed action sheet «Скрыть /
-      // Показывать снова» tile state. Best-effort: failure → empty
-      // list (action sheet hide tile still works, just default к
-      // «Скрыть» — backend will accept add либо surface 4xx).
-      final hiddenIds = semyaContext != null
-          ? await _fetchHiddenPersonIds(semyaContext.semya.id)
+      // Ship FE7 originally fetched caller's hide list before first paint.
+      // That made tree reloads feel slow after mutations: the canvas waited
+      // for a secondary action-sheet detail. Keep the previous list when the
+      // same семя is still active, paint the tree, then refresh hide state in
+      // the background.
+      final hiddenIds = semyaContext != null &&
+              _currentSemyaContext?.semya.id == semyaContext.semya.id
+          ? _hiddenPersonIds
           : const <String>[];
       debugPrint(
         'Загружено родственников: ${relatives.length}, связей: ${relations.length}'
@@ -852,6 +853,10 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           _currentUserIsInTree = graphSnapshot.viewerPersonId != null;
           _selectedPersonSheetId = null;
         });
+        unawaited(_refreshHiddenPersonIdsForLoadedSemya(
+          treeId: treeId,
+          semyaContext: semyaContext,
+        ));
         return;
       }
 
@@ -915,6 +920,10 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         // /v1/trees/:treeId/conflicts is tree-scoped (vs.
         // suggestions, which is per-person — historical).
         unawaited(_refreshIdentityConflictCounts(treeId));
+        unawaited(_refreshHiddenPersonIdsForLoadedSemya(
+          treeId: treeId,
+          semyaContext: semyaContext,
+        ));
       }
     } catch (e, s) {
       debugPrint('Ошибка загрузки данных дерева $treeId: $e\\n$s');
@@ -2488,6 +2497,31 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     } catch (_) {
       return const <String>[];
     }
+  }
+
+  Future<void> _refreshHiddenPersonIdsForLoadedSemya({
+    required String treeId,
+    required SemyaDetails? semyaContext,
+  }) async {
+    final semyaId = semyaContext?.semya.id;
+    if (semyaId == null || semyaId.isEmpty) {
+      if (!mounted || _currentTreeId != treeId) return;
+      if (_hiddenPersonIds.isNotEmpty) {
+        setState(() {
+          _hiddenPersonIds = const <String>[];
+        });
+      }
+      return;
+    }
+    final hiddenIds = await _fetchHiddenPersonIds(semyaId);
+    if (!mounted ||
+        _currentTreeId != treeId ||
+        _currentSemyaContext?.semya.id != semyaId) {
+      return;
+    }
+    setState(() {
+      _hiddenPersonIds = hiddenIds;
+    });
   }
 
   Future<SemyaDetails?> _resolveSemyaContextForTree(String treeId) async {

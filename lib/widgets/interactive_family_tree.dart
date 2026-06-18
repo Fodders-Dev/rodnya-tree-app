@@ -3037,6 +3037,11 @@ int? _generationOffsetFromRelationLabel(String? rawLabel) {
   return null;
 }
 
+bool _isInactiveUnionStatus(String? status) {
+  final normalized = (status ?? '').trim().toLowerCase();
+  return normalized == 'past' || normalized == 'ended_by_death';
+}
+
 class _TreeLayoutEngine {
   _TreeLayoutEngine({
     required this.peopleData,
@@ -4009,14 +4014,21 @@ class _TreeLayoutEngine {
     required Map<String, Set<String>> siblingsByPerson,
     required Map<String, Set<String>> spousesByPerson,
   }) {
-    final referenceCenters = <double>[];
+    final parentCenters = <double>[];
     for (final memberId in group.memberIds) {
       for (final parentId in childToParents[memberId] ?? const <String>{}) {
         final parentPosition = positions[parentId];
         if (parentPosition != null) {
-          referenceCenters.add(parentPosition.dx);
+          parentCenters.add(parentPosition.dx);
         }
       }
+    }
+    if (parentCenters.isNotEmpty) {
+      return parentCenters.reduce((a, b) => a + b) / parentCenters.length;
+    }
+
+    final referenceCenters = <double>[];
+    for (final memberId in group.memberIds) {
       for (final siblingId in siblingsByPerson[memberId] ?? const <String>{}) {
         final siblingPosition = positions[siblingId];
         if (siblingPosition != null) {
@@ -4511,7 +4523,7 @@ class _TreeLayoutEngine {
                   fromId: pair.first,
                   toId: pair.last,
                   type: RelationType.spouse,
-                  isPastUnion: unit.unionStatus == 'past',
+                  isPastUnion: _isInactiveUnionStatus(unit.unionStatus),
                 ),
               );
             }
@@ -4552,6 +4564,7 @@ class _TreeLayoutEngine {
         relation.relation2to1 == RelationType.ex_spouse ||
         relation.relation1to2 == RelationType.ex_partner ||
         relation.relation2to1 == RelationType.ex_partner ||
+        _isInactiveUnionStatus(relation.unionStatus) ||
         relation.divorceDate != null;
   }
 
@@ -4901,7 +4914,7 @@ class FamilyTreePainter extends CustomPainter {
           // takes precedence over past styling (semantic priority:
           // ownership > status).
           final isCrossTree = _isCrossTreeEdge(pairIds.first, pairIds.last);
-          final isPast = unit.unionStatus == 'past';
+          final isPast = _isInactiveUnionStatus(unit.unionStatus);
           final linePaint = isCrossTree
               ? foreignSpouseLinePaint
               : (isPast ? spousePastLinePaint : spouseLinePaint);
@@ -4933,11 +4946,12 @@ class FamilyTreePainter extends CustomPainter {
           childIds.any(foreignPersonIds.contains);
       final linePaint = hasForeignEndpoint
           ? foreignFamilyLinePaint
-          : (unit.unionStatus == 'past'
+          : (_isInactiveUnionStatus(unit.unionStatus)
               ? mutedFamilyLinePaint
               : familyLinePaint);
-      final junctionPaintForUnit =
-          unit.unionStatus == 'past' ? mutedJunctionPaint : junctionPaint;
+      final junctionPaintForUnit = _isInactiveUnionStatus(unit.unionStatus)
+          ? mutedJunctionPaint
+          : junctionPaint;
       final dashed = (unit.parentSetType ?? '').trim().isNotEmpty &&
           unit.parentSetType != 'biological' &&
           unit.parentSetType != 'unknown';

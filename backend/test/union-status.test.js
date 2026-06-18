@@ -123,3 +123,32 @@ test("B2: бывший партнёр (partner+past) → «Бывший парт
   });
   assert.equal(labelFor(snapshot, exId), "Бывший партнёр");
 });
+
+test("B2: союз до смерти не превращается в «бывшую жену»", async () => {
+  const store = await seededStore();
+  const meId = await makePerson(store, "Артём", "male", {userId: "user-a"});
+  const wifeId = await makePerson(store, "Жена", "female");
+
+  await store.upsertRelation({
+    treeId: "tree-a",
+    person1Id: meId,
+    person2Id: wifeId,
+    relation1to2: "spouse",
+    relation2to1: "spouse",
+    unionStatus: "ended_by_death",
+  });
+
+  const relations = await store.listRelations("tree-a");
+  const union = relations.find(
+    (relation) =>
+      (relation.person1Id === meId && relation.person2Id === wifeId) ||
+      (relation.person1Id === wifeId && relation.person2Id === meId),
+  );
+  assert.ok(union, "союз должен сохраниться");
+  assert.equal(union.unionStatus, "ended_by_death");
+
+  const snapshot = await store.getTreeGraphSnapshot("tree-a", {
+    viewerUserId: "user-a",
+  });
+  assert.equal(labelFor(snapshot, wifeId), "Жена");
+});

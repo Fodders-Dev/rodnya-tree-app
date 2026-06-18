@@ -27,6 +27,8 @@ enum _PostSaveAction { close, stayInQuickAdd, openInTree }
 
 enum _RelativeEditorMode { basic, advanced }
 
+enum _UnionStatusDraft { current, separated, endedByDeath }
+
 class _RelativeImportantEventDraft {
   _RelativeImportantEventDraft({
     String title = '',
@@ -132,10 +134,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   // F2: сложные семьи — дата развода для бывших союзов.
   DateTime? _divorceDate;
   bool _showDivorceDateField = false;
-  // B2: статус союза в узловом add-флоу для spouse/partner — «Вместе»
-  // (current, дефолт) либо «Расстались» (past). Тип в пикере остаётся
-  // примитивным; бывший статус — свойство союза, а не отдельный тип.
-  bool _unionStatusIsPast = false;
+  // B2: статус союза в узловом add-флоу для spouse/partner. Тип в пикере
+  // остаётся примитивным; "бывший"/"до смерти" — свойство союза, а не
+  // отдельный relation type.
+  _UnionStatusDraft _unionStatus = _UnionStatusDraft.current;
   Gender? _selectedGender;
   RelationType? _selectedRelationType;
   RelationType? _initialRelationType;
@@ -377,6 +379,22 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       (_fixedRelationType == RelationType.spouse ||
           _fixedRelationType == RelationType.partner);
 
+  bool get _unionStatusIsPast => _unionStatus != _UnionStatusDraft.current;
+
+  bool get _unionStatusNeedsSeparationDate =>
+      _unionStatus == _UnionStatusDraft.separated;
+
+  String? get _unionStatusPayload {
+    switch (_unionStatus) {
+      case _UnionStatusDraft.current:
+        return null;
+      case _UnionStatusDraft.separated:
+        return 'past';
+      case _UnionStatusDraft.endedByDeath:
+        return 'ended_by_death';
+    }
+  }
+
   // B2 (ревью F4): при смене типа связи на НЕ-прошлый союз сбрасываем
   // остаточную дату/статус расставания — иначе после переключения
   // ex_spouse→spouse они «прилипают» и бэк запишет текущего супруга бывшим.
@@ -388,7 +406,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     }
     _divorceDate = null;
     _showDivorceDateField = false;
-    _unionStatusIsPast = false;
+    _unionStatus = _UnionStatusDraft.current;
   }
 
   bool get _canUseQuickAddLoop => _isQuickAddMode && _isContextualAdd;
@@ -799,11 +817,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                   isConfirmed: true,
                   marriageDate: isUnionRelation ? _marriageDate : null,
                   divorceDate: isPastUnion ? _divorceDate : null,
-                  // B2: «Расстались» → past (для spouse/partner). Иначе
-                  // null → бэк решает по типу/дате (ex_* остаётся past).
-                  unionStatus: isUnionRelation && _unionStatusIsPast
-                      ? 'past'
-                      : null,
+                  // B2: «Расстались» → past, «До смерти» →
+                  // ended_by_death. null → бэк решает по типу/дате
+                  // (ex_* остаётся past).
+                  unionStatus: isUnionRelation ? _unionStatusPayload : null,
                   customRelationLabel1to2: customLabels?.relation1to2,
                   customRelationLabel2to1: customLabels?.relation2to1,
                 );
@@ -945,10 +962,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 isConfirmed: true,
                 marriageDate: isUnionRelation ? _marriageDate : null,
                 divorceDate: isPastUnion ? _divorceDate : null,
-                // B2: «Расстались» → past (для spouse/partner). Иначе null
-                // → бэк решает по типу/дате (ex_* остаётся past).
-                unionStatus:
-                    isUnionRelation && _unionStatusIsPast ? 'past' : null,
+                // B2: «Расстались» → past, «До смерти» →
+                // ended_by_death. null → бэк решает по типу/дате
+                // (ex_* остаётся past).
+                unionStatus: isUnionRelation ? _unionStatusPayload : null,
                 customRelationLabel1to2: customLabels?.relation1to2,
                 customRelationLabel2to1: customLabels?.relation2to1,
               );
@@ -1064,7 +1081,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _marriageDate = null;
     _divorceDate = null;
     _showDivorceDateField = false;
-    _unionStatusIsPast = false;
+    _unionStatus = _UnionStatusDraft.current;
     _selectedGender = null;
     for (final draft in _importantEventDrafts) {
       draft.dispose();

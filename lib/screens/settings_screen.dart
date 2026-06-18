@@ -1,11 +1,16 @@
 // ignore_for_file: constant_identifier_names, unused_field, use_build_context_synchronously
 // ignore_for_file: library_private_types_in_public_api
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+import '../backend/backend_runtime_config.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../services/rustore_service.dart';
@@ -35,6 +40,26 @@ import '../utils/user_facing_error.dart';
 const String PREMIUM_PRODUCT_ID = 'rodnya_premium';
 // --- ID для разовой покупки ---
 const String ONE_TIME_PRODUCT_ID = 'rodnya_premium_product';
+
+class _LatestAndroidApk {
+  const _LatestAndroidApk({
+    required this.url,
+    required this.versionCode,
+    this.versionName,
+  });
+
+  final String url;
+  final int versionCode;
+  final String? versionName;
+
+  String get label {
+    final version = versionName?.trim();
+    if (version != null && version.isNotEmpty) {
+      return 'Версия $version (сборка $versionCode)';
+    }
+    return 'Сборка $versionCode';
+  }
+}
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -67,6 +92,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // --- Состояние для разовой покупки ---
   bool _oneTimePurchaseLoading = false;
   String _appVersionLabel = 'Версия загружается...';
+  bool _latestAndroidApkLoading = kIsWeb;
+  _LatestAndroidApk? _latestAndroidApk;
 
   // --- Состояние для оценки приложения ---
   bool _hasRatedApp = false; // Изначально считаем, что не оценил
@@ -76,6 +103,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadAppVersion();
+    if (kIsWeb) {
+      unawaited(_loadLatestAndroidApk());
+    }
     _loadNotificationSettings();
     _loadCallPreferences();
     if (_showPremiumSection) {
@@ -110,6 +140,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _appVersionLabel =
           'Версия ${packageInfo.version} (сборка ${packageInfo.buildNumber})';
     });
+  }
+
+  Future<void> _loadLatestAndroidApk() async {
+    if (!kIsWeb) return;
+    try {
+      final runtimeConfig = GetIt.I.isRegistered<BackendRuntimeConfig>()
+          ? GetIt.I<BackendRuntimeConfig>()
+          : BackendRuntimeConfig.current;
+      final base = runtimeConfig.apiBaseUrl.replaceFirst(RegExp(r'/$'), '');
+      final response = await http
+          .get(Uri.parse('$base/v1/app/latest'))
+          .timeout(const Duration(seconds: 8));
+      _LatestAndroidApk? latest;
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          response.body.trim().isNotEmpty) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) {
+          final versionCode =
+              int.tryParse(decoded['versionCode']?.toString() ?? '');
+          final apkUrl = decoded['apkUrl']?.toString().trim() ?? '';
+          final uri = Uri.tryParse(apkUrl);
+          if (versionCode != null &&
+              versionCode > 0 &&
+              uri != null &&
+              uri.scheme.toLowerCase() == 'https' &&
+              (uri.host.isNotEmpty)) {
+            final rawVersionName = decoded['versionName']?.toString().trim();
+            latest = _LatestAndroidApk(
+              url: apkUrl,
+              versionCode: versionCode,
+              versionName: rawVersionName == null ||
+                      rawVersionName.isEmpty ||
+                      rawVersionName.toLowerCase() == 'null'
+                  ? null
+                  : rawVersionName,
+            );
+          }
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _latestAndroidApk = latest;
+        _latestAndroidApkLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _latestAndroidApk = null;
+        _latestAndroidApkLoading = false;
+      });
+    }
+  }
+
+  Future<void> _openLatestAndroidApk() async {
+    final latest = _latestAndroidApk;
+    if (latest == null) {
+      return;
+    }
+    final uri = Uri.parse(latest.url);
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+      webOnlyWindowName: '_blank',
+    );
+    if (!launched && mounted) {
+      _showMessage(
+        'Не удалось открыть ссылку на APK.',
+        backgroundColor: Theme.of(context).colorScheme.error,
+      );
+    }
   }
 
   Future<void> _loadNotificationSettings() async {
@@ -184,8 +285,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     // N3: на iOS-Safari вне установленного PWA запрашивать разрешение
     // бессмысленно (Safari молча проигнорирует) — подсказываем установку.
-    if (value &&
-        (notificationService?.iosNeedsStandaloneForPush ?? false)) {
+    if (value && (notificationService?.iosNeedsStandaloneForPush ?? false)) {
       _showMessage(
         'Чтобы получать уведомления, добавьте «Родню» на экран «Домой» '
         '(меню «Поделиться» → «На экран „Домой“»).',
@@ -1034,8 +1134,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 final secondary = _buildSecondarySections();
                 return Center(
                   child: ConstrainedBox(
-                    constraints:
-                        BoxConstraints(maxWidth: isWide ? 1100 : 980),
+                    constraints: BoxConstraints(maxWidth: isWide ? 1100 : 980),
                     child: SingleChildScrollView(
                       padding: EdgeInsets.fromLTRB(
                         16,
@@ -1108,9 +1207,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _buildSwitchRow(
           icon: Icons.lock_outline,
           title: 'Приватный профиль',
-          subtitle: _profilePrivate
-              ? 'Только по приглашению'
-              : 'Обычный доступ',
+          subtitle:
+              _profilePrivate ? 'Только по приглашению' : 'Обычный доступ',
           value: _profilePrivate,
           onChanged: (value) {
             setState(() {
@@ -1208,6 +1306,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onTap: () => context.push('/profile/about'),
         ),
       ]),
+      if (kIsWeb)
+        _buildSectionCard('Android-приложение', [
+          _buildAndroidDownloadRow(),
+        ]),
       if (_showPremiumSection)
         _buildSectionCard('RuStore', [
           _billingLoading
@@ -1268,14 +1370,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ]),
       GlassPanel(
-        color: Theme.of(context)
-            .colorScheme
-            .errorContainer
-            .withValues(alpha: 0.6),
-        borderColor: Theme.of(context)
-            .colorScheme
-            .error
-            .withValues(alpha: 0.35),
+        color:
+            Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.6),
+        borderColor:
+            Theme.of(context).colorScheme.error.withValues(alpha: 0.35),
         child: _buildActionRow(
           icon: Icons.delete_forever,
           title: 'Удалить аккаунт',
@@ -1373,6 +1471,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onChanged: controlsEnabled ? _toggleCallVibration : (_) {},
       ),
     ]);
+  }
+
+  Widget _buildAndroidDownloadRow() {
+    if (_latestAndroidApkLoading) {
+      final theme = Theme.of(context);
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color:
+              theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.88),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const ListTile(
+          leading: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          title: Text('Ищем последнюю сборку'),
+          subtitle: Text('Проверяем сервер обновлений'),
+        ),
+      );
+    }
+    final latest = _latestAndroidApk;
+    if (latest == null) {
+      return _buildActionRow(
+        icon: Icons.android_rounded,
+        title: 'Скачать Android',
+        subtitle: 'Сборка пока недоступна',
+        enabled: false,
+        onTap: null,
+      );
+    }
+    return _buildActionRow(
+      icon: Icons.android_rounded,
+      title: 'Скачать Android',
+      subtitle: latest.label,
+      onTap: _openLatestAndroidApk,
+    );
   }
 
   Widget _buildSettingsStateCard({
@@ -1577,8 +1713,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: _ThemePickerChip(
                       option: options[i],
                       selected: options[i].mode == mode,
-                      onTap: () =>
-                          unawaited(themeProvider.setThemeMode(options[i].mode)),
+                      onTap: () => unawaited(
+                          themeProvider.setThemeMode(options[i].mode)),
                     ),
                   ),
                   if (i != options.length - 1) const SizedBox(width: 8),
@@ -1599,8 +1735,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildNotificationsRow() {
     final service = _customNotificationService;
     final permission = service?.browserPermissionStatus;
-    final osDenied =
-        permission == BrowserNotificationPermissionStatus.denied;
+    final osDenied = permission == BrowserNotificationPermissionStatus.denied;
     // N1: «включено» = реальное состояние, а не дефолтный prefs-флаг. На
     // web требует granted; тумблер не показывает ON, пока не granted.
     final effectivelyOn =
@@ -1613,7 +1748,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       subtitle = 'Разрешите уведомления в настройках браузера';
     } else if (iosAddToHome) {
       // N3: на iOS без установленного PWA запрос бессмысленен.
-      subtitle = 'Добавьте «Родню» на экран «Домой», чтобы получать уведомления';
+      subtitle =
+          'Добавьте «Родню» на экран «Домой», чтобы получать уведомления';
     } else if (needsPermission) {
       // N1: default — НЕ «Включены», а явный CTA (тап тумблера = жест).
       subtitle = 'Нажмите, чтобы включить уведомления';
