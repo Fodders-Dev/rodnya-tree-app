@@ -176,7 +176,18 @@ jobs:
           echo "== APK HEAD =="
           curl -fsSI "$url" | head -n 6
           echo "== /v1/app/latest =="
-          body=$(curl -fsS https://api.rodnya-tree.ru/v1/app/latest)
+          body=""
+          for attempt in {1..12}; do
+            if body=$(curl -fsS https://api.rodnya-tree.ru/v1/app/latest); then
+              break
+            fi
+            echo "OTA endpoint is not ready yet (attempt ${attempt}/12), retrying..."
+            sleep 5
+          done
+          if [ -z "$body" ]; then
+            echo "::error::/v1/app/latest did not become ready after backend restart"
+            exit 1
+          fi
           echo "$body"
           echo "$body" | grep -q "${{ steps.meta.outputs.code }}" \
             || { echo "::error::endpoint не отражает versionCode ${{ steps.meta.outputs.code }}"; exit 1; }
