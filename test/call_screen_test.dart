@@ -322,11 +322,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Вы'), findsOneWidget);
-    expect(find.text('Борис'), findsOneWidget);
-    expect(find.text('Вера'), findsOneWidget);
+    expect(find.text('Вы'), findsWidgets);
+    expect(find.text('Борис'), findsWidgets);
+    expect(find.text('Вера'), findsWidgets);
     expect(find.text('1 в звонке · 2 ждут'), findsOneWidget);
     expect(find.text('Ждём'), findsNWidgets(2));
+    expect(find.text('Ждём ответа'), findsNWidgets(2));
 
     await tester.tap(find.text('Позвать ещё'));
     await tester.pumpAndSettle();
@@ -336,6 +337,12 @@ void main() {
       coordinator.nudgedParticipantIds,
       unorderedEquals(<String>['user-2', 'user-3']),
     );
+
+    await tester.tap(find.byTooltip('Позвать Борис'));
+    await tester.pumpAndSettle();
+
+    expect(coordinator.nudgeCallCount, 2);
+    expect(coordinator.nudgedParticipantIds, <String>['user-2']);
   });
 
   testWidgets('CallScreen opens in-call chat sheet and sends a text message',

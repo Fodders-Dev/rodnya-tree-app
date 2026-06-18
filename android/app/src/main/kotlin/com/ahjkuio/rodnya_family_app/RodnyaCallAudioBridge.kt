@@ -47,6 +47,7 @@ object RodnyaCallAudioBridge {
     private var focusRequest: AudioFocusRequest? = null
     private var active = false
     private var deviceCallback: AudioDeviceCallback? = null
+    private var lastRequestedRoute: String? = null
 
     fun configure(activity: MainActivity, engine: FlutterEngine) {
         activityRef = WeakReference(activity)
@@ -108,6 +109,7 @@ object RodnyaCallAudioBridge {
             return
         }
         unregisterDeviceCallback(am)
+        lastRequestedRoute = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
                 am.clearCommunicationDevice()
@@ -210,10 +212,41 @@ object RodnyaCallAudioBridge {
         if (am.mode != AudioManager.MODE_IN_COMMUNICATION) {
             am.mode = AudioManager.MODE_IN_COMMUNICATION
         }
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val applied = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             applyRouteModern(am, route)
         } else {
             applyRouteLegacy(am, route)
+        }
+        if (applied) {
+            lastRequestedRoute = route
+            reinforceRoute(route)
+        }
+        return applied
+    }
+
+    /**
+     * Some OEM WebRTC stacks briefly steal the audio route back after our
+     * successful setCommunicationDevice()/speakerphone call. Re-apply the
+     * user's latest choice a couple of times inside the first second so the
+     * visible "Динамик" toggle matches the real Android route.
+     */
+    private fun reinforceRoute(route: String) {
+        val delays = longArrayOf(180L, 520L)
+        for (delay in delays) {
+            mainHandler.postDelayed({
+                val am = audioManager ?: return@postDelayed
+                if (!active || lastRequestedRoute != route) {
+                    return@postDelayed
+                }
+                if (am.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                    am.mode = AudioManager.MODE_IN_COMMUNICATION
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    applyRouteModern(am, route)
+                } else {
+                    applyRouteLegacy(am, route)
+                }
+            }, delay)
         }
     }
 

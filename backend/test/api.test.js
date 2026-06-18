@@ -13362,11 +13362,11 @@ test("incoming call push uses high-priority metadata for WebPush and RuStore", a
       webPush.subscription.endpoint,
       "https://push.example.test/call-subscription",
     );
-    assert.equal(webPush.options.TTL, 30);
+    assert.equal(webPush.options.TTL, 90);
     assert.equal(webPush.options.urgency, "high");
     assert.equal(webPush.payload.event, "incoming_call");
     assert.equal(webPush.payload.urgency, "high");
-    assert.equal(webPush.payload.ttlSeconds, 30);
+    assert.equal(webPush.payload.ttlSeconds, 90);
     assert.equal(webPush.payload.timeSensitive, true);
     assert.equal(webPush.payload.renotify, true);
     assert.equal(webPush.payload.requireInteraction, true);
@@ -13387,7 +13387,7 @@ test("incoming call push uses high-priority metadata for WebPush and RuStore", a
     assert.equal(rustoreData.chatId, chat.id);
     assert.equal(rustoreData.priority, "high");
     assert.equal(rustoreData.urgency, "high");
-    assert.equal(rustoreData.ttlSeconds, "30");
+    assert.equal(rustoreData.ttlSeconds, "90");
     assert.equal(rustoreData.timeSensitive, "true");
     assert.equal(rustoreData.event, "incoming_call");
     assert.equal(rustoreData.collapseKey, `call:${startedCall.call.id}`);

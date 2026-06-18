@@ -88,6 +88,11 @@ class PushGateway {
       await this._deliverRustorePush(notification, device, delivery);
       return;
     }
+
+    await this.store.updatePushDelivery(delivery.id, {
+      status: "failed",
+      lastError: `unsupported_push_provider:${String(device.provider || "unknown").trim() || "unknown"}`,
+    });
   }
 
   async _deliverWebPush(notification, device, delivery) {
@@ -397,7 +402,12 @@ class PushGateway {
   }
 
   _notificationTtlSeconds(notification) {
-    return this._isIncomingCallNotification(notification) ? 30 : 3600;
+    // Incoming calls need a longer push window than the previous 30s.
+    // OEM push queues (Huawei/Honor especially) can wake the app late; 90s
+    // still avoids stale all-day call alerts but gives the backend/OS enough
+    // room to deliver while the call timeout/reconciliation path can cancel
+    // terminal calls.
+    return this._isIncomingCallNotification(notification) ? 90 : 3600;
   }
 
   _notificationTag(notification) {

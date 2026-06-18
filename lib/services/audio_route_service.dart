@@ -253,7 +253,11 @@ class AudioRouteService extends ChangeNotifier {
 
   void _schedulePostSelectRefresh() {
     _postSelectRefreshTimer?.cancel();
-    _postSelectRefreshTimer = Timer(const Duration(milliseconds: 350), () {
+    // Android OEM/WebRTC stacks can briefly pull the route back and the
+    // native bridge reinforces the requested device inside the first second.
+    // Reconcile after that window so the UI doesn't prematurely flip away
+    // from the user's accepted "Динамик"/"Наушник" choice.
+    _postSelectRefreshTimer = Timer(const Duration(milliseconds: 900), () {
       _postSelectRefreshTimer = null;
       if (_room != null) {
         unawaited(refreshRoutes());

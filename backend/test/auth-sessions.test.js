@@ -637,3 +637,52 @@ test("регистрация пишет consentAt/consentDocVersion; без по
     await stopServer(ctx);
   }
 });
+
+test("PushGateway marks unsupported push providers as failed", async () => {
+  const ctx = await startServer();
+  try {
+    const session = await registerWithDevice(
+      ctx.baseUrl,
+      "unsupported-push",
+      {deviceName: "Huawei", platform: "android"},
+      "instance-unsupported-push",
+    );
+
+    const deviceResponse = await fetch(`${ctx.baseUrl}/v1/push/devices`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`,
+        "content-type": "application/json",
+        "x-client-instance-id": "instance-unsupported-push",
+      },
+      body: JSON.stringify({
+        provider: "huawei",
+        token: "huawei-token-1",
+        platform: "android",
+      }),
+    });
+    assert.equal(deviceResponse.status, 201);
+
+    const notification = await ctx.store.createNotification({
+      userId: session.user.id,
+      type: "test",
+      title: "t",
+      body: "b",
+      data: {},
+    });
+    await ctx.pushGateway.dispatchNotification(notification);
+
+    const deliveries = await ctx.store.listPushDeliveries(session.user.id, {
+      limit: 1,
+    });
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].provider, "huawei");
+    assert.equal(deliveries[0].status, "failed");
+    assert.equal(
+      deliveries[0].lastError,
+      "unsupported_push_provider:huawei",
+    );
+  } finally {
+    await stopServer(ctx);
+  }
+});

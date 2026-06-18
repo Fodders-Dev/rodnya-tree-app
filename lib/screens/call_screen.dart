@@ -641,6 +641,22 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _nudgeWaitingGroupParticipants() async {
     final waitingIds = _waitingGroupParticipantIds;
+    await _nudgeGroupParticipants(waitingIds);
+  }
+
+  Future<void> _nudgeGroupParticipant(String participantId) async {
+    final normalizedParticipantId = participantId.trim();
+    if (normalizedParticipantId.isEmpty) {
+      return;
+    }
+    await _nudgeGroupParticipants(<String>[normalizedParticipantId]);
+  }
+
+  Future<void> _nudgeGroupParticipants(List<String> participantIds) async {
+    final waitingIds = participantIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
     if (waitingIds.isEmpty || _isNudgingGroupParticipants) {
       return;
     }
@@ -689,43 +705,54 @@ class _CallScreenState extends State<CallScreen> {
     return publication?.track;
   }
 
-  // G1: тайлы группового звонка несут не только трек, но и ИМЯ участника.
-  // Раньше пайплайн отдавал плитке только `VideoTrack?` + индекс, поэтому
-  // подпись могла быть лишь «Участник N». Имя берём из LiveKit-токена
-  // (participant.name, мы кладём туда displayName на бэке), фолбэк —
-  // identity, затем «Участник N».
-  List<_RemoteTileData> get _remoteTiles {
-    final participants = _remoteParticipants;
-    final tiles = <_RemoteTileData>[];
-    for (var index = 0; index < participants.length; index++) {
-      final participant = participants[index];
-      final publication = participant.videoTrackPublications
+  List<_VideoTileData> _videoTilesForGroup(VideoTrack? localVideoTrack) {
+    return _groupCallParticipants.map((participant) {
+      final remoteParticipant = participant.isCurrentUser
+          ? null
+          : _remoteParticipantForUser(participant.userId);
+      final publication = remoteParticipant?.videoTrackPublications
           .firstWhereOrNull((entry) => entry.source == TrackSource.camera);
-      final label = resolveRemoteParticipantLabel(
-        name: participant.name,
-        identity: participant.identity,
-        index: index,
+      final track =
+          participant.isCurrentUser ? localVideoTrack : publication?.track;
+      return _VideoTileData(
+        track: track,
+        label: participant.displayName,
+        statusLabel: _stageLabelForGroupParticipant(participant),
+        photoUrl: participant.photoUrl,
+        statusColor: _stateColorForGroupParticipant(participant.state),
+        mirror: participant.isCurrentUser &&
+            widget.coordinator.cameraPosition == CameraPosition.front,
       );
-      tiles.add(_RemoteTileData(track: publication?.track, label: label));
-    }
-    return tiles;
+    }).toList(growable: false);
   }
 
-  List<_VideoTileData> _videoTilesForGroup(VideoTrack? localVideoTrack) {
-    final tiles = <_VideoTileData>[];
-    if (localVideoTrack != null) {
-      tiles.add(
-        _VideoTileData(
-          track: localVideoTrack,
-          label: 'Вы',
-          mirror: widget.coordinator.cameraPosition == CameraPosition.front,
-        ),
-      );
+  String _stageLabelForGroupParticipant(
+    _GroupCallParticipantStatus participant,
+  ) {
+    if (participant.isCurrentUser) {
+      return 'Вы в звонке';
     }
-    for (final tile in _remoteTiles) {
-      tiles.add(_VideoTileData(track: tile.track, label: tile.label));
+    switch (participant.state) {
+      case _GroupCallParticipantConnectionState.connected:
+        return 'В звонке';
+      case _GroupCallParticipantConnectionState.waiting:
+        return 'Ждём ответа';
+      case _GroupCallParticipantConnectionState.notConnected:
+        return 'Не подключился';
     }
-    return tiles;
+  }
+
+  Color _stateColorForGroupParticipant(
+    _GroupCallParticipantConnectionState state,
+  ) {
+    switch (state) {
+      case _GroupCallParticipantConnectionState.connected:
+        return const Color(0xFF37B24D);
+      case _GroupCallParticipantConnectionState.waiting:
+        return const Color(0xFFFFC857);
+      case _GroupCallParticipantConnectionState.notConnected:
+        return const Color(0xFFADB5BD);
+    }
   }
 
   VideoTrack? get _localVideoTrack {
@@ -997,6 +1024,7 @@ class _CallScreenState extends State<CallScreen> {
                                       _waitingGroupParticipantIds.isEmpty
                                           ? null
                                           : _nudgeWaitingGroupParticipants,
+                                  onNudgeParticipant: _nudgeGroupParticipant,
                                 ),
                               ],
                               if (_resolvedCall.state == CallState.active) ...[
@@ -1386,32 +1414,45 @@ class _CallStage extends StatelessWidget {
               : count <= 9
                   ? 3
                   : 4;
-      final childAspectRatio = count <= 2
-          ? 1.5
-          : count <= 4
-              ? 0.95
-              : count <= 9
-                  ? 0.85
-                  : 0.7;
       return DecoratedBox(
         decoration: _stageDecoration,
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 84, 12, 160),
-            child: GridView.builder(
-              physics: count <= 4
-                  ? const NeverScrollableScrollPhysics()
-                  : const ClampingScrollPhysics(),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: crossAxisCount,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-                childAspectRatio: childAspectRatio,
-              ),
-              itemCount: count,
-              itemBuilder: (context, index) => _RemoteVideoTile(
-                tile: groupVideoTiles[index],
-              ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide =
+                    constraints.maxWidth > constraints.maxHeight * 1.18;
+                final adaptiveCrossAxisCount =
+                    isWide && count <= 4 ? count : crossAxisCount;
+                final rowCount = (count / adaptiveCrossAxisCount).ceil();
+                const spacing = 10.0;
+                final tileWidth = (constraints.maxWidth -
+                        spacing * (adaptiveCrossAxisCount - 1)) /
+                    adaptiveCrossAxisCount;
+                final tileHeight =
+                    (constraints.maxHeight - spacing * (rowCount - 1)) /
+                        rowCount;
+                final adaptiveAspectRatio =
+                    (tileWidth / tileHeight).clamp(0.72, 1.85).toDouble();
+                final shouldScroll = count > 4 || tileHeight < 132;
+
+                return GridView.builder(
+                  physics: shouldScroll
+                      ? const ClampingScrollPhysics()
+                      : const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: adaptiveCrossAxisCount,
+                    crossAxisSpacing: spacing,
+                    mainAxisSpacing: spacing,
+                    childAspectRatio: adaptiveAspectRatio,
+                  ),
+                  itemCount: count,
+                  itemBuilder: (context, index) => _RemoteVideoTile(
+                    tile: groupVideoTiles[index],
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -1444,23 +1485,22 @@ class _CallStage extends StatelessWidget {
   );
 }
 
-class _RemoteTileData {
-  const _RemoteTileData({required this.track, required this.label});
-
-  final VideoTrack? track;
-  final String label;
-}
-
 class _VideoTileData {
   const _VideoTileData({
     required this.track,
     required this.label,
+    required this.statusLabel,
+    required this.statusColor,
     this.mirror = false,
+    this.photoUrl,
   });
 
   final VideoTrack? track;
   final String label;
+  final String statusLabel;
+  final Color statusColor;
   final bool mirror;
+  final String? photoUrl;
 }
 
 enum _GroupCallParticipantConnectionState {
@@ -1490,11 +1530,13 @@ class _GroupCallRoster extends StatelessWidget {
     required this.participants,
     required this.isNudging,
     this.onNudgeWaiting,
+    this.onNudgeParticipant,
   });
 
   final List<_GroupCallParticipantStatus> participants;
   final bool isNudging;
   final VoidCallback? onNudgeWaiting;
+  final ValueChanged<String>? onNudgeParticipant;
 
   @override
   Widget build(BuildContext context) {
@@ -1577,7 +1619,17 @@ class _GroupCallRoster extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                ...visibleParticipants.map(_GroupCallParticipantChip.new),
+                ...visibleParticipants.map(
+                  (participant) => _GroupCallParticipantChip(
+                    participant,
+                    isNudging: isNudging,
+                    onNudge: participant.state ==
+                                _GroupCallParticipantConnectionState.waiting &&
+                            !participant.isCurrentUser
+                        ? onNudgeParticipant
+                        : null,
+                  ),
+                ),
                 if (hiddenCount > 0)
                   _GroupCallOverflowChip(hiddenCount: hiddenCount),
               ],
@@ -1590,9 +1642,15 @@ class _GroupCallRoster extends StatelessWidget {
 }
 
 class _GroupCallParticipantChip extends StatelessWidget {
-  const _GroupCallParticipantChip(this.participant);
+  const _GroupCallParticipantChip(
+    this.participant, {
+    required this.isNudging,
+    this.onNudge,
+  });
 
   final _GroupCallParticipantStatus participant;
+  final bool isNudging;
+  final ValueChanged<String>? onNudge;
 
   @override
   Widget build(BuildContext context) {
@@ -1677,6 +1735,24 @@ class _GroupCallParticipantChip extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onNudge != null) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: 'Позвать ${participant.displayName}',
+                  child: InkResponse(
+                    onTap:
+                        isNudging ? null : () => onNudge!(participant.userId),
+                    radius: 18,
+                    child: Icon(
+                      Icons.notifications_active_rounded,
+                      size: 17,
+                      color: isNudging
+                          ? Colors.white.withValues(alpha: 0.38)
+                          : Colors.white,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1764,6 +1840,10 @@ class _RemoteVideoTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final track = tile.track;
+    final theme = Theme.of(context);
+    final avatarImage = buildAvatarImageProvider(tile.photoUrl);
+    final initial =
+        tile.label.trim().isNotEmpty ? tile.label.trim()[0].toUpperCase() : '?';
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
       child: DecoratedBox(
@@ -1784,10 +1864,45 @@ class _RemoteVideoTile extends StatelessWidget {
               )
             else
               Center(
-                child: Icon(
-                  Icons.person_rounded,
-                  color: Colors.white.withValues(alpha: 0.78),
-                  size: 40,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 34,
+                      backgroundColor: Colors.white.withValues(alpha: 0.16),
+                      backgroundImage: avatarImage,
+                      child: avatarImage == null
+                          ? Text(
+                              initial,
+                              style: theme.textTheme.headlineMedium?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: tile.statusColor,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const SizedBox(width: 8, height: 8),
+                        ),
+                        const SizedBox(width: 7),
+                        Text(
+                          tile.statusLabel,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: Colors.white.withValues(alpha: 0.78),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             Positioned(
@@ -1808,10 +1923,10 @@ class _RemoteVideoTile extends StatelessWidget {
                     tile.label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
