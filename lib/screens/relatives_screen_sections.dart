@@ -6,12 +6,13 @@ extension _RelativesScreenSections on _RelativesScreenState {
     required String? selectedTreeId,
     required bool isFriendsTree,
   }) {
+    final isPhone = MediaQuery.of(context).size.width < 1180;
     return [
       IconButton(
         icon: const Icon(Icons.account_tree_outlined),
-        tooltip: 'Выбрать другое дерево',
+        tooltip: isPhone ? 'Показать дерево' : 'Выбрать другое дерево',
         onPressed: () {
-          context.go('/tree?selector=1');
+          context.go(isPhone ? '/family?view=tree' : '/tree?selector=1');
         },
       ),
       if (_pendingRequestsCount > 0)

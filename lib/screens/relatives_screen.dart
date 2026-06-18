@@ -540,6 +540,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
 
+    final isWideLayout = _isWideLayout(context);
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
@@ -563,7 +565,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                         constraints: const BoxConstraints(maxWidth: 1420),
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                          child: _isWideLayout(context)
+                          child: isWideLayout
                               ? Column(
                                   children: [
                                     _buildGraphContextBanner(
@@ -616,11 +618,6 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                 )
                               : Column(
                                   children: [
-                                    _buildGraphContextBanner(
-                                      treeName: selectedTreeName,
-                                      isFriendsTree: isFriendsTree,
-                                      relativesCount: visibleRelatives.length,
-                                    ),
                                     _maybeConflictTreeBanner(),
                                     if (_showSecondaryLoadingStrip) ...[
                                       const SizedBox(height: 10),
@@ -654,45 +651,45 @@ class _RelativesScreenState extends State<RelativesScreen> {
       // F4: на wide-лэйауте FAB прячем целиком — в сайд-панели уже есть
       // подписанные «Добавить» / «Найти» / «Проверить связь», а второй
       // «Добавить» только путал (ревью-замечание о дубле на десктопе).
-      floatingActionButton: selectedTreeId == null || _isWideLayout(context)
+      floatingActionButton: selectedTreeId == null || isWideLayout
           ? null
           : Padding(
               padding: EdgeInsets.only(
                 bottom: AppTheme.bottomNavInset(context),
               ),
               child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                // Phase 6 chunk 3: «мы родственники?» discover entry.
-                // Small FAB stacked above add-relative — secondary
-                // action в same context («моя родня»).
-                FloatingActionButton.small(
-                  heroTag: 'discover_relatives_fab',
-                  onPressed: () => context.push('/discover/relatives'),
-                  tooltip: 'Проверить связь с человеком',
-                  child: const Icon(Icons.travel_explore_rounded),
-                ),
-                const SizedBox(height: 12),
-                // 2d (Q4): подписанный вход вместо голого «+» — главный
-                // сценарий вкладки должен читаться без догадок. Ведёт в
-                // пикер «Кем приходится?» как и раньше.
-                // F4: явная пилюля — CircleBorder из FAB-темы клипал
-                // extended-FAB в круг («Добави…»).
-                FloatingActionButton.extended(
-                  heroTag: 'add_relative_fab',
-                  shape: const StadiumBorder(),
-                  onPressed: () {
-                    showRelationPickerAndNavigateAdd(
-                      context,
-                      treeId: selectedTreeId,
-                    );
-                  },
-                  tooltip: _graphAddLabel(treeProvider),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Добавить'),
-                ),
-              ],
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // Phase 6 chunk 3: «мы родственники?» discover entry.
+                  // Small FAB stacked above add-relative — secondary
+                  // action в same context («моя родня»).
+                  FloatingActionButton.small(
+                    heroTag: 'discover_relatives_fab',
+                    onPressed: () => context.push('/discover/relatives'),
+                    tooltip: 'Проверить связь с человеком',
+                    child: const Icon(Icons.travel_explore_rounded),
+                  ),
+                  const SizedBox(height: 12),
+                  // 2d (Q4): подписанный вход вместо голого «+» — главный
+                  // сценарий вкладки должен читаться без догадок. Ведёт в
+                  // пикер «Кем приходится?» как и раньше.
+                  // F4: явная пилюля — CircleBorder из FAB-темы клипал
+                  // extended-FAB в круг («Добави…»).
+                  FloatingActionButton.extended(
+                    heroTag: 'add_relative_fab',
+                    shape: const StadiumBorder(),
+                    onPressed: () {
+                      showRelationPickerAndNavigateAdd(
+                        context,
+                        treeId: selectedTreeId,
+                      );
+                    },
+                    tooltip: _graphAddLabel(treeProvider),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Добавить'),
+                  ),
+                ],
               ),
             ),
     );
@@ -1319,7 +1316,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
       // AppTheme.bottomNavInset). Один список обслуживает «В приложении»,
       // «Нужно пригласить» и результаты поиска (общий flatList), так что
       // инсет покрывает все три скролла вкладки «Семья».
-      padding: EdgeInsets.only(top: 4, bottom: AppTheme.bottomNavInset(context)),
+      padding:
+          EdgeInsets.only(top: 4, bottom: AppTheme.bottomNavInset(context)),
       itemCount: flatList.length,
       itemBuilder: (context, index) {
         final item = flatList[index];
@@ -1838,9 +1836,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
         message: isFriendsTree
             ? 'Присоединяйтесь к нашему кругу друзей в Родне: ${inviteUrl.toString()}'
             : 'Присоединяйтесь к нашему семейному древу в Родне: ${inviteUrl.toString()}',
-        subject: isFriendsTree
-            ? 'Приглашение в круг друзей'
-            : 'Приглашение в Родню',
+        subject:
+            isFriendsTree ? 'Приглашение в круг друзей' : 'Приглашение в Родню',
       );
     } catch (error) {
       if (!mounted) {
@@ -1941,29 +1938,29 @@ class _RelativesScreenState extends State<RelativesScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 8, 12, 8),
             child: Row(
-          children: [
-            Text(
-              isFriendsTree ? 'Круг' : 'Родные',
-              style: AppTheme.serif(
-                color: tokens.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.22,
-              ),
+              children: [
+                Text(
+                  isFriendsTree ? 'Круг' : 'Родные',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Phase 6.1: branch switcher chip in the relatives
+                // top bar so the user can flip "родители папа /
+                // папина / семья жены" without leaving the screen.
+                const Flexible(child: BranchSwitcherChip()),
+                const Spacer(),
+                ..._buildRelativesAppBarActions(
+                  treeProvider: treeProvider,
+                  selectedTreeId: selectedTreeId,
+                  isFriendsTree: isFriendsTree,
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            // Phase 6.1: branch switcher chip in the relatives
-            // top bar so the user can flip "родители папа /
-            // папина / семья жены" without leaving the screen.
-            const Flexible(child: BranchSwitcherChip()),
-            const Spacer(),
-            ..._buildRelativesAppBarActions(
-              treeProvider: treeProvider,
-              selectedTreeId: selectedTreeId,
-              isFriendsTree: isFriendsTree,
-            ),
-          ],
-        ),
           ),
         ),
       ),

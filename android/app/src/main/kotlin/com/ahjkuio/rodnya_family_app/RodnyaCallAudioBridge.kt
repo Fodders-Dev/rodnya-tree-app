@@ -109,6 +109,12 @@ object RodnyaCallAudioBridge {
             } catch (_: Throwable) {
                 // best-effort
             }
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = false
+            @Suppress("DEPRECATION")
+            if (am.isBluetoothScoOn) {
+                am.stopBluetoothSco()
+            }
         } else {
             @Suppress("DEPRECATION")
             am.isSpeakerphoneOn = false
@@ -209,12 +215,40 @@ object RodnyaCallAudioBridge {
             targetTypes.contains(candidate.type)
         }
         if (device == null) {
-            // Запрошенного устройства нет (например, BT отключился) —
-            // не врём об успехе.
-            return false
+            return applyRouteCompatibilityFallback(am, route)
         }
-        am.clearCommunicationDevice()
-        return am.setCommunicationDevice(device)
+        try {
+            am.clearCommunicationDevice()
+        } catch (_: Throwable) {
+            // best-effort
+        }
+        val applied = try {
+            am.setCommunicationDevice(device)
+        } catch (_: Throwable) {
+            false
+        }
+        if (!applied) {
+            return applyRouteCompatibilityFallback(am, route)
+        }
+        syncLegacySpeakerFlag(am, route)
+        return true
+    }
+
+    /**
+     * Некоторые Android 12+ прошивки не дают надёжно переключить встроенный
+     * динамик через setCommunicationDevice(), но всё ещё слушают legacy
+     * speakerphone flag. Перед fallback чистим communicationDevice, иначе
+     * явный modern-route может перекрыть legacy флаг.
+     */
+    private fun applyRouteCompatibilityFallback(am: AudioManager, route: String): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                am.clearCommunicationDevice()
+            } catch (_: Throwable) {
+                // best-effort
+            }
+        }
+        return applyRouteLegacy(am, route)
     }
 
     @Suppress("DEPRECATION")
@@ -249,6 +283,14 @@ object RodnyaCallAudioBridge {
     }
 
     @Suppress("DEPRECATION")
+    private fun syncLegacySpeakerFlag(am: AudioManager, route: String) {
+        when (route) {
+            ROUTE_SPEAKER -> am.isSpeakerphoneOn = true
+            ROUTE_EARPIECE, ROUTE_WIRED -> am.isSpeakerphoneOn = false
+        }
+    }
+
+    @Suppress("DEPRECATION")
     private fun stopScoIfNeeded(am: AudioManager) {
         if (am.isBluetoothScoOn) {
             // см. ревью B: сеттер isBluetoothScoOn — no-op, рвём через
@@ -278,7 +320,10 @@ object RodnyaCallAudioBridge {
     private fun currentRoute(): String? {
         val am = audioManager ?: return null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return routeForDeviceType(am.communicationDevice?.type)
+            val modernRoute = routeForDeviceType(am.communicationDevice?.type)
+            if (modernRoute != null) {
+                return modernRoute
+            }
         }
         @Suppress("DEPRECATION")
         return when {

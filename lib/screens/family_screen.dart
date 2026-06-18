@@ -119,12 +119,11 @@ class _FamilyScreenState extends State<FamilyScreen> {
       _treeVisited = true;
     }
 
-    // UX-T1 FR1: на телефоне в режиме «Дерево» переключатель Список/Дерево
-    // живёт в топ-баре дерева (компактный icon-сегмент), поэтому отдельную
-    // полосу-тумблер над канвасом НЕ рисуем — минус один ряд хрома. В списке
-    // и на десктопе (>=1180) полоса остаётся как есть.
+    // На телефоне у «Списка» и «Дерева» уже есть свои компактные topbar-
+    // действия, поэтому общий широкий тумблер только съедал первый экран.
+    // На десктопе оставляем его как явный переключатель между двумя панелями.
     final isPhone = MediaQuery.of(context).size.width < 1180;
-    final showToggleBar = !(isPhone && _view == FamilyView.tree);
+    final showToggleBar = !isPhone;
     return Column(
       children: [
         if (showToggleBar)

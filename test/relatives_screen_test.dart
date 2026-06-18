@@ -424,6 +424,15 @@ void main() {
           builder: (context, state) => const RelativesScreen(),
         ),
         GoRoute(
+          path: '/family',
+          builder: (context, state) =>
+              Text('family:${state.uri.queryParameters['view']}'),
+        ),
+        GoRoute(
+          path: '/tree',
+          builder: (context, state) => const Text('tree-selector'),
+        ),
+        GoRoute(
           path: '/relatives/chat/:userId',
           builder: (context, state) =>
               Text('chat:${state.pathParameters['userId']}'),
@@ -492,6 +501,19 @@ void main() {
           .first,
     );
     expect(find.text('Нужно пригласить'), findsOneWidget);
+  });
+
+  testWidgets('На телефоне иконка дерева открывает вид дерева', (tester) async {
+    tester.view.physicalSize = const Size(412, 892);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpRelativesScreen(tester);
+
+    await tester.tap(find.byTooltip('Показать дерево'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('family:tree'), findsOneWidget);
   });
 
   testWidgets('A-list: список «Семья» имеет нижний инсет под плавающий нав-бар',

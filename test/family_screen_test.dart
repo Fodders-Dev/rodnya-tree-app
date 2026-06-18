@@ -16,9 +16,17 @@ Widget _host({FamilyView initialView = FamilyView.list}) => MaterialApp(
       ),
     );
 
+Future<void> _useDesktopSurface(WidgetTester tester) async {
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.binding.setSurfaceSize(const Size(1280, 1024));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+}
+
 void main() {
   testWidgets('defaults to the Список view; tree body not built yet',
       (tester) async {
+    await _useDesktopSurface(tester);
     await tester.pumpWidget(_host());
 
     expect(find.text('LIST-BODY'), findsOneWidget);
@@ -42,6 +50,7 @@ void main() {
   });
 
   testWidgets('tapping «Дерево» switches to the tree body', (tester) async {
+    await _useDesktopSurface(tester);
     await tester.pumpWidget(_host());
 
     await tester.tap(find.byKey(const Key('family-view-tree')));
@@ -60,16 +69,25 @@ void main() {
     expect(find.text('LIST-BODY'), findsNothing);
   });
 
+  testWidgets('phone hides the wide Список/Дерево shell strip', (tester) async {
+    tester.view.physicalSize = const Size(412, 892);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host());
+
+    expect(find.text('LIST-BODY'), findsOneWidget);
+    expect(find.byKey(const Key('family-view-list')), findsNothing);
+    expect(find.byKey(const Key('family-view-tree')), findsNothing);
+  });
+
   testWidgets('the visited tree stays mounted after toggling back to list',
       (tester) async {
     // UX-T1 FR1: на телефоне в режиме «Дерево» шелл-полоса переключателя
     // скрыта (тумблер переехал в топ-бар дерева). Этот тест про keep-alive
     // IndexedStack (ширинонезависимо) и переключается через шелл-тумблер,
     // поэтому гоним на desktop-ширине (>=1180), где полоса видна всегда.
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.binding.setSurfaceSize(const Size(1280, 1024));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _useDesktopSurface(tester);
 
     await tester.pumpWidget(_host());
 
