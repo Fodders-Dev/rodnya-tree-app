@@ -15,57 +15,59 @@ import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
   });
 
   test('CustomApiProfileService loads and saves bootstrap profile data',
       () async {
+    var serverProfile = <String, dynamic>{
+      'id': 'user-1',
+      'email': 'dev@rodnya.app',
+      'firstName': 'Иван',
+      'lastName': 'Иванов',
+      'middleName': 'Иванович',
+      'displayName': 'Иван Иванович Иванов',
+      'username': 'ivanov',
+      'phoneNumber': '+79990001122',
+      'countryCode': '+7',
+      'countryName': 'Россия',
+      'city': 'Москва',
+      'gender': 'male',
+      'bio': 'Люблю семейные архивы',
+      'familyStatus': 'Женат',
+      'aboutFamily': 'Собираю семейные истории для детей и внуков.',
+      'education': 'МГУ',
+      'work': 'Родня',
+      'hometown': 'Тула',
+      'languages': 'Русский, английский',
+      'values': 'Семья',
+      'religion': 'Православие',
+      'interests': 'Генеалогия, архивы, путешествия',
+      'profileVisibility': {
+        'about': {
+          'scope': 'specific_trees',
+          'treeIds': ['tree-family'],
+        },
+        'background': {'scope': 'public'},
+        'worldview': {
+          'scope': 'specific_users',
+          'userIds': ['user-2'],
+        },
+        'contacts': {
+          'scope': 'specific_branches',
+          'branchRootPersonIds': ['person-branch-1'],
+        },
+      },
+    };
+
     final client = MockClient((request) async {
       if (request.url.path == '/v1/profile/me/bootstrap' &&
           request.method == 'GET') {
         return http.Response(
-          jsonEncode({
-            'profile': {
-              'id': 'user-1',
-              'email': 'dev@rodnya.app',
-              'firstName': 'Иван',
-              'lastName': 'Иванов',
-              'middleName': 'Иванович',
-              'displayName': 'Иван Иванович Иванов',
-              'username': 'ivanov',
-              'phoneNumber': '+79990001122',
-              'countryCode': '+7',
-              'countryName': 'Россия',
-              'city': 'Москва',
-              'gender': 'male',
-              'bio': 'Люблю семейные архивы',
-              'familyStatus': 'Женат',
-              'aboutFamily': 'Собираю семейные истории для детей и внуков.',
-              'education': 'МГУ',
-              'work': 'Родня',
-              'hometown': 'Тула',
-              'languages': 'Русский, английский',
-              'values': 'Семья',
-              'religion': 'Православие',
-              'interests': 'Генеалогия, архивы, путешествия',
-              'profileVisibility': {
-                'about': {
-                  'scope': 'specific_trees',
-                  'treeIds': ['tree-family'],
-                },
-                'background': {'scope': 'public'},
-                'worldview': {
-                  'scope': 'specific_users',
-                  'userIds': ['user-2'],
-                },
-                'contacts': {
-                  'scope': 'specific_branches',
-                  'branchRootPersonIds': ['person-branch-1'],
-                },
-              },
-            },
-          }),
+          jsonEncode({'profile': serverProfile}),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -101,33 +103,35 @@ void main() {
           },
         );
 
+        serverProfile = {
+          'id': 'user-1',
+          'email': 'dev@rodnya.app',
+          'firstName': body['firstName'],
+          'lastName': body['lastName'],
+          'middleName': body['middleName'],
+          'displayName': body['displayName'],
+          'username': body['username'],
+          'phoneNumber': body['phoneNumber'],
+          'countryCode': body['countryCode'],
+          'countryName': body['countryName'],
+          'city': body['city'],
+          'gender': body['gender'],
+          'bio': body['bio'],
+          'familyStatus': body['familyStatus'],
+          'aboutFamily': body['aboutFamily'],
+          'education': body['education'],
+          'work': body['work'],
+          'hometown': body['hometown'],
+          'languages': body['languages'],
+          'values': body['values'],
+          'religion': body['religion'],
+          'interests': body['interests'],
+          'profileVisibility': body['profileVisibility'],
+        };
+
         return http.Response(
           jsonEncode({
-            'profile': {
-              'id': 'user-1',
-              'email': 'dev@rodnya.app',
-              'firstName': body['firstName'],
-              'lastName': body['lastName'],
-              'middleName': body['middleName'],
-              'displayName': body['displayName'],
-              'username': body['username'],
-              'phoneNumber': body['phoneNumber'],
-              'countryCode': body['countryCode'],
-              'countryName': body['countryName'],
-              'city': body['city'],
-              'gender': body['gender'],
-              'bio': body['bio'],
-              'familyStatus': body['familyStatus'],
-              'aboutFamily': body['aboutFamily'],
-              'education': body['education'],
-              'work': body['work'],
-              'hometown': body['hometown'],
-              'languages': body['languages'],
-              'values': body['values'],
-              'religion': body['religion'],
-              'interests': body['interests'],
-              'profileVisibility': body['profileVisibility'],
-            },
+            'profile': serverProfile,
             'profileStatus': {
               'isComplete': true,
               'missingFields': [],
@@ -521,6 +525,83 @@ void main() {
     final profile = await profileService.getCurrentUserProfile();
     expect(profile?.displayName, 'Артем Андреевич Кузнецов');
     expect(profile?.username, 'artem');
+  });
+
+  test('CustomApiProfileService refreshes current profile before using cache',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/profile/me/bootstrap' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'profile': {
+              'id': 'user-1',
+              'email': 'dev@rodnya.app',
+              'firstName': 'Артем',
+              'lastName': 'Кузнецов',
+              'middleName': 'Андреевич',
+              'displayName': 'Артем Андреевич Кузнецов',
+              'username': 'artem',
+              'coverPhotoUrl': 'https://cdn.example.com/fresh-cover.jpg',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': [],
+      }),
+    );
+    await prefs.setString(
+      'custom_api_profile_form_v1',
+      jsonEncode({
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'firstName': 'Старое',
+        'lastName': 'Имя',
+        'displayName': 'Старое Имя',
+        'username': 'old',
+        'coverPhotoUrl': 'https://cdn.example.com/stale-cover.jpg',
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final profileService = await CustomApiProfileService.create(
+      authService: authService,
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+    );
+
+    final profile = await profileService.getCurrentUserProfile();
+
+    expect(profile?.displayName, 'Артем Андреевич Кузнецов');
+    expect(profile?.coverPhotoURL, 'https://cdn.example.com/fresh-cover.jpg');
   });
 
   test('CustomApiProfileService loads account linking status', () async {

@@ -90,11 +90,9 @@ class CustomApiProfileService implements ProfileServiceInterface {
 
   @override
   Future<UserProfile?> getCurrentUserProfile() async {
-    final cached = _getCachedProfileForm();
-    if (cached != null) {
-      return _toUserProfile(cached);
-    }
-
+    // ProfileScreen already paints from UserProfileCache before calling this
+    // method. This call must prefer the backend so recently changed fields
+    // like coverPhotoUrl do not get masked by an older form-cache snapshot.
     final formData = await getCurrentUserProfileFormData();
     return _toUserProfile(formData);
   }
@@ -291,9 +289,8 @@ class CustomApiProfileService implements ProfileServiceInterface {
           profile.profileVisibilityScopes ?? _defaultProfileVisibilityScopes,
       profileVisibilityTreeIds:
           profile.profileVisibilityTreeIds ?? _emptyProfileVisibilityTargets,
-      profileVisibilityBranchRootIds:
-          profile.profileVisibilityBranchRootIds ??
-              _emptyProfileVisibilityTargets,
+      profileVisibilityBranchRootIds: profile.profileVisibilityBranchRootIds ??
+          _emptyProfileVisibilityTargets,
       profileVisibilityUserIds:
           profile.profileVisibilityUserIds ?? _emptyProfileVisibilityTargets,
     );
