@@ -473,6 +473,31 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
+  Future<void> _toggleSpeakerRoute() async {
+    final routes = _audioRouteService.routes;
+    AudioRouteOption? routeById(String id) =>
+        routes.firstWhereOrNull((route) => route.id == id);
+
+    final selectedType = _audioRouteService.selectedRoute?.type;
+    final target = selectedType == AudioRouteType.speaker
+        ? routeById('earpiece')
+        : routeById('speaker');
+    if (target == null) {
+      await _openAudioRouteSheet();
+      return;
+    }
+
+    HapticFeedback.lightImpact();
+    await _audioRouteService.selectRoute(target);
+    if (!mounted) return;
+    final error = _audioRouteService.errorMessage;
+    if (error != null && error.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
+  }
+
   Future<void> _openDevicePickerSheet() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -686,6 +711,23 @@ class _CallScreenState extends State<CallScreen> {
     return tiles;
   }
 
+  List<_VideoTileData> _videoTilesForGroup(VideoTrack? localVideoTrack) {
+    final tiles = <_VideoTileData>[];
+    if (localVideoTrack != null) {
+      tiles.add(
+        _VideoTileData(
+          track: localVideoTrack,
+          label: 'Вы',
+          mirror: widget.coordinator.cameraPosition == CameraPosition.front,
+        ),
+      );
+    }
+    for (final tile in _remoteTiles) {
+      tiles.add(_VideoTileData(track: tile.track, label: tile.label));
+    }
+    return tiles;
+  }
+
   VideoTrack? get _localVideoTrack {
     // Camera state has THREE inputs that all need to agree before we
     // render the local video tile:
@@ -842,8 +884,8 @@ class _CallScreenState extends State<CallScreen> {
   @override
   Widget build(BuildContext context) {
     final remoteVideoTrack = _remoteVideoTrack;
-    final remoteTiles = _remoteTiles;
     final localVideoTrack = _localVideoTrack;
+    final groupVideoTiles = _videoTilesForGroup(localVideoTrack);
     final hasConnectedRoom = widget.coordinator.room != null;
     final showPermissionSettingsCta = _resolvedCall.state == CallState.active &&
         widget.coordinator.hasMediaPermissionIssue &&
@@ -870,7 +912,7 @@ class _CallScreenState extends State<CallScreen> {
                   ? _CallStage(
                       isGroupCall: _isGroupCall,
                       remoteVideoTrack: remoteVideoTrack,
-                      remoteTiles: remoteTiles,
+                      groupVideoTiles: groupVideoTiles,
                       fallbackAvatar: _buildAvatar(),
                     )
                   : _LocalFullStage(
@@ -912,72 +954,80 @@ class _CallScreenState extends State<CallScreen> {
                       ignoring: _isVideoCall &&
                           _resolvedCall.state == CallState.active &&
                           !_videoChromeVisible,
-                      child: GlassPanel(
-                        borderRadius: BorderRadius.circular(28),
-                        padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-                        child: Column(
-                          children: [
-                            Text(
-                              widget.title,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .headlineSmall
-                                  ?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _statusLabel(),
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(
-                                    color: Colors.white.withValues(alpha: 0.82),
-                                  ),
-                              textAlign: TextAlign.center,
-                            ),
-                            if (_isGroupCall) ...[
-                              const SizedBox(height: 12),
-                              _GroupCallRoster(
-                                participants: _groupCallParticipants,
-                                isNudging: _isNudgingGroupParticipants,
-                                onNudgeWaiting:
-                                    _waitingGroupParticipantIds.isEmpty
-                                        ? null
-                                        : _nudgeWaitingGroupParticipants,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: (_isVideoCall &&
+                                _resolvedCall.state == CallState.active)
+                            ? _toggleVideoChromeVisibility
+                            : null,
+                        child: GlassPanel(
+                          borderRadius: BorderRadius.circular(28),
+                          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                          child: Column(
+                            children: [
+                              Text(
+                                widget.title,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineSmall
+                                    ?.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                textAlign: TextAlign.center,
                               ),
-                            ],
-                            if (_resolvedCall.state == CallState.active) ...[
-                              const SizedBox(height: 12),
-                              CallConnectionQualityBadge(
-                                quality: widget
-                                    .coordinator.displayedConnectionQuality,
-                                isReconnecting:
-                                    widget.coordinator.isReconnectingRoom,
+                              const SizedBox(height: 8),
+                              Text(
+                                _statusLabel(),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.82),
+                                    ),
+                                textAlign: TextAlign.center,
                               ),
+                              if (_isGroupCall) ...[
+                                const SizedBox(height: 12),
+                                _GroupCallRoster(
+                                  participants: _groupCallParticipants,
+                                  isNudging: _isNudgingGroupParticipants,
+                                  onNudgeWaiting:
+                                      _waitingGroupParticipantIds.isEmpty
+                                          ? null
+                                          : _nudgeWaitingGroupParticipants,
+                                ),
+                              ],
+                              if (_resolvedCall.state == CallState.active) ...[
+                                const SizedBox(height: 12),
+                                CallConnectionQualityBadge(
+                                  quality: widget
+                                      .coordinator.displayedConnectionQuality,
+                                  isReconnecting:
+                                      widget.coordinator.isReconnectingRoom,
+                                ),
+                              ],
+                              if (_showReconnectBanner) ...[
+                                const SizedBox(height: 12),
+                                _ReconnectBanner(
+                                  isReconnecting:
+                                      widget.coordinator.isReconnectingRoom,
+                                  isRestored: widget
+                                      .coordinator.showReconnectRestoredBanner,
+                                  message: widget.coordinator.connectionError,
+                                ),
+                              ],
+                              if (showPermissionSettingsCta) ...[
+                                const SizedBox(height: 12),
+                                FilledButton.icon(
+                                  onPressed: _openSystemSettings,
+                                  icon: const Icon(Icons.settings_rounded),
+                                  label: const Text('Открыть настройки'),
+                                ),
+                              ],
                             ],
-                            if (_showReconnectBanner) ...[
-                              const SizedBox(height: 12),
-                              _ReconnectBanner(
-                                isReconnecting:
-                                    widget.coordinator.isReconnectingRoom,
-                                isRestored: widget
-                                    .coordinator.showReconnectRestoredBanner,
-                                message: widget.coordinator.connectionError,
-                              ),
-                            ],
-                            if (showPermissionSettingsCta) ...[
-                              const SizedBox(height: 12),
-                              FilledButton.icon(
-                                onPressed: _openSystemSettings,
-                                icon: const Icon(Icons.settings_rounded),
-                                label: const Text('Открыть настройки'),
-                              ),
-                            ],
-                          ],
+                          ),
                         ),
                       ),
                     ),
@@ -1016,7 +1066,7 @@ class _CallScreenState extends State<CallScreen> {
                           AnimatedBuilder(
                             animation: _audioRouteService,
                             builder: (context, _) => _CallActionButton(
-                              onPressed: _openAudioRouteSheet,
+                              onPressed: _toggleSpeakerRoute,
                               backgroundColor:
                                   Colors.white.withValues(alpha: 0.14),
                               icon: _audioRouteIcon(
@@ -1117,7 +1167,7 @@ class _CallScreenState extends State<CallScreen> {
           // default, remote when swapped). Draggable across the
           // whole viewport with edge-snap on release; tap to swap
           // with the main stage.
-          if (localVideoTrack != null)
+          if (localVideoTrack != null && !_isGroupCall)
             _buildDraggablePip(
               context: context,
               localTrack: localVideoTrack,
@@ -1288,29 +1338,39 @@ IconData _audioRouteIcon(AudioRouteType? type) {
 }
 
 String _audioRouteTooltip(AudioRouteOption? route) {
-  final label = route?.label;
-  if (label == null || label.isEmpty) {
-    return 'Аудиовыход';
+  switch (route?.type) {
+    case AudioRouteType.speaker:
+      return 'Переключить на наушник';
+    case AudioRouteType.earpiece:
+      return 'Переключить на динамик';
+    case AudioRouteType.bluetooth:
+    case AudioRouteType.wired:
+    case AudioRouteType.device:
+    case null:
+      final label = route?.label;
+      if (label == null || label.isEmpty) {
+        return 'Аудиовыход';
+      }
+      return 'Аудиовыход: $label';
   }
-  return 'Аудиовыход: $label';
 }
 
 class _CallStage extends StatelessWidget {
   const _CallStage({
     required this.isGroupCall,
     required this.remoteVideoTrack,
-    required this.remoteTiles,
+    required this.groupVideoTiles,
     required this.fallbackAvatar,
   });
 
   final bool isGroupCall;
   final VideoTrack? remoteVideoTrack;
-  final List<_RemoteTileData> remoteTiles;
+  final List<_VideoTileData> groupVideoTiles;
   final Widget fallbackAvatar;
 
   @override
   Widget build(BuildContext context) {
-    if (isGroupCall && remoteTiles.length > 1) {
+    if (isGroupCall && groupVideoTiles.isNotEmpty) {
       // Adaptive grid: scales the column count and aspect ratio so 3,
       // 4, 5+ participants all fit visibly. Was hard-coded to 2-col +
       // 0.88 aspect with `NeverScrollableScrollPhysics`, which dropped
@@ -1318,7 +1378,7 @@ class _CallStage extends StatelessWidget {
       // Bottom padding tightened from 220 → 160 to claw back vertical
       // room for the bigger grids. We keep scrolling enabled when
       // we'd otherwise overflow.
-      final count = remoteTiles.length;
+      final count = groupVideoTiles.length;
       final crossAxisCount = count <= 2
           ? 1
           : count <= 4
@@ -1350,7 +1410,7 @@ class _CallStage extends StatelessWidget {
               ),
               itemCount: count,
               itemBuilder: (context, index) => _RemoteVideoTile(
-                tile: remoteTiles[index],
+                tile: groupVideoTiles[index],
               ),
             ),
           ),
@@ -1389,6 +1449,18 @@ class _RemoteTileData {
 
   final VideoTrack? track;
   final String label;
+}
+
+class _VideoTileData {
+  const _VideoTileData({
+    required this.track,
+    required this.label,
+    this.mirror = false,
+  });
+
+  final VideoTrack? track;
+  final String label;
+  final bool mirror;
 }
 
 enum _GroupCallParticipantConnectionState {
@@ -1445,9 +1517,9 @@ class _GroupCallRoster extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.18),
+        color: Colors.black.withValues(alpha: 0.54),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
@@ -1535,9 +1607,9 @@ class _GroupCallParticipantChip extends StatelessWidget {
       constraints: const BoxConstraints(maxWidth: 188),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.11),
+          color: Colors.black.withValues(alpha: 0.36),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(6, 5, 10, 5),
@@ -1644,9 +1716,9 @@ class _GroupCallOverflowChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.11),
+        color: Colors.black.withValues(alpha: 0.36),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -1687,7 +1759,7 @@ class _RemoteVideoTile extends StatelessWidget {
     required this.tile,
   });
 
-  final _RemoteTileData tile;
+  final _VideoTileData tile;
 
   @override
   Widget build(BuildContext context) {
@@ -1706,6 +1778,9 @@ class _RemoteVideoTile extends StatelessWidget {
               VideoTrackRenderer(
                 track,
                 fit: VideoViewFit.cover,
+                mirrorMode: tile.mirror
+                    ? VideoViewMirrorMode.mirror
+                    : VideoViewMirrorMode.off,
               )
             else
               Center(
@@ -1720,8 +1795,11 @@ class _RemoteVideoTile extends StatelessWidget {
               bottom: 10,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.36),
+                  color: Colors.black.withValues(alpha: 0.68),
                   borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.14),
+                  ),
                 ),
                 child: Padding(
                   padding:

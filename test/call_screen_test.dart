@@ -74,7 +74,7 @@ void main() {
     expect(find.text('Н'), findsOneWidget);
   });
 
-  testWidgets('CallScreen opens audio route picker for active calls',
+  testWidgets('CallScreen toggles speaker route for active calls',
       (tester) async {
     final selectedRoutes = <String>[];
     final audioRoutes = AudioRouteService(
@@ -122,20 +122,19 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byTooltip('Аудиовыход: Динамик'), findsOneWidget);
+    expect(find.byTooltip('Переключить на наушник'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Аудиовыход: Динамик'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Аудиовыход'), findsOneWidget);
-    expect(find.text('Динамик'), findsOneWidget);
-    expect(find.text('Наушник'), findsOneWidget);
-
-    await tester.tap(find.text('Наушник'));
+    await tester.tap(find.byTooltip('Переключить на наушник'));
     await tester.pumpAndSettle();
 
     expect(selectedRoutes, ['earpiece']);
     expect(audioRoutes.selectedRouteId, 'earpiece');
+
+    await tester.tap(find.byTooltip('Переключить на динамик'));
+    await tester.pumpAndSettle();
+
+    expect(selectedRoutes, ['earpiece', 'speaker']);
+    expect(audioRoutes.selectedRouteId, 'speaker');
   });
 
   testWidgets('CallScreen exposes camera switch for active video calls',

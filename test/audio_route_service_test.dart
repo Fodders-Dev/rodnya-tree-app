@@ -136,7 +136,7 @@ void main() {
     expect(service.selectedRouteId, 'speaker');
   }));
 
-  test('CA1 FR5: выбранный маршрут отражает ФАКТ устройства, не запрос',
+  test('CA1 FR5: успешный выбор отражается сразу, факт сверяется позже',
       (() async {
     final native = _FakeCallAudioRouter()
       ..updateCurrentOnSetRoute = false
@@ -154,9 +154,11 @@ void main() {
       service.routes.firstWhere((route) => route.id == 'earpiece'),
     );
 
-    // Запросили earpiece, но факт — speaker: UI показывает реальность.
+    // Запросили earpiece, Android может ещё мгновение возвращать speaker:
+    // UI показывает принятый выбор сразу, а фактический маршрут сверит
+    // отложенный refresh.
     expect(native.calls, contains('setRoute:earpiece'));
-    expect(service.selectedRouteId, 'speaker');
+    expect(service.selectedRouteId, 'earpiece');
   }));
 
   test('CA1 FR5: сбой переключения не показывает ложный успех', (() async {

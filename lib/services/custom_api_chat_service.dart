@@ -609,11 +609,13 @@ class CustomApiChatService
       throw const CustomApiException('Не удалось обновить название чата');
     }
 
-    return ChatDetails.fromMap({
+    final details = ChatDetails.fromMap({
       ...rawChat,
       'participants': response['participants'],
       'branchRoots': response['branchRoots'],
     });
+    unawaited(refreshChatOverview());
+    return details;
   }
 
   @override
@@ -646,11 +648,13 @@ class CustomApiChatService
       throw const CustomApiException('Не удалось обновить изображение чата');
     }
 
-    return ChatDetails.fromMap({
+    final details = ChatDetails.fromMap({
       ...rawChat,
       'participants': response['participants'],
       'branchRoots': response['branchRoots'],
     });
+    unawaited(refreshChatOverview());
+    return details;
   }
 
   @override
@@ -671,11 +675,13 @@ class CustomApiChatService
       throw const CustomApiException('Не удалось добавить участников');
     }
 
-    return ChatDetails.fromMap({
+    final details = ChatDetails.fromMap({
       ...rawChat,
       'participants': response['participants'],
       'branchRoots': response['branchRoots'],
     });
+    unawaited(refreshChatOverview());
+    return details;
   }
 
   @override
@@ -693,11 +699,13 @@ class CustomApiChatService
       throw const CustomApiException('Не удалось обновить состав чата');
     }
 
-    return ChatDetails.fromMap({
+    final details = ChatDetails.fromMap({
       ...rawChat,
       'participants': response['participants'],
       'branchRoots': response['branchRoots'],
     });
+    unawaited(refreshChatOverview());
+    return details;
   }
 
   @override
@@ -709,6 +717,7 @@ class CustomApiChatService
       method: 'POST',
       path: '/v1/chats/$chatId/leave',
     );
+    unawaited(refreshChatOverview());
   }
 
   Future<List<ChatPreview>> _fetchChatPreviews() async {

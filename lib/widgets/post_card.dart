@@ -608,12 +608,34 @@ class _PostCardState extends State<PostCard>
                   ),
                 const Spacer(),
                 if (_commentCount > 0)
-                  Text(
-                    '$_commentCount комм.',
-                    style: AppTheme.sans(
-                      color: tokens.inkMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.surface.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: tokens.surfaceLine),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.mode_comment_outlined,
+                          size: 12,
+                          color: tokens.accent,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _commentCount.toString(),
+                          style: AppTheme.sans(
+                            color: tokens.inkSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
               ],

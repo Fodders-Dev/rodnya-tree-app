@@ -39,6 +39,7 @@ async function startTestServer() {
     wsBaseUrl: `ws://127.0.0.1:${server.address().port}`,
     server,
     store,
+    realtimeHub,
     tempDir,
   };
 }
@@ -95,18 +96,48 @@ async function startConfiguredTestServer({
     wsBaseUrl: `ws://127.0.0.1:${server.address().port}`,
     server,
     store,
+    realtimeHub,
     tempDir,
   };
 }
 
 async function stopTestServer(ctx) {
+  if (ctx.realtimeHub?.wss) {
+    for (const client of ctx.realtimeHub.wss.clients) {
+      try {
+        client.terminate();
+      } catch (_) {
+        // best-effort cleanup for Windows test temp directories
+      }
+    }
+    await new Promise((resolve) => {
+      ctx.realtimeHub.wss.close(() => resolve());
+    });
+  }
   await new Promise((resolve, reject) => {
     ctx.server.close((error) => (error ? reject(error) : resolve()));
   });
   if (typeof ctx.store?.close === "function") {
     await ctx.store.close();
   }
-  await fs.rm(ctx.tempDir, {recursive: true, force: true});
+  await removeTempDir(ctx.tempDir);
+}
+
+async function removeTempDir(tempDir) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await fs.rm(tempDir, {recursive: true, force: true});
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["ENOTEMPTY", "EBUSY", "EPERM"].includes(error?.code)) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 function createFakeLiveKitService() {

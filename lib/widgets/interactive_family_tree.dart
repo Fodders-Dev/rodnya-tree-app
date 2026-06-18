@@ -5132,31 +5132,46 @@ class FamilyTreePainter extends CustomPainter {
       return;
     }
 
-    // Reference style: each parent→child connection is a single smooth cubic
-    // bezier from the family junction (familyCenterX, parentBarY) to the
-    // child top anchor, with control points at the vertical mid-line — gives
-    // the connectors a soft S-curve instead of H-bus right angles.
-    //
-    // Reference SVG path:
-    //   M${px},${py} C${px},${my} ${cx},${my} ${cx},${cy}
     final junction = Offset(familyCenterX, parentBarY);
-    for (final anchor in anchors) {
-      final my = (parentBarY + anchor.dy) / 2;
-      final path = Path()
-        ..moveTo(junction.dx, junction.dy)
-        ..cubicTo(
-          junction.dx,
-          my,
-          anchor.dx,
-          my,
-          anchor.dx,
-          anchor.dy,
-        );
-      if (dashed) {
-        _drawDashedPath(canvas, path, linePaint);
-      } else {
-        canvas.drawPath(path, linePaint);
-      }
+    final averageChildY =
+        anchors.map((anchor) => anchor.dy).reduce((a, b) => a + b) /
+            anchors.length;
+    final direction = averageChildY >= parentBarY ? 1.0 : -1.0;
+    final verticalGap = (averageChildY - parentBarY).abs();
+    final busOffset = verticalGap.clamp(26.0, 58.0).toDouble() * direction;
+    final busY = parentBarY + busOffset;
+    final sortedAnchors = [...anchors]..sort((a, b) => a.dx.compareTo(b.dx));
+    final minChildX = min(
+      familyCenterX,
+      sortedAnchors.map((anchor) => anchor.dx).reduce(min),
+    );
+    final maxChildX = max(
+      familyCenterX,
+      sortedAnchors.map((anchor) => anchor.dx).reduce(max),
+    );
+
+    _drawSegment(
+      canvas: canvas,
+      start: junction,
+      end: Offset(familyCenterX, busY),
+      linePaint: linePaint,
+      dashed: dashed,
+    );
+    _drawSegment(
+      canvas: canvas,
+      start: Offset(minChildX, busY),
+      end: Offset(maxChildX, busY),
+      linePaint: linePaint,
+      dashed: dashed,
+    );
+    for (final anchor in sortedAnchors) {
+      _drawSegment(
+        canvas: canvas,
+        start: Offset(anchor.dx, busY),
+        end: anchor,
+        linePaint: linePaint,
+        dashed: dashed,
+      );
     }
     _drawJunction(canvas, junction, pointPaint);
   }
@@ -5194,23 +5209,6 @@ class FamilyTreePainter extends CustomPainter {
     // Smaller, softer junction circles — reference uses tiny dots so the
     // structure reads as connectors, not bullet points.
     canvas.drawCircle(center, 2.6, pointPaint);
-  }
-
-  /// Draws [path] with a dashed stroke by sampling along its [PathMetric] and
-  /// extracting alternating sub-paths. Used for adoptive / non-biological
-  /// parent-child connectors so they read as a softer attachment.
-  void _drawDashedPath(Canvas canvas, Path path, Paint paint) {
-    const dashLength = 6.0;
-    const gapLength = 4.0;
-    for (final metric in path.computeMetrics()) {
-      double distance = 0;
-      while (distance < metric.length) {
-        final next = distance + dashLength;
-        final extracted = metric.extractPath(distance, next);
-        canvas.drawPath(extracted, paint);
-        distance = next + gapLength;
-      }
-    }
   }
 
   @override

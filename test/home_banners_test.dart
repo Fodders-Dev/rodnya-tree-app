@@ -32,9 +32,7 @@ class _FakeAuthService implements AuthServiceInterface {
 
 /// Сервис со skipped-визардом → баннер «Закончите настройку» показывается.
 class _SkippedOnboardingFamilyService
-    implements
-        FamilyTreeServiceInterface,
-        OnboardingCapableFamilyTreeService {
+    implements FamilyTreeServiceInterface, OnboardingCapableFamilyTreeService {
   @override
   Future<OnboardingState> getOnboardingState() async => const OnboardingState(
         userId: 'user-1',
@@ -137,7 +135,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Чтобы звонки доходили в фоне'), findsOneWidget);
+      expect(find.text('Настройте уведомления и звонки'), findsOneWidget);
+      expect(find.text('Открыть настройки'), findsOneWidget);
 
       final closeSize = tester.getSize(find.byTooltip('Скрыть'));
       expect(closeSize.width, greaterThanOrEqualTo(44.0));
@@ -146,7 +145,7 @@ void main() {
       await tester.tap(find.byTooltip('Скрыть'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Чтобы звонки доходили в фоне'), findsNothing);
+      expect(find.text('Настройте уведомления и звонки'), findsNothing);
       expect(advisor.dismissed, isTrue);
     });
 
@@ -157,7 +156,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Чтобы звонки доходили в фоне'), findsNothing);
+      expect(find.text('Настройте уведомления и звонки'), findsNothing);
     });
   });
 }

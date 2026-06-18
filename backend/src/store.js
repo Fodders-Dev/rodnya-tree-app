@@ -17693,12 +17693,28 @@ class FileStore {
 
   async listPostComments(postId) {
     const db = await this._read();
+    const usersById = new Map(
+      (Array.isArray(db.users) ? db.users : []).map((user) => [
+        String(user?.id || "").trim(),
+        user,
+      ]),
+    );
     return db.comments
       .filter((entry) => entry.postId === postId)
       .sort((left, right) =>
         String(left.createdAt || "").localeCompare(String(right.createdAt || "")),
       )
-      .map((entry) => attachCommentReactions(db, entry));
+      .map((entry) => {
+        const hydrated = structuredClone(entry);
+        if (!String(hydrated.authorPhotoUrl || "").trim()) {
+          const author = usersById.get(String(hydrated.authorId || "").trim());
+          const photoUrl = author?.profile?.photoUrl;
+          if (String(photoUrl || "").trim()) {
+            hydrated.authorPhotoUrl = String(photoUrl).trim();
+          }
+        }
+        return attachCommentReactions(db, hydrated);
+      });
   }
 
   /// Lookup a single comment scoped to a post. Used by the route layer
@@ -19376,6 +19392,23 @@ class FileStore {
       };
 
       if (isGroup) {
+        if (!preview.photoUrl && chat.type === "branch") {
+          const rootIds = normalizeParticipantIds(chat.branchRootPersonIds);
+          const rootPerson = db.persons.find((person) => {
+            return (
+              rootIds.includes(String(person?.id || "").trim()) &&
+              String(person?.treeId || "").trim() ===
+                String(chat.treeId || "").trim() &&
+              (String(person?.primaryPhotoUrl || "").trim() ||
+                String(person?.photoUrl || "").trim())
+            );
+          });
+          if (rootPerson) {
+            preview.photoUrl =
+              String(rootPerson.primaryPhotoUrl || rootPerson.photoUrl || "")
+                .trim() || null;
+          }
+        }
         const otherParticipantNames = [];
         for (const participantId of participants) {
           if (participantId === userId) {

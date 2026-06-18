@@ -79,6 +79,7 @@ class AudioRouteService extends ChangeNotifier {
   bool _isRefreshing = false;
   bool _isSelecting = false;
   String? _errorMessage;
+  Timer? _postSelectRefreshTimer;
   // CA1 (ревью D): сериализация attachRoom — чтобы attachRoom(null) на
   // завершении и attachRoom(room) на параллельном коннекте не переплелись
   // на await native.stop()/start() и не оставили аудиосессию в
@@ -222,12 +223,12 @@ class AudioRouteService extends ChangeNotifier {
         }
         // FR2: маршрутизация нативом (setCommunicationDevice).
         final ok = await native.setRoute(option.id);
-        // FR5: отражаем ФАКТ устройства, на сбое не врём об успехе.
-        final actual = await native.currentRoute();
-        if (actual != null) {
-          _selectedRouteId = actual;
-        } else if (ok) {
+        if (ok) {
+          // Android may report the previous communication device for a short
+          // moment after setCommunicationDevice(). Show the user's accepted
+          // choice immediately, then reconcile with the OS a bit later.
           _selectedRouteId = option.id;
+          _schedulePostSelectRefresh();
         } else {
           _errorMessage = 'Не удалось переключить аудиовыход.';
         }
@@ -248,6 +249,16 @@ class AudioRouteService extends ChangeNotifier {
         unawaited(selectRoute(pending));
       }
     }
+  }
+
+  void _schedulePostSelectRefresh() {
+    _postSelectRefreshTimer?.cancel();
+    _postSelectRefreshTimer = Timer(const Duration(milliseconds: 350), () {
+      _postSelectRefreshTimer = null;
+      if (_room != null) {
+        unawaited(refreshRoutes());
+      }
+    });
   }
 
   List<AudioRouteOption> _buildRoutes(List<MediaDevice> devices) {
@@ -408,6 +419,7 @@ class AudioRouteService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _postSelectRefreshTimer?.cancel();
     unawaited(_deviceChangesSubscription?.cancel());
     unawaited(_nativeDeviceSubscription?.cancel());
     unawaited(_nativeAudio?.stop());

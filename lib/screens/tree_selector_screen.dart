@@ -353,7 +353,16 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                         fontWeight: FontWeight.w800,
                       ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
+                Text(
+                  'Каждое дерево — отдельная семейная схема: можно вести '
+                  'общую родню, ветку другой фамилии или свой близкий круг.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        height: 1.35,
+                      ),
+                ),
+                const SizedBox(height: 10),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../services/battery_optimization_advisor.dart';
 import '../theme/app_theme.dart';
@@ -59,6 +60,10 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
     setState(() => _shouldShow = false);
   }
 
+  Future<void> _openSettings() async {
+    await openAppSettings();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_resolved || !_shouldShow) {
@@ -99,7 +104,7 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Чтобы звонки доходили в фоне',
+                      'Настройте уведомления и звонки',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w800,
                         color: tokens.ink,
@@ -107,13 +112,29 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Производитель усыпляет приложения в фоне. В '
-                      'настройках батареи включите автозапуск Родни и '
-                      'снимите ограничения — иначе звонки и сообщения '
-                      'не дойдут при выключенном экране.',
+                      'Нажмите «Открыть настройки», затем разрешите Родне '
+                      'уведомления, автозапуск и батарею «Без ограничений». '
+                      'Так сообщения и звонки смогут приходить при '
+                      'выключенном экране.',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: tokens.inkSecondary,
                         height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.icon(
+                        onPressed: _openSettings,
+                        icon: const Icon(Icons.settings_rounded, size: 18),
+                        label: const Text('Открыть настройки'),
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
                       ),
                     ),
                   ],
