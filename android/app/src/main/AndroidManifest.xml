@@ -26,6 +26,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Разрешение WAKE_LOCK может помочь для надежности фоновых задач -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Позволяет запросить системное исключение из оптимизации батареи:
+         критично для фоновых входящих звонков на агрессивных прошивках. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- U3: OTA-самообновление sideload-сборок (раздача через Telegram,
          вне магазина). Нужно для запуска системного установщика на
          скачанный APK. Уровень normal, на API <26 игнорируется.

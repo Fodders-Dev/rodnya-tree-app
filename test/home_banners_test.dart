@@ -135,8 +135,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Настройте уведомления и звонки'), findsOneWidget);
-      expect(find.text('Открыть настройки'), findsOneWidget);
+      expect(find.text('Чтобы звонки доходили в фоне'), findsOneWidget);
+      expect(find.text('Открыть настройки Родни'), findsOneWidget);
 
       final closeSize = tester.getSize(find.byTooltip('Скрыть'));
       expect(closeSize.width, greaterThanOrEqualTo(44.0));
@@ -145,7 +145,7 @@ void main() {
       await tester.tap(find.byTooltip('Скрыть'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Настройте уведомления и звонки'), findsNothing);
+      expect(find.text('Чтобы звонки доходили в фоне'), findsNothing);
       expect(advisor.dismissed, isTrue);
     });
 
@@ -156,7 +156,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Настройте уведомления и звонки'), findsNothing);
+      expect(find.text('Чтобы звонки доходили в фоне'), findsNothing);
     });
   });
 }

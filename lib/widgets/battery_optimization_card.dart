@@ -61,6 +61,15 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
   }
 
   Future<void> _openSettings() async {
+    try {
+      final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
+      if (!batteryStatus.isGranted) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    } catch (_) {
+      // Some vendor ROMs do not expose the standard Android exemption
+      // screen. The app settings fallback below is still useful there.
+    }
     await openAppSettings();
   }
 
