@@ -92,6 +92,7 @@ class RodnyaCallForegroundService : Service() {
     private var currentPeerName: String? = null
     private var currentIsVideo: Boolean = false
     private var currentMicEnabled: Boolean = true
+    private var currentStartedAtMillis: Long = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -103,10 +104,14 @@ class RodnyaCallForegroundService : Service() {
 
         when (intent?.action) {
             ACTION_START, ACTION_UPDATE -> {
+                val wasEmpty = currentCallId.isNullOrEmpty()
                 currentCallId = intent.getStringExtra(EXTRA_CALL_ID)
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
                     ?: currentCallId
+                if (intent.action == ACTION_START || wasEmpty) {
+                    currentStartedAtMillis = System.currentTimeMillis()
+                }
                 val peerName = intent.getStringExtra(EXTRA_PEER_NAME)
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
@@ -153,6 +158,7 @@ class RodnyaCallForegroundService : Service() {
             peerName = currentPeerName,
             isVideo = currentIsVideo,
             micEnabled = currentMicEnabled,
+            startedAtMillis = currentStartedAtMillis,
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
@@ -178,6 +184,7 @@ class RodnyaCallForegroundService : Service() {
         currentPeerName = null
         currentIsVideo = false
         currentMicEnabled = true
+        currentStartedAtMillis = 0L
     }
 
     private fun buildNotification(
@@ -185,6 +192,7 @@ class RodnyaCallForegroundService : Service() {
         peerName: String?,
         isVideo: Boolean,
         micEnabled: Boolean,
+        startedAtMillis: Long,
     ): Notification {
         val title = if (!peerName.isNullOrBlank()) {
             "Идёт звонок с $peerName"
@@ -217,6 +225,8 @@ class RodnyaCallForegroundService : Service() {
         )
 
         val micLabel = if (micEnabled) "Заглушить" else "Включить микрофон"
+        val notificationStartedAt =
+            startedAtMillis.takeIf { it > 0L } ?: System.currentTimeMillis()
 
         val builder = NotificationCompat.Builder(
             applicationContext,
@@ -227,7 +237,11 @@ class RodnyaCallForegroundService : Service() {
             .setSmallIcon(R.drawable.ic_stat_notification)
             .setColor(applicationContext.getColor(R.color.colorAccent))
             .setContentTitle(title)
+            .setContentText("Звонок идёт · нажмите, чтобы вернуться")
             .setContentIntent(tapPending)
+            .setWhen(notificationStartedAt)
+            .setShowWhen(true)
+            .setUsesChronometer(true)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_CALL)

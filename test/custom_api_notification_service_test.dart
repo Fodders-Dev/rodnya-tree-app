@@ -20,7 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Notification fixtures must look *recent* to the service under test.
 /// `CustomApiNotificationService.syncPendingNotifications` refuses to replay
-/// anything older than `_maxReplayAge` (24h) as a local notification, so a
+/// anything older than `_maxReplayAge` (10m) as a local notification, so a
 /// hard-coded absolute `createdAt` silently ages out of that window and turns
 /// these delivery assertions red with the mere passage of wall-clock time —
 /// which is exactly what happened once the stale-replay cap landed (cecc0ba).
@@ -248,9 +248,11 @@ void main() {
       await service.initialize();
       await service.syncPendingNotifications();
 
-      expect(shownChatNotifications, hasLength(1));
-      expect(shownChatNotifications.first['chatId'], 'chat-1');
-      expect(shownChatNotifications.first['messageText'], 'Привет из чата');
+      expect(
+        shownChatNotifications,
+        isEmpty,
+        reason: 'foreground replay shows only the newest non-call item',
+      );
 
       expect(shownGenericNotifications, hasLength(1));
       expect(shownGenericNotifications.first['title'], 'Приглашение в дерево');
@@ -297,7 +299,7 @@ void main() {
       await restartedService.initialize();
       await restartedService.syncPendingNotifications();
 
-      expect(shownChatNotifications, hasLength(1));
+      expect(shownChatNotifications, isEmpty);
       expect(shownGenericNotifications, hasLength(1));
 
       await service.dispose();

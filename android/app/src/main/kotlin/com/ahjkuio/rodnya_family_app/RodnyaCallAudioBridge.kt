@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.lang.ref.WeakReference
 
 /**
  * CA1 (P0): нативный аудиороутинг звонка (ушной / динамик / Bluetooth /
@@ -40,14 +41,16 @@ object RodnyaCallAudioBridge {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var appContext: Context? = null
+    private var activityRef: WeakReference<MainActivity>? = null
     private var channel: MethodChannel? = null
     private var audioManager: AudioManager? = null
     private var focusRequest: AudioFocusRequest? = null
     private var active = false
     private var deviceCallback: AudioDeviceCallback? = null
 
-    fun configure(context: Context, engine: FlutterEngine) {
-        appContext = context.applicationContext
+    fun configure(activity: MainActivity, engine: FlutterEngine) {
+        activityRef = WeakReference(activity)
+        appContext = activity.applicationContext
         audioManager =
             appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val methodChannel =
@@ -86,9 +89,11 @@ object RodnyaCallAudioBridge {
             // focusRequest перезаписался бы без abandon). Достаточно
             // подтвердить режим связи.
             am.mode = AudioManager.MODE_IN_COMMUNICATION
+            activityRef?.get()?.volumeControlStream = AudioManager.STREAM_VOICE_CALL
             return
         }
         am.mode = AudioManager.MODE_IN_COMMUNICATION
+        activityRef?.get()?.volumeControlStream = AudioManager.STREAM_VOICE_CALL
         requestFocus(am)
         registerDeviceCallback(am)
         active = true
@@ -133,6 +138,7 @@ object RodnyaCallAudioBridge {
         // (ломая системный звук и следующий звонок). Корректное состояние
         // после завершения — MODE_NORMAL.
         am.mode = AudioManager.MODE_NORMAL
+        activityRef?.get()?.volumeControlStream = AudioManager.USE_DEFAULT_STREAM_TYPE
         active = false
     }
 
@@ -150,6 +156,8 @@ object RodnyaCallAudioBridge {
         } catch (_: Throwable) {
             // best-effort: teardown на пути lifecycle не должен бросать.
         }
+        activityRef?.get()?.volumeControlStream = AudioManager.USE_DEFAULT_STREAM_TYPE
+        activityRef = null
         channel?.setMethodCallHandler(null)
         channel = null
     }

@@ -408,20 +408,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   }
 
   /// Anything older than this is shown only in the in-app feed —
-  /// never replayed as a system notification. Catches the user's
-  /// «их заёбывает уведомлениями по хуйне» complaint where a fresh
-  /// install pulled 20 unread items and the OS pinged 20 times in
-  /// a row. The number is generous enough that a missed call from
-  /// last night still buzzes when the user opens the app in the
-  /// morning, but tight enough that week-old «X лайкнул вашу
-  /// историю» dies quietly.
-  static const Duration _maxReplayAge = Duration(hours: 24);
+  /// never replayed as a system notification. Foreground replay is
+  /// just a rescue path for freshly missed pushes, not a backlog
+  /// dump when the user opens the app after an hour.
+  static const Duration _maxReplayAge = Duration(minutes: 10);
 
-  /// Hard ceiling on how many local notifications we replay per
-  /// foreground sync, regardless of age. Even within the 24h
-  /// window, dumping 20 system notifications at once is jarring —
-  /// Telegram coalesces silently past ~3-5 from the same source.
-  static const int _maxReplayBatch = 5;
+  /// Hard ceiling on how many non-call local notifications we replay
+  /// per foreground sync. Calls bypass it; chat/feed backlog stays
+  /// visible in the app without spamming the Android tray.
+  static const int _maxReplayBatch = 1;
 
   Future<void> syncPendingNotifications() async {
     final authService = _authService;
@@ -455,7 +450,6 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
       final now = DateTime.now();
       final cutoff = now.subtract(_maxReplayAge);
-      final isFirstSync = _deliveredNotificationIds.isEmpty;
 
       final notifications = rawNotifications
           .whereType<Map<String, dynamic>>()
@@ -470,7 +464,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
               .compareTo(left['createdAt']?.toString() ?? '');
         });
 
-      var shown = 0;
+      var replayedNonCalls = 0;
       for (final notification in notifications) {
         final id = notification['id']!.toString();
 
@@ -495,17 +489,19 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           if (createdAt != null && createdAt.isBefore(cutoff)) {
             continue;
           }
-          // First-time sync after install / re-login: avoid
-          // dumping the entire backlog on the user's lockscreen.
-          // After the first batch lands, subsequent syncs only
-          // see new items anyway, so this only bites on day one.
-          if (isFirstSync && shown >= _maxReplayBatch) {
+          // Avoid dumping the backlog on the lockscreen. This cap is
+          // intentionally applied to every foreground sync because a
+          // killed app can accumulate several fresh unread items before
+          // the next launch.
+          if (replayedNonCalls >= _maxReplayBatch) {
             continue;
           }
         }
 
-        await _showBackendNotification(notification);
-        shown += 1;
+        final displayed = await _showBackendNotification(notification);
+        if (!isCall && displayed) {
+          replayedNonCalls += 1;
+        }
       }
 
       await _persistDeliveredNotificationIds();
@@ -1060,7 +1056,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     return int.tryParse(rawValue?.toString() ?? '') ?? 0;
   }
 
-  Future<void> _showBackendNotification(
+  Future<bool> _showBackendNotification(
       Map<String, dynamic> notification) async {
     final id = notification['id']?.toString() ?? '';
     final type = notification['type']?.toString() ?? 'generic';
@@ -1091,7 +1087,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       // Silent push: refetch only, no visual surface. Tree mutations
       // would spam user notifications otherwise (each person edit
       // = banner). Return early.
-      if (silent) return;
+      if (silent) return false;
     }
 
     if (type == 'chat_message') {
@@ -1103,11 +1099,11 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       // увидит сообщение в timeline'е через realtime, ОС-нотификация
       // только мигнёт сверху и помешает. Глушим.
       if (ActiveChatTracker.instance.isActive(chatId)) {
-        return;
+        return false;
       }
       final deliveryLevel = await _resolveChatNotificationLevel(chatId);
       if (deliveryLevel == ChatNotificationLevel.muted) {
-        return;
+        return false;
       }
       await showChatMessageNotification(
         chatId: chatId,
@@ -1117,7 +1113,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         notificationId: id.hashCode,
         playSound: deliveryLevel != ChatNotificationLevel.silent,
       );
-      return;
+      return true;
     }
 
     if (type == 'call_invite') {
@@ -1131,7 +1127,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           isVideo: callData['mediaMode']?.toString() == 'video',
           chatId: callData['chatId']?.toString(),
         );
-        return;
+        return true;
       }
     }
 
@@ -1142,6 +1138,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       payload: payload,
       type: type,
     );
+    return true;
   }
 
   /// Pick the matching native channel ID for a notification type.

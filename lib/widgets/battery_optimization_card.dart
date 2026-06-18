@@ -74,9 +74,8 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
     final tokens = theme.extension<RodnyaDesignTokens>() ??
         (isDark ? RodnyaDesignTokens.dark : RodnyaDesignTokens.light);
 
-    // 2b: компактнее (плотнее паддинги, короче текст) — советная карточка
-    // не должна спорить с лентой за первый экран. Инструкция сохранена
-    // целиком, дисмисс по-прежнему персистится через advisor.
+    // Keep this practical: the target user needs to know exactly which
+    // Android switches to look for, especially on Huawei/Honor firmware.
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
       child: Material(
@@ -104,7 +103,7 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Настройте уведомления и звонки',
+                      'Чтобы звонки доходили в фоне',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w800,
                         color: tokens.ink,
@@ -112,10 +111,10 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Нажмите «Открыть настройки», затем разрешите Родне '
-                      'уведомления, автозапуск и батарею «Без ограничений». '
-                      'Так сообщения и звонки смогут приходить при '
-                      'выключенном экране.',
+                      'Откройте настройки Родни и проверьте: уведомления '
+                      'разрешены, батарея — «Без ограничений», автозапуск '
+                      'и работа в фоне — включены. На Huawei/Honor это '
+                      'обычно в «Батарея» → «Запуск приложений».',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: tokens.inkSecondary,
                         height: 1.3,
@@ -127,7 +126,7 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                       child: FilledButton.icon(
                         onPressed: _openSettings,
                         icon: const Icon(Icons.settings_rounded, size: 18),
-                        label: const Text('Открыть настройки'),
+                        label: const Text('Открыть настройки Родни'),
                         style: FilledButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                           padding: const EdgeInsets.symmetric(
