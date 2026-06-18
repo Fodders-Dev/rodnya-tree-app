@@ -337,9 +337,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           // the badge spinner spins forever. Empty list on timeout
           // is the right fallback because contributions are
           // optional and the user can pull-to-refresh.
-          return await _profileService
-              .getPendingProfileContributions()
-              .timeout(
+          return await _profileService.getPendingProfileContributions().timeout(
             const Duration(seconds: 8),
             onTimeout: () {
               debugPrint(
@@ -839,394 +837,361 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required bool isFriendsTree,
   }) {
     return [
-                          // Redesign hero card — cover gradient + avatar
-                          // overlap + name split + stats + pill actions.
-                          // Replaces the legacy PersonDossierView block;
-                          // matches docs/design_handoff/Profile Redesign.html.
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
-                              child: Center(
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 680),
-                                  child: ProfileHeroCard(
-                                    fullName:
-                                        _getSafeDisplayName(_userProfile!),
-                                    firstName: _userProfile!.firstName.trim(),
-                                    patronymic:
-                                        _userProfile!.middleName.trim(),
-                                    lastName: _userProfile!.lastName.trim(),
-                                    photoUrl: _userProfile!.photoURL,
-                                    coverPhotoUrl:
-                                        _userProfile!.coverPhotoURL,
-                                    location:
-                                        _composeProfileLocation(_userProfile!),
-                                    bio: _userProfile!.bio,
-                                    stats: [
-                                      ProfileHeroStat(
-                                        value: '$_postCount',
-                                        label: 'постов',
-                                      ),
-                                      ProfileHeroStat(
-                                        value: '$_relativeCount',
-                                        label: _graphStatLabel(context)
-                                            .toLowerCase(),
-                                      ),
-                                      ProfileHeroStat(
-                                        value: '$_treeCount',
-                                        label: 'деревья',
-                                      ),
-                                    ],
-                                    actions: [
-                                      PillButton(
-                                        label: 'В дерево',
-                                        icon: Icons.account_tree_outlined,
-                                        onPressed: () {
-                                          if (selectedTreeId == null) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  _graphSelectionHint(context),
-                                                ),
-                                                action: SnackBarAction(
-                                                  label: 'Выбрать',
-                                                  onPressed: () =>
-                                                      context.go('/tree'),
-                                                ),
-                                              ),
-                                            );
-                                          } else {
-                                            context.go('/tree');
-                                          }
-                                        },
-                                      ),
-                                      PillButton(
-                                        label: 'Поделиться',
-                                        icon: Icons.share_outlined,
-                                        variant: PillButtonVariant.outlined,
-                                        onPressed: _shareProfileLink,
-                                      ),
-                                    ],
-                                    onTapAvatar: _pickProfilePhoto,
-                                    onTapCover: _pickCoverPhoto,
-                                    onEditPressed: () =>
-                                        _openProfileEditSheet(),
-                                  ),
-                                ),
-                              ),
+      // Redesign hero card — cover gradient + avatar
+      // overlap + name split + stats + pill actions.
+      // Replaces the legacy PersonDossierView block;
+      // matches docs/design_handoff/Profile Redesign.html.
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: ProfileHeroCard(
+                fullName: _getSafeDisplayName(_userProfile!),
+                firstName: _userProfile!.firstName.trim(),
+                patronymic: _userProfile!.middleName.trim(),
+                lastName: _userProfile!.lastName.trim(),
+                photoUrl: _userProfile!.photoURL,
+                coverPhotoUrl: _userProfile!.coverPhotoURL,
+                location: _composeProfileLocation(_userProfile!),
+                bio: _userProfile!.bio,
+                stats: [
+                  ProfileHeroStat(
+                    value: '$_postCount',
+                    label: 'постов',
+                  ),
+                  ProfileHeroStat(
+                    value: '$_relativeCount',
+                    label: _graphStatLabel(context).toLowerCase(),
+                  ),
+                  ProfileHeroStat(
+                    value: '$_treeCount',
+                    label: 'деревья',
+                  ),
+                ],
+                actions: [
+                  PillButton(
+                    label: 'В дерево',
+                    icon: Icons.account_tree_outlined,
+                    onPressed: () {
+                      if (selectedTreeId == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              _graphSelectionHint(context),
+                            ),
+                            action: SnackBarAction(
+                              label: 'Выбрать',
+                              onPressed: () => context.go('/tree'),
                             ),
                           ),
-                          // Completion meter — replaces sidebar widget on
-                          // narrow + adds suggestion chips that jump into
-                          // the right step of the edit sheet.
-                          if (!isWide && _userProfile != null)
-                            SliverToBoxAdapter(
-                              child: Center(
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 680),
-                                  child: ProfileCompletionMeterCard(
-                                    percent: _profileCompletionPercent(
-                                        _userProfile!),
-                                    suggestions: _profileCompletionChips(
-                                      _userProfile!,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // ── Redesign info-card sections ─────────────────
-                          if (_basicsSectionHasContent(_userProfile!))
-                            SliverToBoxAdapter(
-                              child: Center(
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 680),
-                                  child: _buildBasicsSection(_userProfile!),
-                                ),
-                              ),
-                            ),
-                          if (_eduSectionHasContent(_userProfile!))
-                            SliverToBoxAdapter(
-                              child: Center(
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 680),
-                                  child: _buildEduSection(_userProfile!),
-                                ),
-                              ),
-                            ),
-                          if (_aboutSectionHasContent(_userProfile!))
-                            SliverToBoxAdapter(
-                              child: Center(
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 680),
-                                  child: _buildAboutSection(_userProfile!),
-                                ),
-                              ),
-                            ),
-                          if (_worldviewSectionHasContent(_userProfile!))
-                            SliverToBoxAdapter(
-                              child: Center(
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 680),
-                                  child: _buildWorldviewSection(_userProfile!),
-                                ),
-                              ),
-                            ),
-                          // Quick «Карточки в дереве» entry — keeps the
-                          // legacy /profile/offline_profiles button
-                          // discoverable now that the dossier action row
-                          // has been replaced by hero pills.
-                          SliverToBoxAdapter(
-                            child: Center(
-                              child: ConstrainedBox(
-                                constraints:
-                                    const BoxConstraints(maxWidth: 680),
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                                  child: PillButton(
-                                    label: _graphProfilesLabel(context),
-                                    icon: Icons.people_outline,
-                                    variant: PillButtonVariant.outlined,
-                                    onPressed: () {
-                                      if (selectedTreeId == null) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              _graphSelectionHint(context),
-                                            ),
-                                            action: SnackBarAction(
-                                              label: 'Выбрать',
-                                              onPressed: () =>
-                                                  context.go('/tree'),
-                                            ),
-                                          ),
-                                        );
-                                      } else {
-                                        context.push(
-                                          '/profile/offline_profiles',
-                                        );
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          // The next four sections move to the right
-                          // sidebar when we're in wide layout — they're
-                          // about *the user* (their tree slot, their
-                          // account, their completion progress, their
-                          // stories) rather than *their content*, so
-                          // they read better as a contextual rail
-                          // beside the posts feed.
-                          if (!isWide && _selectedTreePerson != null)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  0,
-                                  16,
-                                  0,
-                                ),
-                                child: _buildTreeCardCompact(
-                                  context,
-                                  person: _selectedTreePerson!,
-                                  isFriendsTree: isFriendsTree,
-                                ),
-                              ),
-                            ),
-                          if (!isWide && _accountLinkingStatus != null)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  12,
-                                  16,
-                                  0,
-                                ),
-                                child: _buildAccountSettingsLink(scheme, theme),
-                              ),
-                            ),
-                          // The ProfileCompletionMeterCard already lives
-                          // inline with the hero (above), so nothing else
-                          // needs the legacy meter widget here.
-                          if (!isWide)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16.0,
-                                  16.0,
-                                  16.0,
-                                  0,
-                                ),
-                                child: _buildStoriesRailSection(),
-                              ),
-                            ),
-                          if (!isWide && _profileCodeLabel() != null)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16.0,
-                                  16.0,
-                                  16.0,
-                                  0,
-                                ),
-                                child: _buildProfileConnectionSection(
-                                  selectedTreeId: selectedTreeId,
-                                  selectedTreeName: selectedTreeName,
-                                ),
-                              ),
-                            ),
-                          // PersonDossierView is now at the top (hero section).
-                          // This duplicate is removed.
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(
-                              16.0,
-                              16.0,
-                              16.0,
-                              0,
-                            ),
-                            sliver: SliverToBoxAdapter(
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    'Предложения от семьи',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          if (_isLoadingContributions)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  12,
-                                  16,
-                                  0,
-                                ),
-                                child: _buildProfileStateCard(
-                                  icon: Icons.edit_note_outlined,
-                                  title: 'Проверяем семейные правки',
-                                  message:
-                                      'Смотрим, не прислали ли родственники новые предложения по вашему профилю.',
-                                  showProgress: true,
-                                ),
-                              ),
-                            )
-                          else if (_pendingContributions.isEmpty)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  12,
-                                  16,
-                                  0,
-                                ),
-                                child: _buildContributionEmptyState(),
-                              ),
-                            )
-                          else
-                            SliverPadding(
-                              padding: const EdgeInsets.fromLTRB(
-                                16,
-                                12,
-                                16,
-                                0,
-                              ),
-                              sliver: SliverList(
-                                delegate: SliverChildBuilderDelegate(
-                                  (BuildContext context, int index) {
-                                    final contribution =
-                                        _pendingContributions[index];
-                                    return Padding(
-                                      padding: EdgeInsets.only(
-                                        bottom: index ==
-                                                _pendingContributions.length - 1
-                                            ? 0
-                                            : 10,
-                                      ),
-                                      child:
-                                          _buildContributionCard(contribution),
-                                    );
-                                  },
-                                  childCount: _pendingContributions.length,
-                                ),
-                              ),
-                            ),
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(
-                                16.0, 24.0, 16.0, 8.0),
-                            sliver: SliverToBoxAdapter(
-                              child: Text(
-                                _graphPostsTitle(context),
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                          ),
-                          if (_isLoading && _userPosts.isEmpty)
-                            SliverList(
-                              delegate: SliverChildBuilderDelegate(
-                                (context, index) => const PostCardShimmer(),
-                                childCount: 2,
-                              ),
-                            )
-                          else if (_userPosts.isEmpty)
-                            SliverToBoxAdapter(
-                              child: EmptyStateWidget(
-                                icon: Icons.post_add_outlined,
-                                title: _postsUnavailable
-                                    ? 'Посты недоступны'
-                                    : 'Постов нет',
-                                message: _postsUnavailable
-                                    ? 'Попробуйте позже.'
-                                    : _graphPostsEmptyMessage(context),
-                                actionLabel:
-                                    _postsUnavailable ? 'Обновить' : 'Создать',
-                                onAction: () async {
-                                  if (_postsUnavailable) {
-                                    _loadUserData();
-                                    return;
-                                  }
-                                  final result =
-                                      await context.push('/post/create');
-                                  if (result == true) {
-                                    _loadUserData();
-                                  }
-                                },
-                              ),
-                            )
-                          else
-                            SliverList(
-                              delegate: SliverChildBuilderDelegate(
-                                (context, index) {
-                                  return PostCard(
-                                    post: _userPosts[index],
-                                    onDeleted: () => _loadUserData(),
-                                  );
-                                },
-                                childCount: _userPosts.length,
-                              ),
-                            ),
+                        );
+                      } else {
+                        context.go('/tree');
+                      }
+                    },
+                  ),
+                  PillButton(
+                    label: 'Поделиться',
+                    icon: Icons.share_outlined,
+                    variant: PillButtonVariant.outlined,
+                    onPressed: _shareProfileLink,
+                  ),
+                ],
+                onTapAvatar: _pickProfilePhoto,
+                onTapCover: _pickCoverPhoto,
+                onEditPressed: () => _openProfileEditSheet(),
+              ),
+            ),
+          ),
+        ),
+      ),
+      // Completion meter — replaces sidebar widget on
+      // narrow + adds suggestion chips that jump into
+      // the right step of the edit sheet.
+      if (!isWide && _userProfile != null)
+        SliverToBoxAdapter(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: ProfileCompletionMeterCard(
+                percent: _profileCompletionPercent(_userProfile!),
+                suggestions: _profileCompletionChips(
+                  _userProfile!,
+                ),
+              ),
+            ),
+          ),
+        ),
+      // ── Redesign info-card sections ─────────────────
+      if (_basicsSectionHasContent(_userProfile!))
+        SliverToBoxAdapter(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: _buildBasicsSection(_userProfile!),
+            ),
+          ),
+        ),
+      if (_eduSectionHasContent(_userProfile!))
+        SliverToBoxAdapter(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: _buildEduSection(_userProfile!),
+            ),
+          ),
+        ),
+      if (_aboutSectionHasContent(_userProfile!))
+        SliverToBoxAdapter(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: _buildAboutSection(_userProfile!),
+            ),
+          ),
+        ),
+      if (_worldviewSectionHasContent(_userProfile!))
+        SliverToBoxAdapter(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: _buildWorldviewSection(_userProfile!),
+            ),
+          ),
+        ),
+      // Quick «Карточки в дереве» entry — keeps the
+      // legacy /profile/offline_profiles button
+      // discoverable now that the dossier action row
+      // has been replaced by hero pills.
+      SliverToBoxAdapter(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: PillButton(
+                label: _graphProfilesLabel(context),
+                icon: Icons.people_outline,
+                variant: PillButtonVariant.outlined,
+                onPressed: () {
+                  if (selectedTreeId == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          _graphSelectionHint(context),
+                        ),
+                        action: SnackBarAction(
+                          label: 'Выбрать',
+                          onPressed: () => context.go('/tree'),
+                        ),
+                      ),
+                    );
+                  } else {
+                    context.push(
+                      '/profile/offline_profiles',
+                    );
+                  }
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+      // The next four sections move to the right
+      // sidebar when we're in wide layout — they're
+      // about *the user* (their tree slot, their
+      // account, their completion progress, their
+      // stories) rather than *their content*, so
+      // they read better as a contextual rail
+      // beside the posts feed.
+      if (!isWide && _selectedTreePerson != null)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              0,
+            ),
+            child: _buildTreeCardCompact(
+              context,
+              person: _selectedTreePerson!,
+              isFriendsTree: isFriendsTree,
+            ),
+          ),
+        ),
+      if (!isWide && _accountLinkingStatus != null)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              0,
+            ),
+            child: _buildAccountSettingsLink(scheme, theme),
+          ),
+        ),
+      // The ProfileCompletionMeterCard already lives
+      // inline with the hero (above), so nothing else
+      // needs the legacy meter widget here.
+      if (!isWide)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              16.0,
+              16.0,
+              16.0,
+              0,
+            ),
+            child: _buildStoriesRailSection(),
+          ),
+        ),
+      if (!isWide && _profileCodeLabel() != null)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              16.0,
+              16.0,
+              16.0,
+              0,
+            ),
+            child: _buildProfileConnectionSection(
+              selectedTreeId: selectedTreeId,
+              selectedTreeName: selectedTreeName,
+            ),
+          ),
+        ),
+      // PersonDossierView is now at the top (hero section).
+      // This duplicate is removed.
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(
+          16.0,
+          16.0,
+          16.0,
+          0,
+        ),
+        sliver: SliverToBoxAdapter(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Предложения от семьи',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (_isLoadingContributions)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              0,
+            ),
+            child: _buildProfileStateCard(
+              icon: Icons.edit_note_outlined,
+              title: 'Проверяем семейные правки',
+              message:
+                  'Смотрим, не прислали ли родственники новые предложения по вашему профилю.',
+              showProgress: true,
+            ),
+          ),
+        )
+      else if (_pendingContributions.isEmpty)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              0,
+            ),
+            child: _buildContributionEmptyState(),
+          ),
+        )
+      else
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            0,
+          ),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (BuildContext context, int index) {
+                final contribution = _pendingContributions[index];
+                return Padding(
+                  padding: EdgeInsets.only(
+                    bottom: index == _pendingContributions.length - 1 ? 0 : 10,
+                  ),
+                  child: _buildContributionCard(contribution),
+                );
+              },
+              childCount: _pendingContributions.length,
+            ),
+          ),
+        ),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 8.0),
+        sliver: SliverToBoxAdapter(
+          child: Text(
+            _graphPostsTitle(context),
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+        ),
+      ),
+      if (_isLoading && _userPosts.isEmpty)
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => const PostCardShimmer(),
+            childCount: 2,
+          ),
+        )
+      else if (_userPosts.isEmpty)
+        SliverToBoxAdapter(
+          child: EmptyStateWidget(
+            icon: Icons.post_add_outlined,
+            title: _postsUnavailable ? 'Посты недоступны' : 'Постов нет',
+            message: _postsUnavailable
+                ? 'Попробуйте позже.'
+                : _graphPostsEmptyMessage(context),
+            actionLabel: _postsUnavailable ? 'Обновить' : 'Создать',
+            onAction: () async {
+              if (_postsUnavailable) {
+                _loadUserData();
+                return;
+              }
+              final result = await context.push('/post/create');
+              if (result == true) {
+                _loadUserData();
+              }
+            },
+          ),
+        )
+      else
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              return PostCard(
+                post: _userPosts[index],
+                onDeleted: () => _loadUserData(),
+              );
+            },
+            childCount: _userPosts.length,
+          ),
+        ),
       // Profile Redesign: prominent «Выйти из аккаунта» button at the
       // tail of the profile, matching the design's warm-tinted ghost
       // button. The popup menu keeps a duplicate entry so power users
@@ -1348,86 +1313,86 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
             child: Row(
-          children: [
-            if (Navigator.of(context).canPop())
-              IconButton(
-                icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
-                tooltip: 'Назад',
-                onPressed: () {
-                  if (context.canPop()) {
-                    context.pop();
-                  } else {
-                    context.go('/');
-                  }
-                },
-              )
-            else
-              const SizedBox(width: 14),
-            Text(
-              'Профиль',
-              style: AppTheme.serif(
-                color: tokens.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.22,
-              ),
-            ),
-            const Spacer(),
-            _ProfileTopbarPill(
-              tokens: tokens,
-              tooltip: 'Редактировать',
-              onTap: () => _openProfileEditSheet(),
-              child: Icon(
-                Icons.edit_outlined,
-                size: 18,
-                color: tokens.ink,
-              ),
-            ),
-            const SizedBox(width: 8),
-            PopupMenuButton<String>(
-              tooltip: 'Меню',
-              onSelected: (value) {
-                switch (value) {
-                  case 'archive':
-                    context.push('/profile/stories/archive');
-                    break;
-                  case 'settings':
-                    context.push('/profile/settings');
-                    break;
-                  case 'about':
-                    context.push('/profile/about');
-                    break;
-                  case 'logout':
-                    _signOut();
-                    break;
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                    value: 'archive', child: Text('Архив историй')),
-                const PopupMenuItem(
-                    value: 'settings', child: Text('Настройки')),
-                const PopupMenuItem(
-                    value: 'about', child: Text('О приложении')),
-                const PopupMenuItem(value: 'logout', child: Text('Выйти')),
+              children: [
+                if (Navigator.of(context).canPop())
+                  IconButton(
+                    icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                    tooltip: 'Назад',
+                    onPressed: () {
+                      if (context.canPop()) {
+                        context.pop();
+                      } else {
+                        context.go('/');
+                      }
+                    },
+                  )
+                else
+                  const SizedBox(width: 14),
+                Text(
+                  'Профиль',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.22,
+                  ),
+                ),
+                const Spacer(),
+                _ProfileTopbarPill(
+                  tokens: tokens,
+                  tooltip: 'Редактировать',
+                  onTap: () => _openProfileEditSheet(),
+                  child: Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: tokens.ink,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                PopupMenuButton<String>(
+                  tooltip: 'Меню',
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'archive':
+                        context.push('/profile/stories/archive');
+                        break;
+                      case 'settings':
+                        context.push('/profile/settings');
+                        break;
+                      case 'about':
+                        context.push('/profile/about');
+                        break;
+                      case 'logout':
+                        _signOut();
+                        break;
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                        value: 'archive', child: Text('Архив историй')),
+                    const PopupMenuItem(
+                        value: 'settings', child: Text('Настройки')),
+                    const PopupMenuItem(
+                        value: 'about', child: Text('О приложении')),
+                    const PopupMenuItem(value: 'logout', child: Text('Выйти')),
+                  ],
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: tokens.surfaceStrong,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: tokens.surfaceLine),
+                    ),
+                    child: Icon(
+                      Icons.settings_outlined,
+                      size: 19,
+                      color: tokens.ink,
+                    ),
+                  ),
+                ),
               ],
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: tokens.surfaceStrong,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: tokens.surfaceLine),
-                ),
-                child: Icon(
-                  Icons.settings_outlined,
-                  size: 19,
-                  color: tokens.ink,
-                ),
-              ),
             ),
-          ],
-        ),
           ),
         ),
       ),
@@ -1892,6 +1857,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (picked == null) return null;
       final url = await _profileService.uploadProfilePhoto(picked);
       if (mounted) {
+        final profile = _userProfile;
+        if (url != null && url.trim().isNotEmpty && profile != null) {
+          final updatedProfile = profile.copyWith(photoURL: url);
+          setState(() {
+            _userProfile = updatedProfile;
+          });
+          unawaited(_userProfileCache?.write(updatedProfile));
+        }
         unawaited(_loadUserData());
       }
       return url;
@@ -1925,6 +1898,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (picked == null) return null;
       final url = await _profileService.uploadCoverPhoto(picked);
       if (mounted) {
+        final profile = _userProfile;
+        if (url != null && url.trim().isNotEmpty && profile != null) {
+          final updatedProfile = profile.copyWith(coverPhotoURL: url);
+          setState(() {
+            _userProfile = updatedProfile;
+          });
+          unawaited(_userProfileCache?.write(updatedProfile));
+        }
         unawaited(_loadUserData());
       }
       return url;

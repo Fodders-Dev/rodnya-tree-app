@@ -2645,7 +2645,8 @@ void main() {
         // Each card has a key 'tree-node-position-<id>'; we read its
         // resolved top-Y to compare rows.
         double topYFor(String personId) {
-          final finder = find.byKey(ValueKey<String>('tree-node-position-$personId'));
+          final finder =
+              find.byKey(ValueKey<String>('tree-node-position-$personId'));
           expect(finder, findsOneWidget,
               reason: 'card for $personId should be on the canvas');
           final renderBox = tester.renderObject<RenderBox>(finder);
@@ -2962,7 +2963,8 @@ void main() {
         await tester.pumpAndSettle();
 
         double topYFor(String personId) {
-          final finder = find.byKey(ValueKey<String>('tree-node-position-$personId'));
+          final finder =
+              find.byKey(ValueKey<String>('tree-node-position-$personId'));
           expect(finder, findsOneWidget);
           final renderBox = tester.renderObject<RenderBox>(finder);
           return renderBox.localToGlobal(Offset.zero).dy;
@@ -2977,8 +2979,7 @@ void main() {
         expect(
           (uncleY - fatherY).abs() < 5,
           isTrue,
-          reason:
-              'in-law uncle in main component should land on parents row, '
+          reason: 'in-law uncle in main component should land on parents row, '
               'NOT on grandparents row',
         );
         expect(
@@ -2989,9 +2990,164 @@ void main() {
         expect(
           (cousinY - viewerY).abs() < 5,
           isTrue,
-          reason:
-              'cousin in main component should land on viewer row, '
+          reason: 'cousin in main component should land on viewer row, '
               'NOT on parents row',
+        );
+      },
+    );
+
+    testWidgets(
+      'blended family keeps current spouse and prior-child branch on the right generation',
+      (tester) async {
+        tester.view.physicalSize = const Size(1800, 1200);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() => tester.view.reset());
+
+        FamilyPerson person(
+          String id,
+          String name,
+          Gender gender, {
+          String? userId,
+        }) {
+          return FamilyPerson(
+            id: id,
+            treeId: 'tree-1',
+            userId: userId,
+            name: name,
+            gender: gender,
+            isAlive: true,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          );
+        }
+
+        FamilyRelation parent(String id, String parentId, String childId) {
+          return FamilyRelation(
+            id: id,
+            treeId: 'tree-1',
+            person1Id: parentId,
+            person2Id: childId,
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          );
+        }
+
+        FamilyRelation union(
+          String id,
+          String leftId,
+          String rightId,
+          RelationType type, {
+          String? unionStatus,
+        }) {
+          return FamilyRelation(
+            id: id,
+            treeId: 'tree-1',
+            person1Id: leftId,
+            person2Id: rightId,
+            relation1to2: type,
+            relation2to1: type,
+            unionStatus: unionStatus,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          );
+        }
+
+        final greatGrandpa = person('great-grandpa', 'Прадед', Gender.male);
+        final greatGrandma =
+            person('great-grandma', 'Прабабушка', Gender.female);
+        final galina = person('galina', 'Курбатова Галина', Gender.female);
+        final vladimir = person('vladimir', 'Курбатов Владимир', Gender.male);
+        final maria = person('maria', 'Бетехтина Мария', Gender.female);
+        final viewer = person(
+          'viewer',
+          'Артём',
+          Gender.male,
+          userId: 'user-viewer',
+        );
+        final marat = person('marat', 'Назмутдинов Марат', Gender.male);
+        final katya = person('katya', 'Назмутдинова Екатерина', Gender.female);
+
+        final relations = <FamilyRelation>[
+          union(
+              'u-older', greatGrandpa.id, greatGrandma.id, RelationType.spouse),
+          parent('p-1', greatGrandpa.id, galina.id),
+          parent('p-2', greatGrandma.id, galina.id),
+          union(
+            'u-past',
+            galina.id,
+            vladimir.id,
+            RelationType.ex_spouse,
+            unionStatus: 'past',
+          ),
+          parent('p-3', galina.id, maria.id),
+          parent('p-4', vladimir.id, maria.id),
+          parent('p-5', maria.id, viewer.id),
+          union('u-current', galina.id, marat.id, RelationType.spouse),
+          parent('p-6', marat.id, katya.id),
+        ];
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: InteractiveFamilyTree(
+                peopleData: [
+                  for (final p in [
+                    greatGrandpa,
+                    greatGrandma,
+                    galina,
+                    vladimir,
+                    maria,
+                    viewer,
+                    marat,
+                    katya,
+                  ])
+                    {'person': p, 'userProfile': null},
+                ],
+                relations: relations,
+                onPersonTap: (_) {},
+                isEditMode: false,
+                onAddRelativeTapWithType: (_, __) {},
+                currentUserIsInTree: true,
+                onAddSelfTapWithType: (_, __) async {},
+                currentUserId: 'user-viewer',
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        double topYFor(String personId) {
+          final finder =
+              find.byKey(ValueKey<String>('tree-node-position-$personId'));
+          expect(finder, findsOneWidget,
+              reason: 'card for $personId should be on the canvas');
+          final renderBox = tester.renderObject<RenderBox>(finder);
+          return renderBox.localToGlobal(Offset.zero).dy;
+        }
+
+        final galinaY = topYFor(galina.id);
+        final vladimirY = topYFor(vladimir.id);
+        final maratY = topYFor(marat.id);
+        final mariaY = topYFor(maria.id);
+        final katyaY = topYFor(katya.id);
+
+        expect(
+          (vladimirY - galinaY).abs() < 5,
+          isTrue,
+          reason: 'former spouse should stay on Galina row',
+        );
+        expect(
+          (maratY - galinaY).abs() < 5,
+          isTrue,
+          reason:
+              'current spouse with a child from prior marriage should not fly to an older row',
+        );
+        expect(
+          (katyaY - mariaY).abs() < 5,
+          isTrue,
+          reason: 'Marat daughter from prior marriage should sit on Maria row',
         );
       },
     );
@@ -3056,8 +3212,7 @@ void main() {
     // don't fight LongPressDraggable.
     Future<void> pumpTwoPersonTreeWithBlankPerson(
       WidgetTester tester, {
-      required Future<void> Function(Map<String, dynamic>)
-          onAddBlankPerson,
+      required Future<void> Function(Map<String, dynamic>) onAddBlankPerson,
     }) async {
       await pumpTwoPersonTree(
         tester,
@@ -3094,7 +3249,8 @@ void main() {
         // The connector wiring requires LongPressDraggable to fire
         // onDragStarted, which sets _connectingFromPersonId. We
         // verify the pill appears with the source name.
-        expect(find.byType(LongPressDraggable<String>), findsAtLeastNWidgets(1));
+        expect(
+            find.byType(LongPressDraggable<String>), findsAtLeastNWidgets(1));
         expect(find.byType(DragTarget<String>), findsAtLeastNWidgets(1));
 
         // Trigger the long-press on the source card.
@@ -3329,8 +3485,7 @@ void main() {
         final viewerWidgetAgain =
             tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
         expect(
-          viewerWidgetAgain.transformationController!.value ==
-              controllerStable,
+          viewerWidgetAgain.transformationController!.value == controllerStable,
           isTrue,
           reason: 'Same recenterOnPersonId should not re-trigger focus',
         );

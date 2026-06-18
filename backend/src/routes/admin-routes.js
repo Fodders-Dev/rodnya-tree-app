@@ -32,6 +32,20 @@ function registerAdminRoutes(
     });
   });
 
+  app.get("/v1/admin/client-diagnostics", requireAuth, async (req, res) => {
+    if (!requireAdmin(req, res)) {
+      return;
+    }
+
+    const diagnostics = await store.listClientDiagnostics({
+      type: req.query?.type,
+      userId: req.query?.userId,
+      limit: req.query?.limit,
+    });
+
+    res.json({diagnostics});
+  });
+
   // Whitelist of statuses an admin can write into a report. Anything
   // outside this set is rejected so the field can't be used as a free-
   // form text payload — moderators sometimes copy-paste 64KB triage

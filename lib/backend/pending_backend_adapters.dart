@@ -679,6 +679,14 @@ class PendingBackendChatService implements ChatServiceInterface {
   }
 
   @override
+  Future<ChatDetails> updateGroupChatPhoto({
+    required String chatId,
+    required XFile photo,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+
+  @override
   Future<ChatDetails> addGroupParticipants({
     required String chatId,
     required List<String> participantIds,

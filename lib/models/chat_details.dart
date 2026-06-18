@@ -10,9 +10,11 @@ class ChatParticipantSummary {
   final String userId;
   final String displayName;
   final String? photoUrl;
+
   /// Live presence flag from the API/realtime channel. True when at least
   /// one of the user's sessions has an active socket on the realtime hub.
   final bool isOnline;
+
   /// Last time the user was observed online — populated from
   /// `users.lastSeenAt` (persisted on socket disconnect). Null if the
   /// user has never connected since the field was added.
@@ -93,6 +95,7 @@ class ChatDetails {
     required this.participants,
     required this.branchRoots,
     this.title,
+    this.photoUrl,
     this.createdBy,
     this.treeId,
     this.createdAt,
@@ -102,6 +105,7 @@ class ChatDetails {
   final String chatId;
   final String type;
   final String? title;
+  final String? photoUrl;
   final List<String> participantIds;
   final String? createdBy;
   final String? treeId;
@@ -156,6 +160,7 @@ class ChatDetails {
       chatId: map['id']?.toString() ?? map['chatId']?.toString() ?? '',
       type: map['type']?.toString() ?? 'direct',
       title: map['title']?.toString(),
+      photoUrl: map['photoUrl']?.toString(),
       participantIds: List<String>.from(map['participantIds'] ?? const []),
       createdBy: map['createdBy']?.toString(),
       treeId: map['treeId']?.toString(),
@@ -179,6 +184,7 @@ class ChatDetails {
       'id': chatId,
       'type': type,
       if (title != null) 'title': title,
+      if (photoUrl != null) 'photoUrl': photoUrl,
       'participantIds': participantIds,
       if (createdBy != null) 'createdBy': createdBy,
       if (treeId != null) 'treeId': treeId,

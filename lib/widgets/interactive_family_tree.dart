@@ -542,7 +542,8 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   bool _showingRelationPicker = false;
   // Used for ESC-to-cancel on desktop. We attach a Focus only while
   // a connect is in progress so we don't fight other shortcuts.
-  final FocusNode _connectModeFocusNode = FocusNode(debugLabel: 'tree-connect-mode');
+  final FocusNode _connectModeFocusNode =
+      FocusNode(debugLabel: 'tree-connect-mode');
 
   bool get _isConnecting => _connectingFromPersonId != null;
 
@@ -553,8 +554,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     HapticFeedback.selectionClick();
     setState(() {
       _connectingFromPersonId = sourcePersonId;
-      _connectingPointerCanvasPosition =
-          nodePositions[sourcePersonId];
+      _connectingPointerCanvasPosition = nodePositions[sourcePersonId];
       _connectingHoverTargetId = null;
       _showingRelationPicker = false;
     });
@@ -954,8 +954,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       14.0,
       contentLeft - InteractiveFamilyTree.generationGutterWidth + 12,
     );
-    final badgeAvailableWidth =
-        max(60.0, contentLeft - labelLeft - 12);
+    final badgeAvailableWidth = max(60.0, contentLeft - labelLeft - 12);
     final dividerLeft = min(
       labelLeft + InteractiveFamilyTree.generationGutterWidth - 16,
       stackWidth - 56,
@@ -981,8 +980,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: badgeAvailableWidth),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: Theme.of(context)
                       .colorScheme
@@ -1967,8 +1965,8 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final isPendingPerson =
         (person.userId == null || person.userId!.isEmpty) && !isDeceasedPerson;
     final hasActivePath = widget.selectedPersonId != null;
-    final isOnActivePath = hasActivePath &&
-        (_activePathPersonIds?.contains(person.id) ?? false);
+    final isOnActivePath =
+        hasActivePath && (_activePathPersonIds?.contains(person.id) ?? false);
     final isDimmed = hasActivePath && !isOnActivePath && !isSelectedPerson;
 
     final cardContent = FamilyTreeNodeCard(
@@ -1999,9 +1997,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final connectorEnabled = widget.onConnectExistingPersons != null &&
         !widget.isEditMode &&
         !widget.selectionMode;
-    final isConnectHoverTarget =
-        connectorEnabled && _connectingHoverTargetId == person.id &&
-            _connectingFromPersonId != person.id;
+    final isConnectHoverTarget = connectorEnabled &&
+        _connectingHoverTargetId == person.id &&
+        _connectingFromPersonId != person.id;
     final isConnectSource =
         connectorEnabled && _connectingFromPersonId == person.id;
 
@@ -2161,8 +2159,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         // mode wins over foreign (per A reasoning — foreign carды
         // нельзя edit без grants, но если user в edit mode явно
         // — он сам разберётся).
-        if (_isPersonForeign(person.id) &&
-            widget.onForeignNodeTap != null) {
+        if (_isPersonForeign(person.id) && widget.onForeignNodeTap != null) {
           widget.onForeignNodeTap!(person);
           return;
         }
@@ -2225,10 +2222,8 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                   // and the dashed preview line connects them.
                   child: _ConnectorDragFeedbackChip(
                     label: displayName,
-                    color:
-                        Theme.of(context).colorScheme.primary,
-                    foreground:
-                        Theme.of(context).colorScheme.onPrimary,
+                    color: Theme.of(context).colorScheme.primary,
+                    foreground: Theme.of(context).colorScheme.onPrimary,
                   ),
                 ),
                 childWhenDragging: Opacity(
@@ -2287,8 +2282,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
               left: 8,
               child: _IdentitySuggestionsBadge(
                 count: widget.identitySuggestionCounts![person.id]!,
-                onTap: () =>
-                    widget.onShowIdentitySuggestions?.call(person.id),
+                onTap: () => widget.onShowIdentitySuggestions?.call(person.id),
               ),
             ),
           // Phase 1.3 edit-time conflict surfacing: ⚠️ dot on the
@@ -2304,8 +2298,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
               right: 8,
               child: _IdentityConflictsBadge(
                 count: widget.identityConflictCounts![person.id]!,
-                onTap: () =>
-                    widget.onShowIdentityConflicts?.call(person.id),
+                onTap: () => widget.onShowIdentityConflicts?.call(person.id),
               ),
             ),
           // Show the "+" quick-add badge on hover (desktop) AND on the
@@ -2637,15 +2630,13 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                         Expanded(
                           child: Text(
                             'Связать с человеком, который уже есть на дереве, — нажмите на карточку и подержите.',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                  height: 1.3,
-                                ),
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                      height: 1.3,
+                                    ),
                           ),
                         ),
                       ],
@@ -3125,12 +3116,10 @@ class _TreeLayoutEngine {
     final snapshot = graphSnapshot;
     if (snapshot != null) {
       for (final unit in snapshot.familyUnits) {
-        final adultIds = unit.adultIds
-            .where(peopleById.containsKey)
-            .toList(growable: false);
-        final childIds = unit.childIds
-            .where(peopleById.containsKey)
-            .toList(growable: false);
+        final adultIds =
+            unit.adultIds.where(peopleById.containsKey).toList(growable: false);
+        final childIds =
+            unit.childIds.where(peopleById.containsKey).toList(growable: false);
 
         // Adults of the same family unit form an implicit couple even
         // when no explicit spouse/partner relation exists (e.g. an
@@ -3152,9 +3141,7 @@ class _TreeLayoutEngine {
             parentToChildren
                 .putIfAbsent(adultId, () => <String>{})
                 .add(childId);
-            childToParents
-                .putIfAbsent(childId, () => <String>{})
-                .add(adultId);
+            childToParents.putIfAbsent(childId, () => <String>{}).add(adultId);
             adjacency[adultId]!.add(childId);
             adjacency[childId]!.add(adultId);
           }
@@ -3775,9 +3762,7 @@ class _TreeLayoutEngine {
       for (final childId in children) {
         for (final parentB in childToParents[childId] ?? const <String>{}) {
           if (parentB == parentA || !component.contains(parentB)) continue;
-          impliedCouples
-              .putIfAbsent(parentA, () => <String>{})
-              .add(parentB);
+          impliedCouples.putIfAbsent(parentA, () => <String>{}).add(parentB);
         }
       }
     }
@@ -3815,7 +3800,13 @@ class _TreeLayoutEngine {
         for (final memberId in pair) {
           for (final childId
               in parentToChildren[memberId] ?? const <String>{}) {
-            if (component.contains(childId)) {
+            if (!component.contains(childId)) {
+              continue;
+            }
+            final parentsInPair = (childToParents[childId] ?? const <String>{})
+                .where(pair.contains)
+                .length;
+            if (parentsInPair >= 2) {
               sharedChildren.add(childId);
             }
           }
@@ -3827,22 +3818,33 @@ class _TreeLayoutEngine {
           // them at the same generation as their kids' other parent set.
           targetLevel = max(
             0,
-            sharedChildren
-                    .map((childId) => levels[childId] ?? 0)
-                    .reduce(min) -
+            sharedChildren.map((childId) => levels[childId] ?? 0).reduce(min) -
                 1,
           );
         } else {
           // No children — fall back to the highest current level among
           // the spouses (matches reference: spouses must share a row).
-          targetLevel = pair
-              .map((memberId) => levels[memberId] ?? 0)
-              .reduce(max);
+          targetLevel =
+              pair.map((memberId) => levels[memberId] ?? 0).reduce(max);
         }
 
         for (final memberId in pair) {
           if ((levels[memberId] ?? 0) != targetLevel) {
             levels[memberId] = targetLevel;
+            changed = true;
+          }
+        }
+      }
+
+      for (final parentId in component) {
+        final parentLevel = levels[parentId] ?? 0;
+        for (final childId in parentToChildren[parentId] ?? const <String>{}) {
+          if (!component.contains(childId)) {
+            continue;
+          }
+          final desiredChildLevel = parentLevel + 1;
+          if ((levels[childId] ?? 0) < desiredChildLevel) {
+            levels[childId] = desiredChildLevel;
             changed = true;
           }
         }
@@ -3862,8 +3864,7 @@ class _TreeLayoutEngine {
         final pair = <String>{personId, ...siblingIds};
         final sharedParents = <String>{};
         for (final memberId in pair) {
-          for (final parentId
-              in childToParents[memberId] ?? const <String>{}) {
+          for (final parentId in childToParents[memberId] ?? const <String>{}) {
             if (component.contains(parentId)) {
               sharedParents.add(parentId);
             }
@@ -3887,10 +3888,9 @@ class _TreeLayoutEngine {
               .where(component.contains)
               .toList(growable: false);
           if (ownChildren.isNotEmpty) {
-            final childFloor = ownChildren
-                    .map((childId) => levels[childId] ?? 0)
-                    .reduce(min) -
-                1;
+            final childFloor =
+                ownChildren.map((childId) => levels[childId] ?? 0).reduce(min) -
+                    1;
             if (childFloor > targetLevel) {
               targetLevel = childFloor;
             }
@@ -4469,8 +4469,7 @@ class _TreeLayoutEngine {
       if (_isSpouseRelation(relation) &&
           positions.containsKey(relation.person1Id) &&
           positions.containsKey(relation.person2Id)) {
-        final pairKey =
-            spousePairKey(relation.person1Id, relation.person2Id);
+        final pairKey = spousePairKey(relation.person1Id, relation.person2Id);
         if (spousePairs.add(pairKey)) {
           final pair = [relation.person1Id, relation.person2Id]..sort();
           connections.add(
@@ -4495,12 +4494,10 @@ class _TreeLayoutEngine {
     final snapshot = graphSnapshot;
     if (snapshot != null) {
       for (final unit in snapshot.familyUnits) {
-        final adultIds = unit.adultIds
-            .where(positions.containsKey)
-            .toList(growable: false);
-        final childIds = unit.childIds
-            .where(positions.containsKey)
-            .toList(growable: false);
+        final adultIds =
+            unit.adultIds.where(positions.containsKey).toList(growable: false);
+        final childIds =
+            unit.childIds.where(positions.containsKey).toList(growable: false);
 
         for (var i = 0; i < adultIds.length; i++) {
           for (var j = i + 1; j < adultIds.length; j++) {
@@ -4726,26 +4723,30 @@ class FamilyTreePainter extends CustomPainter {
         // for spouse vs family. We pull base colors from design tokens via
         // the section builder; fallbacks keep the painter usable in tests.
         spouseLinePaint = Paint()
-          ..color = (spouseColor ?? const Color(0xFFB39B5C)).withValues(alpha: 0.55)
+          ..color =
+              (spouseColor ?? const Color(0xFFB39B5C)).withValues(alpha: 0.55)
           ..strokeWidth = 1.4
           ..strokeCap = StrokeCap.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         spousePastLinePaint = Paint()
-          ..color = (spouseColor ?? const Color(0xFFB39B5C)).withValues(alpha: 0.32)
+          ..color =
+              (spouseColor ?? const Color(0xFFB39B5C)).withValues(alpha: 0.32)
           ..strokeWidth = 1.1
           ..strokeCap = StrokeCap.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         familyLinePaint = Paint()
-          ..color = (lineColor ?? const Color(0xFF6E7766)).withValues(alpha: 0.55)
+          ..color =
+              (lineColor ?? const Color(0xFF6E7766)).withValues(alpha: 0.55)
           ..strokeWidth = 1.6
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         mutedFamilyLinePaint = Paint()
-          ..color = (mutedLineColor ?? const Color(0xFF8E9588)).withValues(alpha: 0.42)
+          ..color = (mutedLineColor ?? const Color(0xFF8E9588))
+              .withValues(alpha: 0.42)
           ..strokeWidth = 1.3
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
@@ -4781,8 +4782,7 @@ class FamilyTreePainter extends CustomPainter {
   /// bit-identical rendering при flag=false либо mine mode.
   bool _isCrossTreeEdge(String fromId, String toId) {
     if (foreignPersonIds.isEmpty) return false;
-    return foreignPersonIds.contains(fromId) ||
-        foreignPersonIds.contains(toId);
+    return foreignPersonIds.contains(fromId) || foreignPersonIds.contains(toId);
   }
 
   @override
@@ -4900,8 +4900,7 @@ class FamilyTreePainter extends CustomPainter {
           // past keeps legacy muted variant — cross-tree active edge
           // takes precedence over past styling (semantic priority:
           // ownership > status).
-          final isCrossTree =
-              _isCrossTreeEdge(pairIds.first, pairIds.last);
+          final isCrossTree = _isCrossTreeEdge(pairIds.first, pairIds.last);
           final isPast = unit.unionStatus == 'past';
           final linePaint = isCrossTree
               ? foreignSpouseLinePaint
@@ -5132,9 +5131,12 @@ class FamilyTreePainter extends CustomPainter {
       final path = Path()
         ..moveTo(junction.dx, junction.dy)
         ..cubicTo(
-          junction.dx, my,
-          anchor.dx, my,
-          anchor.dx, anchor.dy,
+          junction.dx,
+          my,
+          anchor.dx,
+          my,
+          anchor.dx,
+          anchor.dy,
         );
       if (dashed) {
         _drawDashedPath(canvas, path, linePaint);
@@ -5609,8 +5611,7 @@ class _ConnectorRelationButton extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
             decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer
-                  .withValues(alpha: 0.45),
+              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.45),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: theme.colorScheme.outlineVariant.withValues(

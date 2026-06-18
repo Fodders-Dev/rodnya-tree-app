@@ -150,6 +150,13 @@ class _FakeChatService implements ChatServiceInterface {
       getChatDetails(chatId);
 
   @override
+  Future<ChatDetails> updateGroupChatPhoto({
+    required String chatId,
+    required XFile photo,
+  }) async =>
+      getChatDetails(chatId);
+
+  @override
   Future<ChatDetails> addGroupParticipants({
     required String chatId,
     required List<String> participantIds,
@@ -459,10 +466,12 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Шуфляк Анастасия Эдуардовна'),
       200,
-      scrollable: find.descendant(
-        of: find.byType(ListView),
-        matching: find.byType(Scrollable),
-      ).first,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     await tester.pumpAndSettle();
     expect(find.text('Жена'), findsOneWidget);
@@ -475,16 +484,17 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Нужно пригласить'),
       200,
-      scrollable: find.descendant(
-        of: find.byType(ListView),
-        matching: find.byType(Scrollable),
-      ).first,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     expect(find.text('Нужно пригласить'), findsOneWidget);
   });
 
-  testWidgets(
-      'A-list: список «Семья» имеет нижний инсет под плавающий нав-бар',
+  testWidgets('A-list: список «Семья» имеет нижний инсет под плавающий нав-бар',
       (tester) async {
     tester.view.physicalSize = const Size(800, 1200);
     tester.view.devicePixelRatio = 1.0;
@@ -603,8 +613,7 @@ void main() {
     expect(find.text('Пригласить 1'), findsOneWidget);
   });
 
-  testWidgets(
-      'F4: на узком лэйауте FAB extended с полным текстом «Добавить»',
+  testWidgets('F4: на узком лэйауте FAB extended с полным текстом «Добавить»',
       (tester) async {
     tester.view.physicalSize = const Size(412, 892);
     tester.view.devicePixelRatio = 1.0;

@@ -70,6 +70,13 @@ abstract class ChatServiceInterface {
     throw UnsupportedError('renameGroupChat is not supported');
   }
 
+  Future<ChatDetails> updateGroupChatPhoto({
+    required String chatId,
+    required XFile photo,
+  }) {
+    throw UnsupportedError('updateGroupChatPhoto is not supported');
+  }
+
   Future<ChatDetails> addGroupParticipants({
     required String chatId,
     required List<String> participantIds,

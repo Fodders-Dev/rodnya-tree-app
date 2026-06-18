@@ -199,6 +199,13 @@ class _FakeChatService implements ChatServiceInterface {
       getChatDetails(chatId);
 
   @override
+  Future<ChatDetails> updateGroupChatPhoto({
+    required String chatId,
+    required XFile photo,
+  }) async =>
+      getChatDetails(chatId);
+
+  @override
   Future<ChatDetails> addGroupParticipants({
     required String chatId,
     required List<String> participantIds,
@@ -1030,7 +1037,8 @@ void main() {
     expect(find.textContaining('chat:chat-branch-1'), findsOneWidget);
   });
 
-  testWidgets('быстрые действия из tree view открывают чаты (без дубля «родных»)',
+  testWidgets(
+      'быстрые действия из tree view открывают чаты (без дубля «родных»)',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1024));
     addTearDown(() => tester.binding.setSurfaceSize(null));

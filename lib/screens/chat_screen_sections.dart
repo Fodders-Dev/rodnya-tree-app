@@ -42,7 +42,8 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
       );
     }
 
-    final peerAvatarImage = buildAvatarImageProvider(widget.photoUrl);
+    final chatPhotoUrl = _chatDetails?.photoUrl ?? widget.photoUrl;
+    final peerAvatarImage = buildAvatarImageProvider(chatPhotoUrl);
     // Direct chat → peer online state drives the green dot. We only
     // show the dot when the peer (the other participant) is actually
     // online; for groups we skip it because "any of N is online" is
@@ -90,31 +91,44 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Reference `.subhead h2`: Lora 19px / 600 / -0.01em letter
-              // spacing — gives the chat title elegance vs the previous
-              // 16px Manrope-default.
-              Text(
-                _resolvedTitle,
-                overflow: TextOverflow.ellipsis,
-                style: AppTheme.serif(
-                  color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.18,
-                  height: 1.1,
+          child: Semantics(
+            button: true,
+            label: 'Открыть меню чата',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _chatDetails == null || _isLoadingChatDetails
+                  ? null
+                  : _openChatInfo,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Reference `.subhead h2`: Lora 19px / 600 / -0.01em
+                    // letter spacing — gives the chat title elegance vs the
+                    // previous 16px Manrope-default.
+                    Text(
+                      _resolvedTitle,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.serif(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.18,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    // Reference `.subhead .meta`: 12px ink-3 — secondary,
+                    // calmer than the previous bodySmall default. When the
+                    // peer is typing we strip the trailing "…" and append
+                    // animated _TypingDots so the indicator reads as live.
+                    _buildChatSubtitleRow(context),
+                  ],
                 ),
               ),
-              const SizedBox(height: 2),
-              // Reference `.subhead .meta`: 12px ink-3 — secondary,
-              // calmer than the previous bodySmall default. When the
-              // peer is typing we strip the trailing "…" and append
-              // animated _TypingDots so the indicator reads as live.
-              _buildChatSubtitleRow(context),
-            ],
+            ),
           ),
         ),
       ],
@@ -195,7 +209,6 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
     // freeing ~32dp horizontal for the title text. Wide layouts keep
     // standard density.
     final isWide = _isWideLayout(context);
-    final infoEnabled = !_isLoadingChatDetails && _chatDetails != null;
     final density = isWide ? VisualDensity.standard : VisualDensity.compact;
     return [
       if (_canStartCallInChat) ...[
@@ -217,12 +230,6 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
         onPressed: _openSearch,
         tooltip: 'Поиск по чату',
         icon: const Icon(Icons.search),
-      ),
-      IconButton(
-        visualDensity: density,
-        onPressed: infoEnabled ? _openChatInfo : null,
-        tooltip: 'О чате',
-        icon: const Icon(Icons.info_outline),
       ),
     ];
   }

@@ -3169,6 +3169,22 @@ class _ChatScreenState extends State<ChatScreen> {
           });
           return updatedDetails;
         },
+        onUpdatePhoto: (photo) async {
+          final updatedDetails = await _chatService.updateGroupChatPhoto(
+            chatId: details.chatId,
+            photo: photo,
+          );
+          unawaited(
+              _chatDetailsCache?.write(updatedDetails.chatId, updatedDetails));
+          if (!mounted) {
+            return updatedDetails;
+          }
+          setState(() {
+            _chatDetails = updatedDetails;
+            _resolvedTitle = updatedDetails.displayTitleFor(_currentUserId);
+          });
+          return updatedDetails;
+        },
         onAddParticipants: (participantIds) async {
           final updatedDetails = await _chatService.addGroupParticipants(
             chatId: details.chatId,
@@ -7298,6 +7314,7 @@ class _ChatInfoSheet extends StatefulWidget {
     required this.initialNotificationLevel,
     required this.initialAutoDeleteOption,
     required this.onRename,
+    required this.onUpdatePhoto,
     required this.onAddParticipants,
     required this.onRemoveParticipant,
     required this.onLeaveGroup,
@@ -7317,6 +7334,7 @@ class _ChatInfoSheet extends StatefulWidget {
   final ChatNotificationLevel initialNotificationLevel;
   final ChatAutoDeleteOption initialAutoDeleteOption;
   final Future<ChatDetails> Function(String title) onRename;
+  final Future<ChatDetails> Function(XFile photo) onUpdatePhoto;
   final Future<ChatDetails> Function(List<String> participantIds)
       onAddParticipants;
   final Future<ChatDetails> Function(String participantId) onRemoveParticipant;
@@ -7392,12 +7410,7 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                 ],
               ),
               const SizedBox(height: 8),
-              Text(
-                _details.displayTitleFor(widget.currentUserId),
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              _buildChatIdentityCard(theme),
               const SizedBox(height: 14),
               Wrap(
                 spacing: 8,
@@ -7759,6 +7772,123 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
         ),
       ),
     );
+  }
+
+  Widget _buildChatIdentityCard(ThemeData theme) {
+    String? avatarUrl;
+    final chatPhotoUrl = _details.photoUrl?.trim();
+    if (chatPhotoUrl != null && chatPhotoUrl.isNotEmpty) {
+      avatarUrl = chatPhotoUrl;
+    } else if (_details.isBranch && _details.branchRoots.isNotEmpty) {
+      avatarUrl = _details.branchRoots.first.photoUrl;
+    } else if (_details.isDirect) {
+      for (final participant in _details.participants) {
+        if (participant.userId != widget.currentUserId) {
+          avatarUrl = participant.photoUrl;
+          break;
+        }
+      }
+    }
+
+    final avatarImage = buildAvatarImageProvider(avatarUrl);
+    final title = _details.displayTitleFor(widget.currentUserId);
+    final subtitle = _details.isDirect
+        ? 'Личные сообщения'
+        : (_details.memberCount == 1
+            ? '1 участник'
+            : '${_details.memberCount} участников');
+
+    return GlassPanel(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 28,
+            backgroundImage: avatarImage,
+            child: avatarImage == null
+                ? Icon(
+                    _details.isDirect
+                        ? Icons.person_outline
+                        : Icons.groups_2_outlined,
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_details.isEditableGroup) ...[
+            const SizedBox(width: 10),
+            OutlinedButton.icon(
+              onPressed: _isSaving ? null : _changeChatPhoto,
+              icon: const Icon(Icons.photo_camera_outlined, size: 18),
+              label: const Text('Фото'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _changeChatPhoto() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 86,
+      maxWidth: 1600,
+    );
+    if (!mounted || picked == null) {
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+    try {
+      final details = await widget.onUpdatePhoto(picked);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _details = details;
+      });
+      showAppSnackBar(context, 'Фото чата обновлено.');
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      showAppSnackBar(
+        context,
+        'Не удалось обновить фото чата.',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
   }
 
   Future<void> _leaveGroup() async {

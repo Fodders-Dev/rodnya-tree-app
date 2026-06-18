@@ -36,6 +36,7 @@ const {
 } = require("./routes/media-routes");
 const {registerChatRoutes} = require("./routes/chat-routes");
 const {registerCircleRoutes} = require("./routes/circle-routes");
+const {registerDiagnosticsRoutes} = require("./routes/diagnostics-routes");
 const {registerGoogleAuthRoutes} = require("./routes/google-auth-routes");
 const {registerGraphRoutes} = require("./routes/graph-routes");
 const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
@@ -1641,6 +1642,7 @@ function createApp({
       id: chat.id,
       type: chat.type || "direct",
       title: chat.title || null,
+      photoUrl: normalizeSmallPublicUrl(chat.photoUrl || null),
       participantIds: Array.isArray(chat.participantIds)
         ? chat.participantIds
         : [],
@@ -2801,6 +2803,12 @@ function createApp({
     mapChatBranchRoot,
     realtimeHub,
     emergencyChatPreviewResponseCap: EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP,
+  });
+
+  registerDiagnosticsRoutes(app, {
+    store,
+    requireAuth,
+    logger: console,
   });
 
   registerSafetyRoutes(app, {

@@ -26,7 +26,8 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         // primary complaint).
         // A-CTA: блокирующий гид показываем только пока юзер его не
         // закрыл. После dismiss — обычный канвас с FAB «Добавить».
-        final showGuidedCta = !_TreeViewScreenState._guidedCtaDismissedThisSession;
+        final showGuidedCta =
+            !_TreeViewScreenState._guidedCtaDismissedThisSession;
 
         if (isEmptyTree && showGuidedCta) {
           if (_isFriendsTree) {
@@ -56,8 +57,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           return EmptyTreeGuidedCta(
             hasSelfPerson: false,
             viewerMode: _isViewerOnly,
-            onAddRelative: (relation, gender) =>
-                _navigateToAddRelativeWithHint(
+            onAddRelative: (relation, gender) => _navigateToAddRelativeWithHint(
               selectedTreeId,
               relation: relation,
               gender: gender,
@@ -68,15 +68,13 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         }
 
         final selfPerson = _findSelfPerson();
-        final treeHasOnlySelf = _relativesData.length == 1 &&
-            selfPerson != null &&
-            !_isFriendsTree;
+        final treeHasOnlySelf =
+            _relativesData.length == 1 && selfPerson != null && !_isFriendsTree;
         if (treeHasOnlySelf && showGuidedCta) {
           return EmptyTreeGuidedCta(
             hasSelfPerson: true,
             viewerMode: _isViewerOnly,
-            onAddRelative: (relation, gender) =>
-                _navigateToAddRelativeWithHint(
+            onAddRelative: (relation, gender) => _navigateToAddRelativeWithHint(
               selectedTreeId,
               relation: relation,
               gender: gender,
@@ -320,8 +318,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             : RodnyaDesignTokens.light);
     final collapsed = _compactChromeCollapsed;
     final peopleCount = _relativesData.length;
-    final peopleLabel =
-        peopleCount == 1 ? '1 человек' : '$peopleCount людей';
+    final peopleLabel = peopleCount == 1 ? '1 человек' : '$peopleCount людей';
     final label = collapsed ? '$peopleLabel · подробнее' : 'Свернуть';
 
     return Padding(
@@ -339,8 +336,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               });
             },
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1390,231 +1386,226 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         Stack(
           fit: StackFit.expand,
           children: [
-              InteractiveFamilyTree(
-                peopleData: _relativesData,
-                relations: _relationsData,
-                graphSnapshot: _graphSnapshot,
-                currentUserId: _authService.currentUserId,
-                branchRootPersonId: _branchRootPersonId,
-                selectedPersonId: _selectedPersonSheetId,
-                onBranchFocusCleared: _resetBranchFocus,
-                onPersonTap: (person) {
-                  debugPrint('Нажатие на узел: ${person.name} (${person.id})');
-                  _selectTreePerson(person);
-                  // In edit mode the same single tap also routes through
-                  // the inline edit selection so the bottom sheet's edit
-                  // action row knows which node to operate on.
-                  if (_isEditMode) {
-                    _updateSectionState(() {
-                      _selectedEditPersonId = person.id;
-                      _personSheetExpanded = true;
-                    });
-                  } else {
-                    // Ship Q4 (2026-05-26): UX audit 2026-05-25 Critical #4 —
-                    // tap on tree person теперь surface'ит modal action sheet
-                    // (Профиль / Редактировать / Добавить / Связать / Удалить).
-                    // Inline person sheet остаётся active для contextual
-                    // selection в edit mode и для drag/zoom/PiP interactions.
-                    _showTreePersonActionSheet(person);
-                  }
-                },
-                onPersonDoubleTap: (person) {
-                  // Double-click on a card = drill into full profile.
-                  // Single tap still opens the bottom sheet peek; double
-                  // is the shortcut for users who want the full page.
-                  _openPersonDetails(person);
-                },
-                onShowRelationPath: (person) =>
-                    _openPersonDetails(person, action: 'path'),
-                onShowOtherParents: (person) =>
-                    _openPersonDetails(person, action: 'parents'),
-                onFixPersonRelations: (person) =>
-                    _openPersonDetails(person, action: 'relations'),
-                onBranchFocusRequested: _focusBranch,
-                isEditMode: _isEditMode,
-                selectedEditPersonId: _selectedEditPersonId,
-                onEditPersonSelected: (person) {
+            InteractiveFamilyTree(
+              peopleData: _relativesData,
+              relations: _relationsData,
+              graphSnapshot: _graphSnapshot,
+              currentUserId: _authService.currentUserId,
+              branchRootPersonId: _branchRootPersonId,
+              selectedPersonId: _selectedPersonSheetId,
+              onBranchFocusCleared: _resetBranchFocus,
+              onPersonTap: (person) {
+                debugPrint('Нажатие на узел: ${person.name} (${person.id})');
+                _selectTreePerson(person);
+                // In edit mode the same single tap also routes through
+                // the inline edit selection so the bottom sheet's edit
+                // action row knows which node to operate on.
+                if (_isEditMode) {
                   _updateSectionState(() {
                     _selectedEditPersonId = person.id;
+                    _personSheetExpanded = true;
                   });
-                },
-                onOpenPersonHistory: _showPersonHistorySheet,
-                manualNodePositions: _manualNodePositions,
-                onNodePositionsChanged: (positions) {
-                  _handleNodePositionsChanged(positions);
-                },
-                showGenerationGuides: !_isFriendsTree,
-                graphLabel: _isFriendsTree ? 'дружеского графа' : 'дерева',
-                hasManualLayout: _manualNodePositions.isNotEmpty,
-                onResetLayout:
-                    _manualNodePositions.isNotEmpty && _currentTreeId != null
-                        ? () => _resetManualTreeLayout(_currentTreeId!)
-                        : null,
-                onAddRelativeTapWithType: _handleAddRelativeFromTree,
-                currentUserIsInTree: _currentUserIsInTree,
-                onAddSelfTapWithType: _handleAddSelfFromTree,
-                // Edge-first connector — long-press a card, drag to
-                // another, pick a relation type from the inline
-                // 4-icon picker. The handler talks to family service
-                // directly and reloads on success; no form involved.
-                onConnectExistingPersons: _handleConnectExistingFromTree,
-                // Blank-card creator — drop a person on the canvas
-                // with no relation. The user fills name + gender in
-                // a small dialog, we create them via the service,
-                // and they then connect via the connector above.
-                onAddBlankPerson: _handleAddBlankPersonFromTree,
-                // Auto-recenter trigger: after addRelative succeeds
-                // we stamp the new person id here, the tree picks
-                // it up via didUpdateWidget and snaps to center.
-                recenterOnPersonId: _recenterOnPersonIdAfterReload,
-                // Phase 1.2 voltage indicator: counts come from the
-                // background fetch in _loadData; tap callback opens
-                // the suggestions sheet.
-                identitySuggestionCounts: _identitySuggestionCounts,
-                onShowIdentitySuggestions:
-                    _handleShowIdentitySuggestionsForPerson,
-                // Phase 1.3 conflict surfacing: same model as 💡 —
-                // counts populated in the background, tap opens
-                // the resolve sheet keyed off this person.
-                identityConflictCounts: _identityConflictCounts,
-                onShowIdentityConflicts:
-                    _handleShowIdentityConflictsForPerson,
-                // UX-T1 FR3: на телефоне резерв отражает РЕАЛЬНУЮ высоту
-                // хрома над канвасом. По умолчанию контекст-колонка свёрнута
-                // (_compactChromeCollapsed=true) → над канвасом только
-                // плавающий тулбар (~120 c отступом), а не устаревшие 290
-                // (они зарезервированы под раскрытую колонку). Это и есть
-                // canvas-first: дерево фитится в >=85% высоты. При раскрытии
-                // колонки резерв снова ~290. Десктоп (>=1180) — 96, не трогаем.
-                viewportReservedTop:
-                    MediaQuery.of(context).size.width >= 1180
-                        ? 96
-                        : (_compactChromeCollapsed ? 120 : 290),
-                viewportReservedBottom: 120,
-                // Edit actions live in the bottom sheet now — suppress
-                // the floating inline panel so we don't have two action
-                // surfaces over the same node.
-                showInlineEditPanel: false,
-                // Multi-select for bulk actions (Step 2). When the
-                // host opens selection mode through the toolbar, the
-                // canvas owns tap-to-toggle and shows accent rings;
-                // a separate bottom toolbar (below) drives the
-                // bulk-action choice.
-                selectionMode: _isSelectionMode,
-                selectedPersonIds: _selectedPersonIds,
-                onPersonSelectionToggle: (person) {
-                  if (!_isSelectionMode) return;
-                  _updateSectionState(() {
-                    if (_selectedPersonIds.contains(person.id)) {
-                      _selectedPersonIds.remove(person.id);
-                    } else {
-                      _selectedPersonIds.add(person.id);
-                    }
-                  });
-                },
-                viewMode: _extendedNetworkController?.mode ??
-                    ExtendedNetworkMode.mine,
-                networkSlice: _extendedNetworkController?.slice,
-                // Phase 4 chunk 4a: foreign node tap intercept.
-                // Host owns sheet — `_handleForeignNodeTap` opens
-                // ForeignNodeSheet через showModalBottomSheet.
-                onForeignNodeTap:
-                    _extendedNetworkController?.isCapable == true
-                        ? _handleForeignNodeTap
-                        : null,
-              ),
-              Positioned(
-                left: 12,
-                right: 12,
-                bottom: 12,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  switchInCurve: Curves.easeOut,
-                  switchOutCurve: Curves.easeIn,
-                  child: _isSelectionMode
-                      ? _buildSelectionToolbar(
-                          key: const ValueKey<String>('selection-toolbar'),
-                          accent: canvasAccent,
-                        )
-                      : selectedPerson == null
-                          ? const SizedBox.shrink()
-                          : _buildTreePersonBottomSheet(
-                              key: ValueKey<String>(
-                                'tree-person-sheet-${selectedPerson.id}',
-                              ),
-                              person: selectedPerson,
-                              accent: canvasAccent,
+                } else {
+                  // Ship Q4 (2026-05-26): UX audit 2026-05-25 Critical #4 —
+                  // tap on tree person теперь surface'ит modal action sheet
+                  // (Профиль / Редактировать / Добавить / Связать / Удалить).
+                  // Inline person sheet остаётся active для contextual
+                  // selection в edit mode и для drag/zoom/PiP interactions.
+                  _showTreePersonActionSheet(person);
+                }
+              },
+              onPersonDoubleTap: (person) {
+                // Double-click on a card = drill into full profile.
+                // Single tap still opens the bottom sheet peek; double
+                // is the shortcut for users who want the full page.
+                _openPersonDetails(person);
+              },
+              onShowRelationPath: (person) =>
+                  _openPersonDetails(person, action: 'path'),
+              onShowOtherParents: (person) =>
+                  _openPersonDetails(person, action: 'parents'),
+              onFixPersonRelations: (person) =>
+                  _openPersonDetails(person, action: 'relations'),
+              onBranchFocusRequested: _focusBranch,
+              isEditMode: _isEditMode,
+              selectedEditPersonId: _selectedEditPersonId,
+              onEditPersonSelected: (person) {
+                _updateSectionState(() {
+                  _selectedEditPersonId = person.id;
+                });
+              },
+              onOpenPersonHistory: _showPersonHistorySheet,
+              manualNodePositions: _manualNodePositions,
+              onNodePositionsChanged: (positions) {
+                _handleNodePositionsChanged(positions);
+              },
+              showGenerationGuides: !_isFriendsTree,
+              graphLabel: _isFriendsTree ? 'дружеского графа' : 'дерева',
+              hasManualLayout: _manualNodePositions.isNotEmpty,
+              onResetLayout:
+                  _manualNodePositions.isNotEmpty && _currentTreeId != null
+                      ? () => _resetManualTreeLayout(_currentTreeId!)
+                      : null,
+              onAddRelativeTapWithType: _handleAddRelativeFromTree,
+              currentUserIsInTree: _currentUserIsInTree,
+              onAddSelfTapWithType: _handleAddSelfFromTree,
+              // Edge-first connector — long-press a card, drag to
+              // another, pick a relation type from the inline
+              // 4-icon picker. The handler talks to family service
+              // directly and reloads on success; no form involved.
+              onConnectExistingPersons: _handleConnectExistingFromTree,
+              // Blank-card creator — drop a person on the canvas
+              // with no relation. The user fills name + gender in
+              // a small dialog, we create them via the service,
+              // and they then connect via the connector above.
+              onAddBlankPerson: _handleAddBlankPersonFromTree,
+              // Auto-recenter trigger: after addRelative succeeds
+              // we stamp the new person id here, the tree picks
+              // it up via didUpdateWidget and snaps to center.
+              recenterOnPersonId: _recenterOnPersonIdAfterReload,
+              // Phase 1.2 voltage indicator: counts come from the
+              // background fetch in _loadData; tap callback opens
+              // the suggestions sheet.
+              identitySuggestionCounts: _identitySuggestionCounts,
+              onShowIdentitySuggestions:
+                  _handleShowIdentitySuggestionsForPerson,
+              // Phase 1.3 conflict surfacing: same model as 💡 —
+              // counts populated in the background, tap opens
+              // the resolve sheet keyed off this person.
+              identityConflictCounts: _identityConflictCounts,
+              onShowIdentityConflicts: _handleShowIdentityConflictsForPerson,
+              // UX-T1 FR3: на телефоне резерв отражает РЕАЛЬНУЮ высоту
+              // хрома над канвасом. По умолчанию контекст-колонка свёрнута
+              // (_compactChromeCollapsed=true) → над канвасом только
+              // плавающий тулбар (~120 c отступом), а не устаревшие 290
+              // (они зарезервированы под раскрытую колонку). Это и есть
+              // canvas-first: дерево фитится в >=85% высоты. При раскрытии
+              // колонки резерв снова ~290. Десктоп (>=1180) — 96, не трогаем.
+              viewportReservedTop: MediaQuery.of(context).size.width >= 1180
+                  ? 96
+                  : (_compactChromeCollapsed ? 120 : 290),
+              viewportReservedBottom: 120,
+              // Edit actions live in the bottom sheet now — suppress
+              // the floating inline panel so we don't have two action
+              // surfaces over the same node.
+              showInlineEditPanel: false,
+              // Multi-select for bulk actions (Step 2). When the
+              // host opens selection mode through the toolbar, the
+              // canvas owns tap-to-toggle and shows accent rings;
+              // a separate bottom toolbar (below) drives the
+              // bulk-action choice.
+              selectionMode: _isSelectionMode,
+              selectedPersonIds: _selectedPersonIds,
+              onPersonSelectionToggle: (person) {
+                if (!_isSelectionMode) return;
+                _updateSectionState(() {
+                  if (_selectedPersonIds.contains(person.id)) {
+                    _selectedPersonIds.remove(person.id);
+                  } else {
+                    _selectedPersonIds.add(person.id);
+                  }
+                });
+              },
+              viewMode:
+                  _extendedNetworkController?.mode ?? ExtendedNetworkMode.mine,
+              networkSlice: _extendedNetworkController?.slice,
+              // Phase 4 chunk 4a: foreign node tap intercept.
+              // Host owns sheet — `_handleForeignNodeTap` opens
+              // ForeignNodeSheet через showModalBottomSheet.
+              onForeignNodeTap: _extendedNetworkController?.isCapable == true
+                  ? _handleForeignNodeTap
+                  : null,
+            ),
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                child: _isSelectionMode
+                    ? _buildSelectionToolbar(
+                        key: const ValueKey<String>('selection-toolbar'),
+                        accent: canvasAccent,
+                      )
+                    : selectedPerson == null
+                        ? const SizedBox.shrink()
+                        : _buildTreePersonBottomSheet(
+                            key: ValueKey<String>(
+                              'tree-person-sheet-${selectedPerson.id}',
                             ),
-                ),
+                            person: selectedPerson,
+                            accent: canvasAccent,
+                          ),
               ),
-              IgnorePointer(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-                  child: Align(
-                    alignment: Alignment.topRight,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 180),
-                      child: !_isEditMode
-                          ? const SizedBox.shrink()
-                          : Container(
-                              key: const ValueKey<String>(
-                                'tree-manual-layout-hint',
-                              ),
-                              constraints: const BoxConstraints(maxWidth: 280),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.surface.withValues(
-                                  alpha: 0.96,
-                                ),
-                                borderRadius: BorderRadius.circular(18),
-                                border: Border.all(
-                                  color: canvasAccent.withValues(alpha: 0.18),
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: theme.colorScheme.shadow.withValues(
-                                      alpha: 0.08,
-                                    ),
-                                    blurRadius: 18,
-                                    offset: const Offset(0, 10),
-                                  ),
-                                ],
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Icon(
-                                    Icons.open_with_rounded,
-                                    size: 18,
-                                    color: canvasAccent,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Режим перемещения: зажмите карточку и тяните по своему поколению.',
-                                      style:
-                                          theme.textTheme.bodySmall?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        color:
-                                            theme.colorScheme.onSurfaceVariant,
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+            ),
+            IgnorePointer(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                child: Align(
+                  alignment: Alignment.topRight,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: !_isEditMode
+                        ? const SizedBox.shrink()
+                        : Container(
+                            key: const ValueKey<String>(
+                              'tree-manual-layout-hint',
                             ),
-                    ),
+                            constraints: const BoxConstraints(maxWidth: 280),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surface.withValues(
+                                alpha: 0.96,
+                              ),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: canvasAccent.withValues(alpha: 0.18),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: theme.colorScheme.shadow.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  blurRadius: 18,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.open_with_rounded,
+                                  size: 18,
+                                  color: canvasAccent,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Режим перемещения: зажмите карточку и тяните по своему поколению.',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                      height: 1.3,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                   ),
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -1651,8 +1642,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
 
     final nameParts = person.displayName.trim().split(RegExp(r'\s+'));
     final fname = nameParts.isNotEmpty ? nameParts.first : person.displayName;
-    final lname =
-        nameParts.length > 1 ? nameParts.sublist(1).join(' ') : null;
+    final lname = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : null;
 
     // Peek row — always visible. Tapping it toggles expansion. Drag handle
     // sits centered above so the surface reads as a sheet, not a card.
@@ -1716,9 +1706,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                     if (hasWarnings && lifeRange == null && place.isEmpty)
                       'Нужна проверка',
                   ].whereType<String>().take(2).join(' · ').isEmpty
-                      ? (_isFriendsTree
-                          ? 'Карточка круга'
-                          : 'Карточка дерева')
+                      ? (_isFriendsTree ? 'Карточка круга' : 'Карточка дерева')
                       : [
                           if (lifeRange != null) lifeRange,
                           if (place.isNotEmpty) place,
@@ -1900,17 +1888,15 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   color: Colors.transparent,
                   borderRadius: BorderRadius.vertical(
                     top: Radius.circular(tokens.radiusLg),
-                    bottom: Radius.circular(_personSheetExpanded
-                        ? 0
-                        : tokens.radiusLg),
+                    bottom: Radius.circular(
+                        _personSheetExpanded ? 0 : tokens.radiusLg),
                   ),
                   child: InkWell(
                     onTap: _togglePersonSheetExpansion,
                     borderRadius: BorderRadius.vertical(
                       top: Radius.circular(tokens.radiusLg),
-                      bottom: Radius.circular(_personSheetExpanded
-                          ? 0
-                          : tokens.radiusLg),
+                      bottom: Radius.circular(
+                          _personSheetExpanded ? 0 : tokens.radiusLg),
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -2314,6 +2300,11 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         label: 'История изменений',
       ),
       _buildTreeToolbarMenuItem(
+        value: _TreeToolbarAction.sendDiagnostics,
+        icon: Icons.bug_report_outlined,
+        label: 'Отправить диагностику дерева',
+      ),
+      _buildTreeToolbarMenuItem(
         value: _TreeToolbarAction.openChats,
         icon: Icons.forum_outlined,
         label: 'Открыть чаты',
@@ -2446,7 +2437,8 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
       if (!mounted) return;
       messenger.showSnackBar(
         const SnackBar(
-          content: Text('Не удалось загрузить список веток. Попробуйте ещё раз.'),
+          content:
+              Text('Не удалось загрузить список веток. Попробуйте ещё раз.'),
         ),
       );
       return;
@@ -2454,8 +2446,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     if (!mounted) return;
     // Side-effect: keep TreeProvider's cache in sync so the next
     // BranchSwitcher open is instant.
-    Provider.of<TreeProvider>(context, listen: false)
-        .refreshAvailableTrees();
+    Provider.of<TreeProvider>(context, listen: false).refreshAvailableTrees();
     final candidates = allTrees
         .where((tree) => tree.id != sourceTreeId)
         .toList(growable: false);
@@ -2501,9 +2492,8 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   'Эти люди появятся в выбранной ветке как карточки. '
                   'Связи между ними нужно будет соединить вручную.',
                   style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(sheetContext)
-                            .colorScheme
-                            .onSurfaceVariant,
+                        color:
+                            Theme.of(sheetContext).colorScheme.onSurfaceVariant,
                       ),
                 ),
                 const SizedBox(height: 14),
@@ -2586,8 +2576,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
       //   counts so the «связь со мной» case feels visible.
       String message;
       if (personsLanded == 0 && relations == 0) {
-        message =
-            'Эти люди уже есть в «${targetTree.name}» — там та же родня.';
+        message = 'Эти люди уже есть в «${targetTree.name}» — там та же родня.';
       } else if (relations > 0) {
         message =
             'Добавлено в «${targetTree.name}»: $personsLanded • связей подтянулось: $relations';
@@ -2650,9 +2639,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    hasSelection
-                        ? 'Выбрано: $count'
-                        : 'Режим выбора',
+                    hasSelection ? 'Выбрано: $count' : 'Режим выбора',
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w800,
                       color: tokens.ink,
@@ -2735,8 +2722,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             ),
             const SizedBox(width: 6),
             FilledButton.icon(
-              onPressed:
-                  hasSelection ? _openBulkAddToBranchSheet : null,
+              onPressed: hasSelection ? _openBulkAddToBranchSheet : null,
               icon: const Icon(Icons.account_tree_outlined, size: 18),
               label: const Text('В ветку…'),
             ),

@@ -113,7 +113,9 @@ function registerProfileRoutes(
         email: updatedUser.email,
         displayName: sanitizedProfile.displayName,
         photoUrl: sanitizedProfile.photoUrl,
+        coverPhotoUrl: sanitizedProfile.coverPhotoUrl,
       },
+      profile: sanitizedProfile,
       profileStatus: computeProfileStatus(updatedUser.profile),
     });
   });

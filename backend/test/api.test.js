@@ -9402,6 +9402,38 @@ test("group chat details and participant management work for ordinary groups", a
     const renamedPayload = await renameResponse.json();
     assert.equal(renamedPayload.chat.title, "Совет семьи");
 
+    const photoResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${createdPayload.chatId}`,
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          photoUrl: "https://cdn.example.test/chats/family-council.jpg",
+        }),
+      },
+    );
+    assert.equal(photoResponse.status, 200);
+    const photoPayload = await photoResponse.json();
+    assert.equal(
+      photoPayload.chat.photoUrl,
+      "https://cdn.example.test/chats/family-council.jpg",
+    );
+
+    const chatsAfterPhotoResponse = await fetch(`${ctx.baseUrl}/v1/chats`, {
+      headers: {authorization: `Bearer ${bob.accessToken}`},
+    });
+    assert.equal(chatsAfterPhotoResponse.status, 200);
+    const chatsAfterPhotoPayload = await chatsAfterPhotoResponse.json();
+    assert.equal(
+      chatsAfterPhotoPayload.chats.find(
+        (chat) => chat.chatId === createdPayload.chatId,
+      )?.photoUrl,
+      "https://cdn.example.test/chats/family-council.jpg",
+    );
+
     const addParticipantResponse = await fetch(
       `${ctx.baseUrl}/v1/chats/${createdPayload.chatId}/participants`,
       {
@@ -13558,6 +13590,30 @@ test("reports, blocks and admin moderation endpoints work end-to-end", async () 
     );
     assert.equal(nonAdminReportsResponse.status, 403);
 
+    const diagnosticResponse = await fetch(
+      `${ctx.baseUrl}/v1/diagnostics/client-events`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${reporter.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "tree_layout_snapshot",
+          message: "Диагностика раскладки дерева",
+          platform: {isWeb: false, targetPlatform: "android"},
+          appVersion: {version: "1.0.9", buildNumber: "17"},
+          context: {
+            tree: {treeId: "tree-1"},
+            people: [{id: "person-1", name: "Тест"}],
+          },
+        }),
+      },
+    );
+    assert.equal(diagnosticResponse.status, 202);
+    const diagnosticPayload = await diagnosticResponse.json();
+    assert.match(diagnosticPayload.eventId, /^diag_/);
+
     const adminReportsResponse = await fetch(`${ctx.baseUrl}/v1/admin/reports`, {
       headers: {authorization: `Bearer ${admin.accessToken}`},
     });
@@ -13565,6 +13621,24 @@ test("reports, blocks and admin moderation endpoints work end-to-end", async () 
     const adminReportsPayload = await adminReportsResponse.json();
     assert.equal(adminReportsPayload.reports.length, 1);
     assert.equal(adminReportsPayload.reports[0].reporterDisplayName, "Reporter");
+
+    const adminDiagnosticsResponse = await fetch(
+      `${ctx.baseUrl}/v1/admin/client-diagnostics?type=tree_layout_snapshot`,
+      {
+        headers: {authorization: `Bearer ${admin.accessToken}`},
+      },
+    );
+    assert.equal(adminDiagnosticsResponse.status, 200);
+    const adminDiagnosticsPayload = await adminDiagnosticsResponse.json();
+    assert.equal(adminDiagnosticsPayload.diagnostics.length, 1);
+    assert.equal(
+      adminDiagnosticsPayload.diagnostics[0].id,
+      diagnosticPayload.eventId,
+    );
+    assert.equal(
+      adminDiagnosticsPayload.diagnostics[0].context.tree.treeId,
+      "tree-1",
+    );
 
     const resolveResponse = await fetch(
       `${ctx.baseUrl}/v1/admin/reports/${adminReportsPayload.reports[0].id}/resolve`,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart'
@@ -48,6 +49,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 
 import '../services/app_status_service.dart';
+import '../services/custom_api_diagnostics_service.dart';
 import '../services/public_tree_link_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/tree_mutation_history.dart';
@@ -66,6 +68,7 @@ part 'tree_view_screen_sections.dart';
 enum _TreeToolbarAction {
   refresh,
   openHistory,
+  sendDiagnostics,
   openChats,
   createPost,
   // UX-T1.2 FR-c: вторичные контролы (undo/redo/поиск/фильтры) на телефоне
@@ -395,6 +398,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     void link(String childId, String parentId) {
       edges.putIfAbsent(childId, () => <String>{}).add(parentId);
     }
+
     for (final relation in _relationsData) {
       if (relation.relation1to2 == RelationType.parent) {
         link(relation.person2Id, relation.person1Id);
@@ -410,6 +414,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     void link(String parentId, String childId) {
       edges.putIfAbsent(parentId, () => <String>{}).add(childId);
     }
+
     for (final relation in _relationsData) {
       if (relation.relation1to2 == RelationType.parent) {
         link(relation.person1Id, relation.person2Id);
@@ -632,8 +637,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     final focused = FocusManager.instance.primaryFocus;
     final inEditable = focused?.context?.widget is EditableText ||
         (focused?.context != null &&
-            focused!.context!
-                    .findAncestorWidgetOfExactType<EditableText>() !=
+            focused!.context!.findAncestorWidgetOfExactType<EditableText>() !=
                 null);
     if (inEditable) return false;
 
@@ -696,7 +700,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(desc != null ? 'Повторено: $desc' : 'Не удалось повторить'),
+        content:
+            Text(desc != null ? 'Повторено: $desc' : 'Не удалось повторить'),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
       ),
@@ -1068,8 +1073,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
             children: [
               Expanded(child: overlayedBody),
               const ExtendedNetworkFilterSidebar(
-                branchOptions:
-                    <BranchFilterOption>[],
+                branchOptions: <BranchFilterOption>[],
               ),
             ],
           );
@@ -1305,135 +1309,138 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                // UX-T1.2 FR-c: на телефоне (<1180) пилюлю «Выбрать дерево»
-                // не дублируем — стрелка «назад» уже ведёт в селектор
-                // деревьев. На десктопе оставляем как было.
-                if (!isPhone)
-                  _TreeTopbarPill(
-                    tokens: tokens,
-                    tooltip: 'Выбрать дерево',
-                    onTap: () => context.go('/tree?selector=1'),
-                    child: Icon(
-                      Icons.account_tree_outlined,
-                      size: 19,
-                      color: tokens.ink,
-                    ),
-                  ),
-                // Undo / redo пилюли — на десктопе всегда видны (disabled
-                // если стек пуст), чтобы юзер сразу понимал что эта
-                // функциональность есть. На телефоне (UX-T1.2 FR-c) они
-                // переехали в overflow «•••» ради минимального хрома.
-                // ListenableBuilder подписан на TreeMutationHistory,
-                // перерисовывается на push/pop стека (enabled state
-                // меняется в реальном времени).
-                if (!isPhone &&
-                    selectedTreeId != null &&
-                    GetIt.I.isRegistered<TreeMutationHistory>())
-                  ListenableBuilder(
-                    listenable: GetIt.I<TreeMutationHistory>(),
-                    builder: (context, _) {
-                      final history = GetIt.I<TreeMutationHistory>();
-                      return Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(width: 8),
+                        // UX-T1.2 FR-c: на телефоне (<1180) пилюлю «Выбрать дерево»
+                        // не дублируем — стрелка «назад» уже ведёт в селектор
+                        // деревьев. На десктопе оставляем как было.
+                        if (!isPhone)
                           _TreeTopbarPill(
                             tokens: tokens,
-                            tooltip: history.canUndo
-                                ? 'Отменить · Ctrl+Z'
-                                : 'Нечего отменять',
-                            onTap: history.canUndo
-                                ? () => unawaited(_performUndo())
-                                : null,
+                            tooltip: 'Выбрать дерево',
+                            onTap: () => context.go('/tree?selector=1'),
                             child: Icon(
-                              Icons.undo_rounded,
+                              Icons.account_tree_outlined,
                               size: 19,
-                              color: history.canUndo
-                                  ? tokens.ink
-                                  : tokens.inkSecondary
-                                      .withValues(alpha: 0.4),
+                              color: tokens.ink,
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          _TreeTopbarPill(
+                        // Undo / redo пилюли — на десктопе всегда видны (disabled
+                        // если стек пуст), чтобы юзер сразу понимал что эта
+                        // функциональность есть. На телефоне (UX-T1.2 FR-c) они
+                        // переехали в overflow «•••» ради минимального хрома.
+                        // ListenableBuilder подписан на TreeMutationHistory,
+                        // перерисовывается на push/pop стека (enabled state
+                        // меняется в реальном времени).
+                        if (!isPhone &&
+                            selectedTreeId != null &&
+                            GetIt.I.isRegistered<TreeMutationHistory>())
+                          ListenableBuilder(
+                            listenable: GetIt.I<TreeMutationHistory>(),
+                            builder: (context, _) {
+                              final history = GetIt.I<TreeMutationHistory>();
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(width: 8),
+                                  _TreeTopbarPill(
+                                    tokens: tokens,
+                                    tooltip: history.canUndo
+                                        ? 'Отменить · Ctrl+Z'
+                                        : 'Нечего отменять',
+                                    onTap: history.canUndo
+                                        ? () => unawaited(_performUndo())
+                                        : null,
+                                    child: Icon(
+                                      Icons.undo_rounded,
+                                      size: 19,
+                                      color: history.canUndo
+                                          ? tokens.ink
+                                          : tokens.inkSecondary
+                                              .withValues(alpha: 0.4),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  _TreeTopbarPill(
+                                    tokens: tokens,
+                                    tooltip: history.canRedo
+                                        ? 'Повторить · Ctrl+Shift+Z'
+                                        : 'Нечего повторять',
+                                    onTap: history.canRedo
+                                        ? () => unawaited(_performRedo())
+                                        : null,
+                                    child: Icon(
+                                      Icons.redo_rounded,
+                                      size: 19,
+                                      color: history.canRedo
+                                          ? tokens.ink
+                                          : tokens.inkSecondary
+                                              .withValues(alpha: 0.4),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        if (selectedTreeId != null &&
+                            _extendedNetworkController != null) ...[
+                          const SizedBox(width: 8),
+                          // Phase 4 chunk 2: mode toggle. Toggle вверху appbar'а —
+                          // постоянно видимый «эта функция есть». Скрывается если
+                          // backend service не implements capability mixin.
+                          ChangeNotifierProvider<
+                              ExtendedNetworkController>.value(
+                            value: _extendedNetworkController!,
+                            child: const ExtendedNetworkToggle(),
+                          ),
+                        ],
+                        // UX-T1.2 FR-c: поиск/фильтры расширенной сети — вторичные,
+                        // на телефоне живут в «•••» (см. _buildTreeToolbarMenuItems),
+                        // отдельные пилюли показываем только на десктопе.
+                        if (!isPhone &&
+                            selectedTreeId != null &&
+                            _shouldShowSearchButton()) ...[
+                          const SizedBox(width: 4),
+                          _ExtendedSearchButton(
                             tokens: tokens,
-                            tooltip: history.canRedo
-                                ? 'Повторить · Ctrl+Shift+Z'
-                                : 'Нечего повторять',
-                            onTap: history.canRedo
-                                ? () => unawaited(_performRedo())
-                                : null,
-                            child: Icon(
-                              Icons.redo_rounded,
-                              size: 19,
-                              color: history.canRedo
-                                  ? tokens.ink
-                                  : tokens.inkSecondary
-                                      .withValues(alpha: 0.4),
+                            onTap: () => _openSearchSheet(),
+                          ),
+                        ],
+                        if (!isPhone &&
+                            selectedTreeId != null &&
+                            _shouldShowFiltersButton()) ...[
+                          const SizedBox(width: 4),
+                          ChangeNotifierProvider<
+                              ExtendedNetworkController>.value(
+                            value: _extendedNetworkController!,
+                            child: _FiltersButton(
+                              tokens: tokens,
+                              onTap: () => _openFilterSheet(),
                             ),
                           ),
                         ],
-                      );
-                    },
-                  ),
-                if (selectedTreeId != null && _extendedNetworkController != null) ...[
-                  const SizedBox(width: 8),
-                  // Phase 4 chunk 2: mode toggle. Toggle вверху appbar'а —
-                  // постоянно видимый «эта функция есть». Скрывается если
-                  // backend service не implements capability mixin.
-                  ChangeNotifierProvider<ExtendedNetworkController>.value(
-                    value: _extendedNetworkController!,
-                    child: const ExtendedNetworkToggle(),
-                  ),
-                ],
-                // UX-T1.2 FR-c: поиск/фильтры расширенной сети — вторичные,
-                // на телефоне живут в «•••» (см. _buildTreeToolbarMenuItems),
-                // отдельные пилюли показываем только на десктопе.
-                if (!isPhone &&
-                    selectedTreeId != null &&
-                    _shouldShowSearchButton()) ...[
-                  const SizedBox(width: 4),
-                  _ExtendedSearchButton(
-                    tokens: tokens,
-                    onTap: () => _openSearchSheet(),
-                  ),
-                ],
-                if (!isPhone &&
-                    selectedTreeId != null &&
-                    _shouldShowFiltersButton()) ...[
-                  const SizedBox(width: 4),
-                  ChangeNotifierProvider<ExtendedNetworkController>.value(
-                    value: _extendedNetworkController!,
-                    child: _FiltersButton(
-                      tokens: tokens,
-                      onTap: () => _openFilterSheet(),
-                    ),
-                  ),
-                ],
-                if (selectedTreeId != null) ...[
-                  const SizedBox(width: 8),
-                  PopupMenuButton<_TreeToolbarAction>(
-                    tooltip: 'Действия дерева',
-                    onSelected: (action) =>
-                        _handleTreeToolbarAction(selectedTreeId, action),
-                    itemBuilder: (context) =>
-                        _buildTreeToolbarMenuItems(isPhone: isPhone),
-                    child: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: tokens.surfaceStrong,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: tokens.surfaceLine),
-                      ),
-                      child: Icon(
-                        Icons.more_horiz_rounded,
-                        size: 19,
-                        color: tokens.ink,
-                      ),
-                    ),
-                  ),
-                ],
+                        if (selectedTreeId != null) ...[
+                          const SizedBox(width: 8),
+                          PopupMenuButton<_TreeToolbarAction>(
+                            tooltip: 'Действия дерева',
+                            onSelected: (action) => _handleTreeToolbarAction(
+                                selectedTreeId, action),
+                            itemBuilder: (context) =>
+                                _buildTreeToolbarMenuItems(isPhone: isPhone),
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: tokens.surfaceStrong,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: tokens.surfaceLine),
+                              ),
+                              child: Icon(
+                                Icons.more_horiz_rounded,
+                                size: 19,
+                                color: tokens.ink,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -1465,6 +1472,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         return;
       case _TreeToolbarAction.openHistory:
         await _showTreeHistorySheet();
+        return;
+      case _TreeToolbarAction.sendDiagnostics:
+        await _sendTreeDiagnostics();
         return;
       case _TreeToolbarAction.openChats:
         context.go('/chats');
@@ -1601,14 +1611,17 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       // rejects mutations с 403; UI gate just keeps виду cleaner.
       viewerMode: _isViewerOnly,
       isHidden: isCurrentlyHidden,
-      onToggleHide:
-          canToggleHide ? () => _toggleHidePerson(person, isCurrentlyHidden) : null,
+      onToggleHide: canToggleHide
+          ? () => _toggleHidePerson(person, isCurrentlyHidden)
+          : null,
       onOpenProfile: () => _openPersonDetails(person),
       onEdit: () {
-        context.push<dynamic>(
+        context
+            .push<dynamic>(
           '/relatives/edit/$treeId/${person.id}',
           extra: person,
-        ).then((_) {
+        )
+            .then((_) {
           if (!mounted) return;
           _loadData(treeId);
         });
@@ -1697,8 +1710,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     final confirmed = await showSafeDeleteConfirmation(
       context,
       title: 'Удалить ${person.name}?',
-      body:
-          'Карточка и связи с родственниками переедут в корзину. '
+      body: 'Карточка и связи с родственниками переедут в корзину. '
           'Восстановить можно в течение 30 дней в Настройки → Корзина.',
     );
     if (!confirmed || !mounted) return;
@@ -1707,7 +1719,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${person.name} удалён${person.gender == Gender.female ? 'а' : ''} из дерева'),
+          content: Text(
+              '${person.name} удалён${person.gender == Gender.female ? 'а' : ''} из дерева'),
         ),
       );
       _clearSelectedTreePerson();
@@ -1845,8 +1858,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   ) async {
     final service = _familyService;
     if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
-    final capable =
-        service as IdentitySuggestionsCapableFamilyTreeService;
+    final capable = service as IdentitySuggestionsCapableFamilyTreeService;
     final newCounts = <String, int>{};
     // Sequential fetch is acceptable here — only a handful of
     // persons typically and the response is tiny. Parallelizing
@@ -1878,8 +1890,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     if (treeId == null) return;
     final service = _familyService;
     if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
-    final capable =
-        service as IdentitySuggestionsCapableFamilyTreeService;
+    final capable = service as IdentitySuggestionsCapableFamilyTreeService;
     List<IdentitySuggestion> suggestions;
     try {
       suggestions = await capable.getIdentitySuggestionsForPerson(
@@ -1924,8 +1935,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   Future<void> _confirmIdentitySuggestion(IdentitySuggestion suggestion) async {
     final service = _familyService;
     if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
-    final capable =
-        service as IdentitySuggestionsCapableFamilyTreeService;
+    final capable = service as IdentitySuggestionsCapableFamilyTreeService;
     try {
       await capable.linkIdentity(
         sourceTreeId: suggestion.sourceTreeId,
@@ -2039,8 +2049,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   Future<void> _dismissIdentitySuggestion(IdentitySuggestion suggestion) async {
     final service = _familyService;
     if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
-    final capable =
-        service as IdentitySuggestionsCapableFamilyTreeService;
+    final capable = service as IdentitySuggestionsCapableFamilyTreeService;
     try {
       await capable.dismissIdentitySuggestion(
         sourceTreeId: suggestion.sourceTreeId,
@@ -2087,8 +2096,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       // orphan ends up wherever the layout engine puts it,
       // possibly off-screen if the user is zoomed into another
       // branch).
-      final newPersonId =
-          await _familyService.addRelative(treeId, personData);
+      final newPersonId = await _familyService.addRelative(treeId, personData);
       if (!mounted) return;
       // Record for undo (this path didn't before) → «Отменить» deletes it.
       if (GetIt.I.isRegistered<TreeMutationHistory>()) {
@@ -2107,7 +2115,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       });
       await _loadData(treeId);
       if (mounted) {
-        _showTreeUndoToast('Карточка добавлена. Соедините её длинным нажатием.');
+        _showTreeUndoToast(
+            'Карточка добавлена. Соедините её длинным нажатием.');
       }
     } catch (error) {
       if (!mounted) return;
@@ -2391,9 +2400,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     final isEmptyTree = _relativesData.isEmpty && _relationsData.isEmpty;
     if (isEmptyTree) return true;
     final selfPerson = _findSelfPerson();
-    return _relativesData.length == 1 &&
-        selfPerson != null &&
-        !_isFriendsTree;
+    return _relativesData.length == 1 && selfPerson != null && !_isFriendsTree;
   }
 
   Future<void> _navigateToAddRelative(String treeId) async {
@@ -2764,6 +2771,216 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Публичная ссылка скопирована.')),
     );
+  }
+
+  Future<void> _sendTreeDiagnostics() async {
+    final payload = _buildTreeDiagnosticPayload();
+    final encodedPayload = const JsonEncoder.withIndent('  ').convert(payload);
+    await Clipboard.setData(ClipboardData(text: encodedPayload));
+
+    String? eventId;
+    if (GetIt.I.isRegistered<CustomApiDiagnosticsService>()) {
+      eventId = await GetIt.I<CustomApiDiagnosticsService>().capture(
+        type: 'tree_layout_snapshot',
+        message: 'Диагностика раскладки дерева',
+        context: payload,
+      );
+    }
+
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          eventId == null
+              ? 'Диагностика дерева скопирована. Отправка на сервер недоступна.'
+              : 'Диагностика дерева отправлена и скопирована.',
+        ),
+      ),
+    );
+  }
+
+  Map<String, dynamic> _buildTreeDiagnosticPayload() {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final snapshot = _graphSnapshot;
+    return <String, dynamic>{
+      'kind': 'tree_layout_snapshot',
+      'createdAt': DateTime.now().toIso8601String(),
+      'tree': <String, dynamic>{
+        'treeId': _currentTreeId,
+        'treeName': _currentTreeMeta?.name,
+        'isFriendsTree': _isFriendsTree,
+        'branchRootPersonId': _branchRootPersonId,
+      },
+      'viewer': <String, dynamic>{
+        'userId': _authService.currentUserId,
+        'viewerPersonId': snapshot?.viewerPersonId,
+        'currentUserIsInTree': _currentUserIsInTree,
+        'role': _callerSemyaRole?.name,
+        'viewerOnly': _isViewerOnly,
+      },
+      'uiState': <String, dynamic>{
+        'selectedPersonSheetId': _selectedPersonSheetId,
+        'selectedEditPersonId': _selectedEditPersonId,
+        'selectedPersonIds': _selectedPersonIds.toList()..sort(),
+        'isEditMode': _isEditMode,
+        'isSelectionMode': _isSelectionMode,
+        'manualPositionCount': _manualNodePositions.length,
+      },
+      'viewport': mediaQuery == null
+          ? null
+          : <String, dynamic>{
+              'width': mediaQuery.size.width,
+              'height': mediaQuery.size.height,
+              'devicePixelRatio': mediaQuery.devicePixelRatio,
+              'padding': <String, dynamic>{
+                'left': mediaQuery.padding.left,
+                'top': mediaQuery.padding.top,
+                'right': mediaQuery.padding.right,
+                'bottom': mediaQuery.padding.bottom,
+              },
+            },
+      'people': _treePeople.map(_personDiagnosticPayload).toList(),
+      'relations': _relationsData.map(_relationDiagnosticPayload).toList(),
+      'manualNodePositions': _manualNodePositions.map(
+        (id, position) => MapEntry(
+          id,
+          <String, dynamic>{
+            'dx': position.dx,
+            'dy': position.dy,
+          },
+        ),
+      ),
+      'graphSnapshot': snapshot == null
+          ? null
+          : <String, dynamic>{
+              'treeId': snapshot.treeId,
+              'viewerPersonId': snapshot.viewerPersonId,
+              'familyUnits': snapshot.familyUnits
+                  .map(_familyUnitDiagnosticPayload)
+                  .toList(),
+              'branchBlocks': snapshot.branchBlocks
+                  .map(_branchBlockDiagnosticPayload)
+                  .toList(),
+              'generationRows': snapshot.generationRows
+                  .map(_generationRowDiagnosticPayload)
+                  .toList(),
+              'viewerDescriptors': snapshot.viewerDescriptors
+                  .map(_viewerDescriptorDiagnosticPayload)
+                  .toList(),
+              'warnings':
+                  snapshot.warnings.map(_warningDiagnosticPayload).toList(),
+            },
+    };
+  }
+
+  Map<String, dynamic> _personDiagnosticPayload(FamilyPerson person) {
+    return <String, dynamic>{
+      'id': person.id,
+      'treeId': person.treeId,
+      'identityId': person.identityId,
+      'name': person.name,
+      'maidenName': person.maidenName,
+      'gender': person.gender.name,
+      'birthDate': person.birthDate?.toIso8601String(),
+      'birthDatePrecision': person.birthDatePrecision,
+      'deathDate': person.deathDate?.toIso8601String(),
+      'deathDatePrecision': person.deathDatePrecision,
+      'isAlive': person.isAlive,
+      'relation': person.relation,
+      'hasLinkedUser': (person.userId ?? '').trim().isNotEmpty,
+      'parentIds': person.parentIds ?? const <String>[],
+      'childrenIds': person.childrenIds ?? const <String>[],
+      'spouseId': person.spouseId,
+      'siblingIds': person.siblingIds ?? const <String>[],
+    };
+  }
+
+  Map<String, dynamic> _relationDiagnosticPayload(FamilyRelation relation) {
+    return <String, dynamic>{
+      'id': relation.id,
+      'treeId': relation.treeId,
+      'person1Id': relation.person1Id,
+      'person2Id': relation.person2Id,
+      'relation1to2': relation.relation1to2.name,
+      'relation2to1': relation.relation2to1.name,
+      'isConfirmed': relation.isConfirmed,
+      'parentSetId': relation.parentSetId,
+      'parentSetType': relation.parentSetType,
+      'isPrimaryParentSet': relation.isPrimaryParentSet,
+      'unionId': relation.unionId,
+      'unionType': relation.unionType,
+      'unionStatus': relation.unionStatus,
+      'marriageDate': relation.marriageDate?.toIso8601String(),
+      'divorceDate': relation.divorceDate?.toIso8601String(),
+    };
+  }
+
+  Map<String, dynamic> _familyUnitDiagnosticPayload(
+    TreeGraphFamilyUnit unit,
+  ) {
+    return <String, dynamic>{
+      'id': unit.id,
+      'rootParentSetId': unit.rootParentSetId,
+      'adultIds': unit.adultIds,
+      'childIds': unit.childIds,
+      'relationIds': unit.relationIds,
+      'unionId': unit.unionId,
+      'unionType': unit.unionType,
+      'unionStatus': unit.unionStatus,
+      'parentSetType': unit.parentSetType,
+      'isPrimaryParentSet': unit.isPrimaryParentSet,
+      'label': unit.label,
+    };
+  }
+
+  Map<String, dynamic> _branchBlockDiagnosticPayload(
+    TreeGraphBranchBlock block,
+  ) {
+    return <String, dynamic>{
+      'id': block.id,
+      'rootUnitId': block.rootUnitId,
+      'label': block.label,
+      'memberPersonIds': block.memberPersonIds,
+    };
+  }
+
+  Map<String, dynamic> _generationRowDiagnosticPayload(
+    TreeGraphGenerationRow row,
+  ) {
+    return <String, dynamic>{
+      'row': row.row,
+      'label': row.label,
+      'personIds': row.personIds,
+      'familyUnitIds': row.familyUnitIds,
+    };
+  }
+
+  Map<String, dynamic> _viewerDescriptorDiagnosticPayload(
+    TreeGraphViewerDescriptor descriptor,
+  ) {
+    return <String, dynamic>{
+      'personId': descriptor.personId,
+      'primaryRelationLabel': descriptor.primaryRelationLabel,
+      'isBlood': descriptor.isBlood,
+      'alternatePathCount': descriptor.alternatePathCount,
+      'pathSummary': descriptor.pathSummary,
+      'primaryPathPersonIds': descriptor.primaryPathPersonIds,
+    };
+  }
+
+  Map<String, dynamic> _warningDiagnosticPayload(TreeGraphWarning warning) {
+    return <String, dynamic>{
+      'id': warning.id,
+      'code': warning.code,
+      'severity': warning.severity,
+      'message': warning.message,
+      'hint': warning.hint,
+      'personIds': warning.personIds,
+      'familyUnitIds': warning.familyUnitIds,
+      'relationIds': warning.relationIds,
+    };
   }
 
   // ── Phase 4 chunk 2: filter button helpers ───────────────────────
@@ -3197,8 +3414,7 @@ class _SuggestionRow extends StatelessWidget {
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: suggestion.confidence == 'high'
                       ? scheme.primaryContainer
@@ -3379,8 +3595,7 @@ class _BloodRelationAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final hasPhoto =
-        preview.photoUrl != null && preview.photoUrl!.isNotEmpty;
+    final hasPhoto = preview.photoUrl != null && preview.photoUrl!.isNotEmpty;
     final initial = (preview.name?.isNotEmpty == true)
         ? preview.name!.substring(0, 1).toUpperCase()
         : '?';

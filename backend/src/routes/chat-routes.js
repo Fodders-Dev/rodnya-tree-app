@@ -377,6 +377,7 @@ function registerChatRoutes(
 
     const updatedChat = await store.updateGroupChat(resolvedChatId, {
       title: req.body?.title,
+      photoUrl: req.body?.photoUrl,
     });
     if (updatedChat === false) {
       res.status(400).json({message: "Менять можно только обычный групповой чат"});

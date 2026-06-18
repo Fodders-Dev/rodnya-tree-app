@@ -59,6 +59,7 @@ import 'session_revocation_watcher.dart';
 import 'custom_api_call_service.dart';
 import 'custom_api_chat_service.dart';
 import 'custom_api_circle_service.dart';
+import 'custom_api_diagnostics_service.dart';
 import 'custom_api_family_tree_service.dart';
 import 'custom_api_identity_service.dart';
 import 'custom_api_notification_service.dart';
@@ -128,6 +129,12 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceSingleton<AuthServiceInterface>(customApiAuthService);
     _registerOrReplaceSingleton<AuthSessionsService>(
       AuthSessionsService(
+        authService: customApiAuthService,
+        runtimeConfig: runtimeConfig,
+      ),
+    );
+    _registerOrReplaceSingleton<CustomApiDiagnosticsService>(
+      CustomApiDiagnosticsService(
         authService: customApiAuthService,
         runtimeConfig: runtimeConfig,
       ),

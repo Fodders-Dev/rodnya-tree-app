@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
@@ -30,6 +31,7 @@ import 'backend/interfaces/story_service_interface.dart';
 import 'backend/backend_runtime_config.dart';
 import 'services/app_startup_service.dart';
 import 'services/call_coordinator_service.dart';
+import 'services/custom_api_diagnostics_service.dart';
 import 'services/invitation_service.dart';
 import 'startup/startup_failure_policy.dart';
 import 'startup/app_warmup_coordinator.dart';
@@ -43,6 +45,7 @@ import 'utils/e2e_state_bridge.dart';
 final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
 Object? _e2eSemanticsHandle;
+bool _clientDiagnosticsInstalled = false;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -111,6 +114,7 @@ Future<void> _bootstrapAndRunApp() async {
           .registerSingleton<AppStartupServiceInterface>(AppStartupService());
     }
     await GetIt.I<AppStartupServiceInterface>().initializeForeground();
+    _installClientDiagnostics();
 
     final localStorageService = GetIt.I<LocalStorageService>();
     final runtimeConfig = BackendRuntimeConfig.current;
@@ -164,6 +168,48 @@ Future<void> _bootstrapAndRunApp() async {
       ),
     );
   }
+}
+
+void _installClientDiagnostics() {
+  if (_clientDiagnosticsInstalled ||
+      !GetIt.I.isRegistered<CustomApiDiagnosticsService>()) {
+    return;
+  }
+  _clientDiagnosticsInstalled = true;
+  final diagnostics = GetIt.I<CustomApiDiagnosticsService>();
+  final previousFlutterOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    if (previousFlutterOnError != null) {
+      previousFlutterOnError(details);
+    } else {
+      FlutterError.presentError(details);
+    }
+    unawaited(
+      diagnostics.capture(
+        type: 'flutter_error',
+        message: details.exceptionAsString(),
+        error: details.exception,
+        stackTrace: details.stack,
+        context: <String, dynamic>{
+          'library': details.library,
+          'context': details.context?.toString(),
+        },
+      ),
+    );
+  };
+
+  final previousPlatformOnError = ui.PlatformDispatcher.instance.onError;
+  ui.PlatformDispatcher.instance.onError = (error, stackTrace) {
+    unawaited(
+      diagnostics.capture(
+        type: 'platform_error',
+        message: error.toString(),
+        error: error,
+        stackTrace: stackTrace,
+      ),
+    );
+    return previousPlatformOnError?.call(error, stackTrace) ?? false;
+  };
 }
 
 Future<void> _resetRecoverableSessionAndRetry() async {

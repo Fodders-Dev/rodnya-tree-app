@@ -163,6 +163,13 @@ class _FakeChatService implements ChatServiceInterface {
       getChatDetails(chatId);
 
   @override
+  Future<ChatDetails> updateGroupChatPhoto({
+    required String chatId,
+    required XFile photo,
+  }) async =>
+      getChatDetails(chatId);
+
+  @override
   Future<ChatDetails> addGroupParticipants({
     required String chatId,
     required List<String> participantIds,

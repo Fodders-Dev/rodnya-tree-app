@@ -183,6 +183,7 @@ const EMPTY_DB = {
   profileContributions: [],
   pushDevices: [],
   pushDeliveries: [],
+  clientDiagnostics: [],
   // Phase 3.6: audit log для hard-delete background job. Каждая запись
   // фиксирует physically deleted entity (entityType, entityId,
   // deletedAt, scheduledAt, hardDeletedAt, runId). Self-prune: записи
@@ -329,6 +330,9 @@ function normalizeDbState(parsed) {
     pushDevices: Array.isArray(parsed?.pushDevices) ? parsed.pushDevices : [],
     pushDeliveries: Array.isArray(parsed?.pushDeliveries)
       ? parsed.pushDeliveries
+      : [],
+    clientDiagnostics: Array.isArray(parsed?.clientDiagnostics)
+      ? parsed.clientDiagnostics
       : [],
     // Phase 3.6 hard-delete job artifacts. Default empty / null
     // preserves backward compat — old snapshots без этих полей
@@ -1666,6 +1670,7 @@ function createChatRecord({
   type = "direct",
   participantIds = [],
   title = null,
+  photoUrl = null,
   createdBy = null,
   treeId = null,
   branchRootPersonIds = [],
@@ -1676,6 +1681,7 @@ function createChatRecord({
     type: String(type || "direct").trim() || "direct",
     participantIds: normalizeParticipantIds(participantIds),
     title: normalizeNullableString(title),
+    photoUrl: normalizeNullableString(photoUrl),
     createdBy: normalizeNullableString(createdBy),
     treeId: normalizeNullableString(treeId),
     branchRootPersonIds: normalizeParticipantIds(branchRootPersonIds),
@@ -15753,6 +15759,61 @@ class FileStore {
     return structuredClone(report);
   }
 
+  async createClientDiagnostic({
+    userId,
+    sessionId = null,
+    type,
+    message = "",
+    platform = null,
+    appVersion = null,
+    context = {},
+    error = null,
+    stackTrace = null,
+  }) {
+    const db = await this._read();
+    const event = {
+      id: `diag_${crypto.randomUUID()}`,
+      userId: normalizeNullableString(userId),
+      sessionId: normalizeNullableString(sessionId),
+      type: normalizeNullableString(type) || "client_event",
+      message: normalizeNullableString(message) || "",
+      platform,
+      appVersion,
+      context: context && typeof context === "object" ? context : {},
+      error,
+      stackTrace,
+      createdAt: nowIso(),
+    };
+    db.clientDiagnostics.push(event);
+    if (db.clientDiagnostics.length > 500) {
+      db.clientDiagnostics = db.clientDiagnostics.slice(-500);
+    }
+    await this._write(db);
+    return structuredClone(event);
+  }
+
+  async listClientDiagnostics({type = null, userId = null, limit = 100} = {}) {
+    const db = await this._read();
+    const normalizedType = normalizeNullableString(type);
+    const normalizedUserId = normalizeNullableString(userId);
+    const cappedLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+    return db.clientDiagnostics
+      .filter((entry) => {
+        if (normalizedType && entry.type !== normalizedType) {
+          return false;
+        }
+        if (normalizedUserId && entry.userId !== normalizedUserId) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .slice(0, cappedLimit)
+      .map((entry) => structuredClone(entry));
+  }
+
   _userIdentityIdsInTree(db, treeId, userId) {
     const normalizedUserId = normalizeNullableString(userId);
     if (!normalizedUserId) {
@@ -18179,7 +18240,7 @@ class FileStore {
     return structuredClone(chat);
   }
 
-  async updateGroupChat(chatId, {title}) {
+  async updateGroupChat(chatId, {title, photoUrl}) {
     const db = await this._read();
     const chat = this._findStoredChat(db, chatId);
     if (!chat) {
@@ -18189,12 +18250,27 @@ class FileStore {
       return false;
     }
 
-    const normalizedTitle = normalizeNullableString(title);
-    if (!normalizedTitle) {
+    const hasTitlePatch = title !== undefined;
+    const hasPhotoPatch = photoUrl !== undefined;
+    if (!hasTitlePatch && !hasPhotoPatch) {
       return undefined;
     }
 
-    chat.title = normalizedTitle;
+    if (hasTitlePatch) {
+      const normalizedTitle = normalizeNullableString(title);
+      if (!normalizedTitle) {
+        return undefined;
+      }
+      chat.title = normalizedTitle;
+    }
+    if (hasPhotoPatch) {
+      const normalizedPhotoUrl = normalizeNullableString(photoUrl);
+      if (!normalizedPhotoUrl) {
+        return undefined;
+      }
+      chat.photoUrl = normalizedPhotoUrl;
+    }
+
     chat.updatedAt = nowIso();
     await this._write(db);
     return structuredClone(chat);
@@ -19285,7 +19361,7 @@ class FileStore {
         userId,
         type: chat.type || "direct",
         title: chat.title || null,
-        photoUrl: null,
+        photoUrl: isGroup ? chat.photoUrl || null : null,
         participantIds: participants,
         otherUserId,
         otherUserName: "Пользователь",

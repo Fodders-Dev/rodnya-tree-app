@@ -617,6 +617,43 @@ class CustomApiChatService
   }
 
   @override
+  Future<ChatDetails> updateGroupChatPhoto({
+    required String chatId,
+    required XFile photo,
+  }) async {
+    final storageService = _storageService;
+    if (storageService == null) {
+      throw const CustomApiException(
+        'Загрузка изображения чата сейчас недоступна',
+      );
+    }
+
+    final photoUrl = await storageService.uploadImage(photo, 'chat');
+    if (photoUrl == null || photoUrl.trim().isEmpty) {
+      throw const CustomApiException('Не удалось загрузить изображение чата');
+    }
+
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/chats/$chatId',
+      body: {
+        'photoUrl': photoUrl.trim(),
+      },
+    );
+
+    final rawChat = response['chat'];
+    if (rawChat is! Map<String, dynamic>) {
+      throw const CustomApiException('Не удалось обновить изображение чата');
+    }
+
+    return ChatDetails.fromMap({
+      ...rawChat,
+      'participants': response['participants'],
+      'branchRoots': response['branchRoots'],
+    });
+  }
+
+  @override
   Future<ChatDetails> addGroupParticipants({
     required String chatId,
     required List<String> participantIds,

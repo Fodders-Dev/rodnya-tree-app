@@ -352,6 +352,25 @@ class _FakeChatService implements ChatServiceInterface {
       chatId: details.chatId,
       type: details.type,
       title: title,
+      photoUrl: details.photoUrl,
+      participantIds: details.participantIds,
+      participants: details.participants,
+      branchRoots: details.branchRoots,
+      treeId: details.treeId,
+    );
+    return details;
+  }
+
+  @override
+  Future<ChatDetails> updateGroupChatPhoto({
+    required String chatId,
+    required XFile photo,
+  }) async {
+    details = ChatDetails(
+      chatId: details.chatId,
+      type: details.type,
+      title: details.title,
+      photoUrl: 'https://example.com/chat-photo.jpg',
       participantIds: details.participantIds,
       participants: details.participants,
       branchRoots: details.branchRoots,
@@ -1044,7 +1063,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 100));
 
-    await tester.tap(find.byTooltip('О чате'));
+    await tester.tap(find.text('Семья Кузнецовых').first);
     await tester.pumpAndSettle();
 
     expect(find.text('О чате'), findsOneWidget);
@@ -1120,7 +1139,7 @@ void main() {
     chatService.emitMessages(const <ChatMessage>[]);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('О чате'));
+    await tester.tap(find.text('Семья Кузнецовых').first);
     await tester.pumpAndSettle();
 
     final leaveButton = find.byKey(const Key('chat-info-leave-group'));
@@ -1270,7 +1289,7 @@ void main() {
 
     await pumpChat();
 
-    await tester.tap(find.byTooltip('О чате'));
+    await tester.tap(find.text('Семья Кузнецовых').first);
     await tester.pumpAndSettle();
     await tester.drag(find.byType(ListView).last, const Offset(0, -400));
     await tester.pumpAndSettle();
