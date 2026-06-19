@@ -374,8 +374,7 @@ void main() {
     expect(find.text('Фильтры расширенной сети'), findsOneWidget);
   });
 
-  testWidgets(
-      'search button opens sheet → typed query filters results',
+  testWidgets('search button opens sheet → typed query filters results',
       (tester) async {
     await _bootstrapExtendedMode(tester);
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -409,8 +408,7 @@ void main() {
     expect(find.text('Степа Чужой'), findsNothing);
   });
 
-  testWidgets(
-      'tap foreign result в search → ForeignNodeSheet opens',
+  testWidgets('tap foreign result в search → ForeignNodeSheet opens',
       (tester) async {
     await _bootstrapExtendedMode(tester);
     addTearDown(() => tester.binding.setSurfaceSize(null));
