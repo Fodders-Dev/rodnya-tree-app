@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex" />
+  <title>Приглашение в Родню…</title>
+  <link rel="icon" href="/favicon.png" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f1e6;
+      --ink: #1f2a1c;
+      --ink-secondary: #3d4a37;
+      --accent: #2f6f4a;
+      --accent-ink: #ffffff;
+      --surface: #ffffff;
+      --line: rgba(31, 42, 28, 0.12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14180f;
+        --ink: #f7f1e6;
+        --ink-secondary: #d1c7b8;
+        --accent: #6cc28d;
+        --accent-ink: #102117;
+        --surface: #1c2218;
+        --line: rgba(247, 241, 230, 0.10);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Manrope", "Segoe UI", Roboto, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    main {
+      width: 100%;
+      max-width: 360px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 28px 22px;
+      box-shadow: 0 18px 38px -22px rgba(0, 0, 0, 0.18);
+      text-align: center;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      margin: 4px auto 18px;
+      border-radius: 999px;
+      border: 3px solid var(--line);
+      border-top-color: var(--accent);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    h1 {
+      font-size: 18px;
+      font-weight: 800;
+      margin: 0 0 8px;
+      letter-spacing: -0.01em;
+    }
+    p {
+      margin: 0 0 16px;
+      color: var(--ink-secondary);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    a.button {
+      display: inline-block;
+      padding: 12px 18px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 14px;
+      text-decoration: none;
+      transition: opacity 0.2s ease;
+    }
+    a.button.primary {
+      background: var(--accent);
+      color: var(--accent-ink);
+    }
+    a.button.secondary {
+      background: transparent;
+      color: var(--ink-secondary);
+      border: 1px solid var(--line);
+    }
+    a.button:hover { opacity: 0.85; }
+    small {
+      display: block;
+      margin-top: 14px;
+      font-size: 12px;
+      color: var(--ink-secondary);
+      opacity: 0.75;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="spinner" id="spinner"></div>
+    <h1 id="title">Открываем приглашение в Родне…</h1>
+    <p id="subtitle">
+      Если приложение установлено — откроем его. Если нет, в течение пары
+      секунд продолжим в браузере.
+    </p>
+    <div class="actions">
+      <a class="button primary" id="open-app" href="#">Открыть в приложении</a>
+      <a class="button secondary" id="open-web" href="#">Продолжить в браузере</a>
+      <a class="button secondary" id="install"
+         href="https://apps.rustore.ru/app/com.ahjkuio.rodnya_family_app"
+         rel="noreferrer">Скачать приложение</a>
+    </div>
+    <small id="diag"></small>
+  </main>
+  <script>
+    (function () {
+      // Интерстишл инвайта (по образцу /oauth/callback). Зачем нужен:
+      // ссылку, тапнутую ВНУТРИ in-app webview (Telegram), Android App Links
+      // НЕ перехватывают — она грузится в webview вместо приложения. Эта
+      // страница вырывает пользователя в установленное приложение через
+      // intent:// на ВЕРИФИЦИРОВАННЫЙ https App Link (rodnya-tree.ru/invite…),
+      // без своей схемы → без правки манифеста → без пересборки APK. Если
+      // приложения нет / лонч заблокирован — остаёмся в web-флоу инвайта
+      // (хеш-роут SPA) + CTA «скачать».
+      //
+      // Тап ВНЕ webview на верифицированном устройстве сюда не попадает —
+      // ОС откроет приложение раньше, чем страница загрузится.
+      var APP_HOST = 'rodnya-tree.ru';
+      var PACKAGE = 'com.ahjkuio.rodnya_family_app';
+
+      var origin = window.location.origin;
+      var pathname = window.location.pathname || '/';
+      var search = window.location.search || '';
+      var hash = window.location.hash || '';
+
+      // Каноничные путь+параметры инвайта.
+      //   токен-форма:  /invite/{token}
+      //   параметр-форма: /invite?treeId=…&personId=…
+      var appLinkPath; // путь для intent:// + App Link
+      var webHashRoute; // фолбэк в web-флоу (хеш-роут SPA)
+      var tokenMatch = pathname.match(/\/invite\/([^/?#]+)/);
+      if (tokenMatch && tokenMatch[1]) {
+        var token = tokenMatch[1];
+        appLinkPath = '/invite/' + token;
+        webHashRoute = '/#/invite/' + token;
+      } else {
+        // Параметр-форма. На всякий случай поднимаем параметры и из хеша
+        // (если очень старая ссылка #/invite?… как-то долетела сюда).
+        var q = search;
+        if (!/[?&](?:treeId|personId|token)=/.test(q) && hash.indexOf('?') !== -1) {
+          q = '?' + hash.substring(hash.indexOf('?') + 1);
+        }
+        appLinkPath = '/invite' + q;
+        webHashRoute = '/#/invite' + q;
+      }
+
+      var webUrl = origin + webHashRoute;
+
+      // intent:// на верифицированный https App Link с явным package и
+      // web-флоу как browser_fallback_url (срабатывает, если приложения нет).
+      var intentUrl =
+        'intent://' + APP_HOST + appLinkPath +
+        '#Intent;scheme=https;package=' + PACKAGE +
+        ';S.browser_fallback_url=' + encodeURIComponent(webUrl) +
+        ';end';
+
+      var openApp = document.getElementById('open-app');
+      var openWeb = document.getElementById('open-web');
+      openWeb.href = webUrl;
+
+      var isAndroid = /Android/i.test(navigator.userAgent || '');
+
+      // Не Android (desktop / iOS) — intent:// не поможет: сразу в web-флоу.
+      if (!isAndroid) {
+        window.location.replace(webUrl);
+        return;
+      }
+
+      openApp.href = intentUrl;
+
+      // Авто-попытка лонча чуть после отрисовки (ощущается осознанно).
+      var started = Date.now();
+      var launched = false;
+      function launch() {
+        if (launched) return;
+        launched = true;
+        try {
+          window.location.href = intentUrl;
+        } catch (err) {
+          document.getElementById('diag').textContent =
+            'Не удалось открыть приложение: ' + (err && err.message);
+        }
+      }
+      setTimeout(launch, 150);
+
+      // Если через 2.5 с мы всё ещё на странице — лонч не сработал
+      // (приложения нет или webview заблокировал intent://). Показываем
+      // ручные действия: открыть, продолжить в браузере, скачать.
+      setTimeout(function () {
+        if (document.visibilityState !== 'visible') return; // приложение открылось → фон
+        if (Date.now() - started < 2400) return;
+        document.getElementById('spinner').classList.add('hidden');
+        document.getElementById('title').textContent =
+          'Приложение не открылось';
+        document.getElementById('subtitle').textContent =
+          'Если «Родня» установлена — нажмите «Открыть в приложении». ' +
+          'Иначе продолжите в браузере или установите приложение.';
+      }, 2500);
+    })();
+  </script>
+</body>
+</html>
