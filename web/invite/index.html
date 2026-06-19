@@ -116,6 +116,7 @@
       секунд продолжим в браузере.
     </p>
     <div class="actions">
+      <a class="button primary hidden" id="open-external" href="#">Открыть во внешнем браузере</a>
       <a class="button primary" id="open-app" href="#">Открыть в приложении</a>
       <a class="button secondary" id="open-web" href="#">Продолжить в браузере</a>
       <a class="button secondary" id="install"
@@ -142,45 +143,61 @@
 
       var origin = window.location.origin;
       var pathname = window.location.pathname || '/';
-      var search = window.location.search || '';
-      var hash = window.location.hash || '';
+      var ua = navigator.userAgent || '';
 
       // Каноничные путь+параметры инвайта.
       //   токен-форма:  /invite/{token}
       //   параметр-форма: /invite?treeId=…&personId=…
+      //
+      // ФИКС 2 (security): берём параметры ТОЛЬКО из search и пропускаем
+      // через URLSearchParams → toString(), так что в data-часть intent://
+      // и в хеш-роут попадают исключительно корректно закодированные
+      // key=value. Сырые '#'/';'/'%' из ввода не доезжают до данных перед
+      // доверенным суффиксом #Intent;…  — крафт вроде
+      // /invite#x?treeId=a#Intent;package=evil;end больше не протаскивает
+      // чужой #Intent-сегмент (hash вообще не читаем; '#' в значении →
+      // %23). Токен прогоняем через encodeURIComponent.
       var appLinkPath; // путь для intent:// + App Link
       var webHashRoute; // фолбэк в web-флоу (хеш-роут SPA)
       var tokenMatch = pathname.match(/\/invite\/([^/?#]+)/);
       if (tokenMatch && tokenMatch[1]) {
-        var token = tokenMatch[1];
+        var token = encodeURIComponent(tokenMatch[1]);
         appLinkPath = '/invite/' + token;
         webHashRoute = '/#/invite/' + token;
       } else {
-        // Параметр-форма. На всякий случай поднимаем параметры и из хеша
-        // (если очень старая ссылка #/invite?… как-то долетела сюда).
-        var q = search;
-        if (!/[?&](?:treeId|personId|token)=/.test(q) && hash.indexOf('?') !== -1) {
-          q = '?' + hash.substring(hash.indexOf('?') + 1);
-        }
+        var qs = new URLSearchParams(window.location.search).toString();
+        var q = qs ? '?' + qs : '';
         appLinkPath = '/invite' + q;
         webHashRoute = '/#/invite' + q;
       }
 
       var webUrl = origin + webHashRoute;
 
-      // intent:// на верифицированный https App Link с явным package и
-      // web-флоу как browser_fallback_url (срабатывает, если приложения нет).
-      var intentUrl =
+      // Прямой лонч приложения: intent:// на верифицированный https App Link
+      // с явным package и web-флоу как browser_fallback_url. ВТОРИЧНЫЙ путь —
+      // in-app webview такой авто-переход обычно глушит.
+      var appIntent =
         'intent://' + APP_HOST + appLinkPath +
         '#Intent;scheme=https;package=' + PACKAGE +
         ';S.browser_fallback_url=' + encodeURIComponent(webUrl) +
         ';end';
 
+      // ФИКС 1: выход во ВНЕШНИЙ браузер. intent:// VIEW+BROWSABLE на тот же
+      // https App Link, но БЕЗ package — просим систему отдать ссылку наружу
+      // (внешний браузер / чузер). Там верифицированный App Link срабатывает
+      // САМ и открывает приложение. Это самый надёжный способ вырваться из
+      // in-app webview, который глушит прямой intent://(package).
+      var externalIntent =
+        'intent://' + APP_HOST + appLinkPath +
+        '#Intent;scheme=https;action=android.intent.action.VIEW' +
+        ';category=android.intent.category.BROWSABLE;end';
+
+      var openExternal = document.getElementById('open-external');
       var openApp = document.getElementById('open-app');
       var openWeb = document.getElementById('open-web');
       openWeb.href = webUrl;
 
-      var isAndroid = /Android/i.test(navigator.userAgent || '');
+      var isAndroid = /Android/i.test(ua);
 
       // Не Android (desktop / iOS) — intent:// не поможет: сразу в web-флоу.
       if (!isAndroid) {
@@ -188,16 +205,44 @@
         return;
       }
 
-      openApp.href = intentUrl;
+      openApp.href = appIntent;
+      openExternal.href = externalIntent;
 
-      // Авто-попытка лонча чуть после отрисовки (ощущается осознанно).
+      // Детект in-app webview, которые игнорят App Links и глушат intent://:
+      // Telegram, Instagram, VK, Facebook, Line + общий маркер Android
+      // WebView ("; wv)").
+      var isInAppWebview =
+        /\b(Telegram|Instagram|VKApp|VKAndroidApp|FB_IAB|FBAN|FBAV|Line)\b/i.test(ua) ||
+        /;\s*wv[);]/i.test(ua);
+
+      if (isInAppWebview) {
+        // ФИКС 1: внешний браузер — ПЕРВАЯ, заметная кнопка; прямой лонч
+        // приложения остаётся, но ВТОРИЧНОЙ кнопкой. Авто-переход на
+        // intent://(package) тут НЕ делаем: в webview он в лучшем случае
+        // тихо глушится, в худшем — заменяет страницу ошибкой
+        // ERR_UNKNOWN_URL_SCHEME, пряча сами кнопки. Видимая надёжная
+        // кнопка «во внешнем браузере» строго лучше рискованной авто-попытки.
+        openExternal.classList.remove('hidden');
+        openApp.classList.remove('primary');
+        openApp.classList.add('secondary');
+        document.getElementById('spinner').classList.add('hidden');
+        document.getElementById('title').textContent =
+          'Откройте во внешнем браузере';
+        document.getElementById('subtitle').textContent =
+          'Встроенное окно (Telegram и пр.) не запускает приложение. Нажмите ' +
+          '«Открыть во внешнем браузере» — или меню «⋯» → «Открыть в ' +
+          'браузере». Дальше приложение откроется само.';
+        return;
+      }
+
+      // Обычный браузер на Android: авто-попытка прямого лонча (как было).
       var started = Date.now();
       var launched = false;
       function launch() {
         if (launched) return;
         launched = true;
         try {
-          window.location.href = intentUrl;
+          window.location.href = appIntent;
         } catch (err) {
           document.getElementById('diag').textContent =
             'Не удалось открыть приложение: ' + (err && err.message);
@@ -206,7 +251,7 @@
       setTimeout(launch, 150);
 
       // Если через 2.5 с мы всё ещё на странице — лонч не сработал
-      // (приложения нет или webview заблокировал intent://). Показываем
+      // (приложения нет или браузер заблокировал intent://). Показываем
       // ручные действия: открыть, продолжить в браузере, скачать.
       setTimeout(function () {
         if (document.visibilityState !== 'visible') return; // приложение открылось → фон

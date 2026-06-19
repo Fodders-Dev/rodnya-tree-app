@@ -5,6 +5,11 @@
 #
 #   sudo deploy/nginx/install_nginx_config.sh
 #
+# ⚠️ ORDER: deploy the WEB release (flutter build web → web deploy) BEFORE
+# running this. The config serves static pages from the web root
+# (/invite/index.html, /oauth/callback/index.html); reloading nginx before
+# those files exist makes those routes 404 until the web deploy lands.
+#
 # What it does:
 #   1. Drops the WebSocket-upgrade map into /etc/nginx/conf.d/.
 #   2. Copies the rodnya site config into sites-available + symlinks
