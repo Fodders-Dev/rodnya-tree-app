@@ -669,6 +669,89 @@ test("terminal call sends a call_cancelled data push so the recipient ring dismi
   }
 });
 
+test("chat avatar falls back to the linked graph-person photo + claim backfills it (BUG 3)", async () => {
+  // FIX BUG 3: фото граф-персоны (person.photoUrl), поставленное ДО
+  // регистрации, и user-аватар (profile.photoUrl) — разные поля. Чат/звонок
+  // резолвили только user-аватар (пустой) → плейсхолдер. Фолбэк берёт фото
+  // связанной персоны; при привязке аккаунта пустой профиль бэкфиллится.
+  const ctx = await startConfiguredTestServer();
+  const personPhoto = "https://cdn.rodnya-tree.test/uploads/person-b.jpg";
+
+  try {
+    const caller = await registerTestUser(ctx, "bug3-a@rodnya.app", "Алиса");
+    const callee = await registerTestUser(ctx, "bug3-b@rodnya.app", "Борис");
+    // У Бориса нет user-аватара (свежая регистрация).
+    const chat = await createDirectChat(ctx, caller.accessToken, callee.user.id);
+
+    // Граф-персона Бориса с фото, связанная по person.userId.
+    const db = await ctx.store._read();
+    db.persons.push({
+      id: "bug3-person-b",
+      treeId: "bug3-tree",
+      userId: callee.user.id,
+      identityId: null,
+      name: "Борис",
+      photoUrl: personPhoto,
+      primaryPhotoUrl: personPhoto,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    });
+    await ctx.store._write(db);
+
+    // (a) Фолбэк: детали чата отдают фото персоны вместо плейсхолдера.
+    const details = await ctx.store.getChatDetails(chat.id);
+    const participantB = details.participants.find(
+      (entry) => entry.userId === callee.user.id,
+    );
+    assert.ok(participantB, "Борис среди участников");
+    assert.equal(participantB.photoUrl, personPhoto);
+
+    // (b) Бэкфилл при привязке аккаунта к граф-персоне (универсальная точка
+    // _attachPersonToIdentity). Готовим персону без userId + identity.
+    const db2 = await ctx.store._read();
+    const claimPerson = {
+      id: "bug3-claim-person",
+      treeId: "bug3-tree",
+      userId: null,
+      identityId: "bug3-identity",
+      name: "Борис",
+      photoUrl: personPhoto,
+      primaryPhotoUrl: personPhoto,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    db2.persons.push(claimPerson);
+    db2.personIdentities = Array.isArray(db2.personIdentities)
+      ? db2.personIdentities
+      : [];
+    const claimIdentity = {
+      id: "bug3-identity",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    db2.personIdentities.push(claimIdentity);
+    const userBefore = db2.users.find((u) => u.id === callee.user.id);
+    assert.ok(
+      !userBefore.profile?.photoUrl,
+      "у Бориса до привязки нет user-аватара",
+    );
+    const attached = ctx.store._attachPersonToIdentity(
+      db2,
+      claimPerson,
+      claimIdentity,
+      callee.user.id,
+    );
+    assert.equal(attached, true);
+    await ctx.store._write(db2);
+
+    const after = await ctx.store._read();
+    const userAfter = after.users.find((u) => u.id === callee.user.id);
+    assert.equal(userAfter.profile.photoUrl, personPhoto);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("group call starts from group chat and creates LiveKit sessions for every participant", async () => {
   const ensuredRooms = [];
   const createdSessions = [];

@@ -6300,6 +6300,19 @@ class FileStore {
       if (user) {
         user.identityId = identity.id;
         user.updatedAt = nowIso();
+        // BUG 3: при привязке аккаунта к граф-персоне бэкфиллим пустой
+        // аватар профиля из фото персоны (поставленного ДО регистрации).
+        // fillIfEmpty — существующий аватар НЕ перетираем. Это единая
+        // точка всех путей линковки (claim-approve / join / auto-link).
+        if (!user.profile) {
+          user.profile = {};
+        }
+        const personPhoto = normalizeNullableString(
+          person.primaryPhotoUrl || person.photoUrl,
+        );
+        if (personPhoto && !normalizeNullableString(user.profile.photoUrl)) {
+          user.profile.photoUrl = personPhoto;
+        }
       }
     }
 
@@ -18130,6 +18143,61 @@ class FileStore {
     return true;
   }
 
+  // BUG 3: фото граф-персоны (person.photoUrl), поставленное человеку ДО
+  // регистрации, и аватар user-аккаунта (profile.photoUrl) — разные поля.
+  // Чат/звонок резолвят аватар из user-профиля (пустой у только что
+  // вошедшего) → плейсхолдер «А», хотя на дереве фото есть. Фолбэк: если
+  // у user аватара нет, берём фото СВЯЗАННОЙ граф-персоны — по прямой
+  // связи person.userId и через identity.claimedByUserId/userId (обе
+  // надёжно покрывают линк user→person).
+  _resolveAvatarUrlForUser(db, userId, profilePhotoUrl) {
+    const direct = normalizeNullableString(profilePhotoUrl);
+    if (direct) {
+      return direct;
+    }
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) {
+      return null;
+    }
+    const persons = Array.isArray(db.persons) ? db.persons : [];
+    const personPhoto = (person) =>
+      normalizeNullableString(person?.primaryPhotoUrl || person?.photoUrl);
+
+    for (const person of persons) {
+      if (person && person.userId === normalizedUserId) {
+        const photo = personPhoto(person);
+        if (photo) {
+          return photo;
+        }
+      }
+    }
+
+    const identities = Array.isArray(db.personIdentities)
+      ? db.personIdentities
+      : [];
+    const linkedIdentityIds = new Set(
+      identities
+        .filter(
+          (identity) =>
+            normalizeNullableString(identity?.claimedByUserId) ===
+              normalizedUserId ||
+            normalizeNullableString(identity?.userId) === normalizedUserId,
+        )
+        .map((identity) => identity.id),
+    );
+    if (linkedIdentityIds.size > 0) {
+      for (const person of persons) {
+        if (person && linkedIdentityIds.has(person.identityId)) {
+          const photo = personPhoto(person);
+          if (photo) {
+            return photo;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   _buildChatDetails(db, chat) {
     const normalizedChat = structuredClone(chat);
     const participantIds = normalizeParticipantIds(chat.participantIds || []);
@@ -18146,7 +18214,12 @@ class FileStore {
             composeDisplayNameFromProfile(user.profile) ||
             user.email ||
             "Пользователь",
-          photoUrl: user.profile?.photoUrl || null,
+          // BUG 3: пустой user-аватар → фолбэк на фото связанной граф-персоны.
+          photoUrl: this._resolveAvatarUrlForUser(
+            db,
+            user.id,
+            user.profile?.photoUrl,
+          ),
           // Last time the user was seen online. Updated on socket
           // disconnect via markUserSeenAt() — used by clients to render
           // "был(а) N минут назад" subtitles. Falls back to user updated/
