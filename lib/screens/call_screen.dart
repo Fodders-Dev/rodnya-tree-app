@@ -988,6 +988,14 @@ class _CallScreenState extends State<CallScreen> {
                             ? _toggleVideoChromeVisibility
                             : null,
                         child: GlassPanel(
+                          // Экран звонка всегда тёмный (Scaffold 0xFF111318),
+                          // но GlassPanel по умолчанию берёт цвет из АМБИЕНТНОЙ
+                          // темы — в светлой теме панель выходит светло-бежевой,
+                          // и жёстко-белые имя/статус на ней не читаются.
+                          // Принудительно тёмное стекло, чтобы белый текст был
+                          // виден независимо от темы устройства.
+                          color: Colors.white.withValues(alpha: 0.10),
+                          borderColor: Colors.white.withValues(alpha: 0.16),
                           borderRadius: BorderRadius.circular(28),
                           padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
                           child: Column(
