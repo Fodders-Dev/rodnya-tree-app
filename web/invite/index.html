@@ -119,8 +119,14 @@
       <a class="button primary hidden" id="open-external" href="#">Открыть во внешнем браузере</a>
       <a class="button primary" id="open-app" href="#">Открыть в приложении</a>
       <a class="button secondary" id="open-web" href="#">Продолжить в браузере</a>
+      <!-- DL fix: apps.rustore.ru/app/… отдаёт 404 (листинг RuStore —
+           черновик). По умолчанию ведём на канонический каталог
+           (www.rustore.ru/catalog/app/… — 200; станет полноценным после
+           публикации). Скрипт апгрейдит href на прямой OTA-apkUrl, когда
+           /v1/app/latest его отдаёт (живой канал сегодня — sideload/OTA).
+           TODO: после публикации листинга можно вести прямо на него. -->
       <a class="button secondary" id="install"
-         href="https://apps.rustore.ru/app/com.ahjkuio.rodnya_family_app"
+         href="https://www.rustore.ru/catalog/app/com.ahjkuio.rodnya_family_app"
          rel="noreferrer">Скачать приложение</a>
     </div>
     <small id="diag"></small>
@@ -207,6 +213,33 @@
 
       openApp.href = appIntent;
       openExternal.href = externalIntent;
+
+      // DL fix: «Скачать приложение» по умолчанию ведёт на RuStore-каталог
+      // (200; листинг — черновик). Живой канал сегодня — sideload/OTA,
+      // поэтому если /v1/app/latest отдаёт прямой apkUrl — апгрейдим кнопку
+      // на прямую загрузку APK (реально работает уже сейчас). Fire-and-forget;
+      // на ошибке/204/CORS остаётся каталог-фолбэк (уже в href). NB: фолбэк
+      // /dl/ из брифа на хосте отсутствует — заменён каноническим каталогом.
+      try {
+        fetch('https://api.rodnya-tree.ru/v1/app/latest', {
+          headers: {accept: 'application/json'},
+        })
+          .then(function (resp) {
+            return resp && resp.ok ? resp.json() : null;
+          })
+          .then(function (data) {
+            var apkUrl =
+              data && typeof data.apkUrl === 'string' ? data.apkUrl.trim() : '';
+            if (apkUrl.indexOf('https://') === 0) {
+              document.getElementById('install').href = apkUrl;
+            }
+          })
+          .catch(function () {
+            // Сеть/CORS/204 — оставляем каталог-фолбэк, который уже в href.
+          });
+      } catch (_) {
+        // То же — каталог-фолбэк уже стоит.
+      }
 
       // Детект in-app webview, которые игнорят App Links и глушат intent://:
       // Telegram, Instagram, VK, Facebook, Line + общий маркер Android
