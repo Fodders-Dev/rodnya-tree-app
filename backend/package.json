@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test",
+    "test": "node --test --test-timeout=30000",
     "migrate:state:postgres": "node scripts/migrate-state-to-postgres.js",
     "migrate:media:s3": "node scripts/migrate-media-to-s3.js"
   },

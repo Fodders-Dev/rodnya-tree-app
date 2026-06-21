@@ -6245,6 +6245,75 @@ class FileStore {
         user.identityId = null;
       }
     }
+
+    // BUG3 follow-up: ретро-бэкфилл аватара профиля для УЖЕ-привязанных
+    // аккаунтов из фото связанной граф-персоны (поставленного ДО
+    // регистрации). Идём здесь, после реконсиляции связей, чтобы линки
+    // были актуальны. Покрывает и существующие связи (Анастасия и пр.).
+    this._backfillUserAvatarsFromPersons(db);
+  }
+
+  // Заполняет пустой profile.photoUrl фотом связанной граф-персоны.
+  // fillIfEmpty — загруженный пользователем аватар НЕ перетираем.
+  // Идемпотентно (трогает только пустые). Связь резолвится и напрямую
+  // (person.userId), и через identity (claimedByUserId/userId). Один проход
+  // O(persons + identities + users).
+  _backfillUserAvatarsFromPersons(db) {
+    const persons = Array.isArray(db.persons) ? db.persons : [];
+    if (persons.length === 0 || !Array.isArray(db.users)) {
+      return;
+    }
+    const personPhoto = (person) =>
+      normalizeNullableString(person?.primaryPhotoUrl || person?.photoUrl);
+
+    const photoByUserId = new Map();
+    const photoByIdentityId = new Map();
+    for (const person of persons) {
+      const photo = personPhoto(person);
+      if (!photo) {
+        continue;
+      }
+      const directUserId = normalizeNullableString(person.userId);
+      if (directUserId && !photoByUserId.has(directUserId)) {
+        photoByUserId.set(directUserId, photo);
+      }
+      const identityId = normalizeNullableString(person.identityId);
+      if (identityId && !photoByIdentityId.has(identityId)) {
+        photoByIdentityId.set(identityId, photo);
+      }
+    }
+
+    const photoByLinkedUserViaIdentity = new Map();
+    for (const identity of Array.isArray(db.personIdentities)
+      ? db.personIdentities
+      : []) {
+      const linkedUserId = normalizeNullableString(
+        identity?.claimedByUserId || identity?.userId,
+      );
+      const photo = photoByIdentityId.get(normalizeNullableString(identity?.id));
+      if (linkedUserId && photo && !photoByLinkedUserViaIdentity.has(linkedUserId)) {
+        photoByLinkedUserViaIdentity.set(linkedUserId, photo);
+      }
+    }
+
+    for (const user of db.users) {
+      if (!user) {
+        continue;
+      }
+      if (!user.profile) {
+        user.profile = {};
+      }
+      if (normalizeNullableString(user.profile.photoUrl)) {
+        continue; // существующий аватар не перетираем
+      }
+      const photo =
+        photoByUserId.get(user.id) ||
+        photoByLinkedUserViaIdentity.get(user.id) ||
+        null;
+      if (photo) {
+        user.profile.photoUrl = photo;
+      }
+    }
   }
 
   _ensureUserIdentity(db, userId) {

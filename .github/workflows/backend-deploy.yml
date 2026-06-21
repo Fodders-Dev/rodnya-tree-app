@@ -21,6 +21,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Bound the whole job so a hung test (e.g. a regressed call latency that
+    # blocks a request) fails CI in minutes instead of burning the runner.
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -37,7 +40,7 @@ jobs:
 
       - name: Run backend tests
         run: |
-          node --test \
+          node --test --test-timeout=30000 \
             backend/test/media-storage.test.js \
             backend/test/app-media-routes.test.js \
             backend/test/api.test.js \

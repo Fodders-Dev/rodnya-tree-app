@@ -535,7 +535,7 @@ test("direct call lifecycle works with backend signaling and webhook updates", a
   }
 });
 
-test("POST /v1/calls answers instantly without waiting on a hanging push (P0)", async () => {
+test("POST /v1/calls answers instantly without waiting on a hanging push (P0)", {timeout: 10000}, async () => {
   // FIX A1/A2: пуш-рассылка ушла в фон, realtime publish + res.json идут
   // ПЕРЕД ней. Мокаем rustore httpClient, который НИКОГДА не резолвится —
   // если бы пуш всё ещё стоял на критическом пути (как до фикса), ответ
@@ -570,15 +570,36 @@ test("POST /v1/calls answers instantly without waiting on a hanging push (P0)", 
       platform: "android",
     });
 
+    // Item 3 (test-hardening): гонка с явным 3с-таймаутом. Если баг
+    // вернётся и ответ снова повиснет за пушем, тест упадёт ЧИСТО за 3с с
+    // понятным сообщением, а не зависнет до undici headers-timeout (~5мин),
+    // засоряя весь прогон. AbortController обрывает повисший fetch.
+    const controller = new AbortController();
+    let raceTimer;
     const started = Date.now();
-    const response = await fetch(`${ctx.baseUrl}/v1/calls`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${caller.accessToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({chatId: chat.id, mediaMode: "audio"}),
-    });
+    const response = await Promise.race([
+      fetch(`${ctx.baseUrl}/v1/calls`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${caller.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({chatId: chat.id, mediaMode: "audio"}),
+        signal: controller.signal,
+      }),
+      new Promise((_, reject) => {
+        raceTimer = setTimeout(() => {
+          controller.abort();
+          reject(
+            new Error(
+              "POST /v1/calls did not answer within 3s — push likely back " +
+                "on the critical path (P0 regressed)",
+            ),
+          );
+        }, 3000);
+      }),
+    ]);
+    clearTimeout(raceTimer);
     const elapsed = Date.now() - started;
     assert.equal(response.status, 201);
     const payload = await response.json();
@@ -595,6 +616,53 @@ test("POST /v1/calls answers instantly without waiting on a hanging push (P0)", 
   } finally {
     await stopTestServer(ctx);
   }
+});
+
+test("A3: aborted/timed-out VKPNS fetch marks the push delivery failed (not hung)", {timeout: 10000}, async () => {
+  // FIX A3: AbortSignal.timeout обрывает повисший VKPNS-fetch (мёртвый
+  // токен / убитая Huawei). Реджект (как от abort) должен пометить доставку
+  // 'failed' с текстом ошибки — быстро, без бесконечного ожидания.
+  const updates = [];
+  const fakeStore = {
+    async listPushDevices() {
+      return [
+        {id: "dev-1", provider: "rustore", token: "tok-1", platform: "android"},
+      ];
+    },
+    async createPushDelivery(input) {
+      return {id: "del-1", status: "queued", ...input};
+    },
+    async updatePushDelivery(id, patch) {
+      updates.push({id, patch});
+      return {id, ...patch};
+    },
+  };
+  // Имитируем срабатывание AbortSignal.timeout: fetch реджектит TimeoutError.
+  const abortError = new Error("The operation was aborted due to timeout");
+  abortError.name = "TimeoutError";
+  const gateway = new PushGateway({
+    store: fakeStore,
+    config: {
+      rustorePushProjectId: "proj",
+      rustorePushServiceToken: "token",
+    },
+    httpClient: async () => {
+      throw abortError;
+    },
+  });
+
+  await gateway.dispatchNotification({
+    id: "notif-1",
+    userId: "user-1",
+    type: "call_invite",
+    title: "Caller",
+    body: "",
+    data: {callId: "call-1"},
+  });
+
+  const failed = updates.find((entry) => entry.patch.status === "failed");
+  assert.ok(failed, "доставка помечена failed");
+  assert.match(failed.patch.lastError, /abort|timeout/i);
 });
 
 test("terminal call sends a call_cancelled data push so the recipient ring dismisses (BUG 2)", async () => {
@@ -747,6 +815,67 @@ test("chat avatar falls back to the linked graph-person photo + claim backfills 
     const after = await ctx.store._read();
     const userAfter = after.users.find((u) => u.id === callee.user.id);
     assert.equal(userAfter.profile.photoUrl, personPhoto);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("retro-backfill fills empty profile avatars from linked person photos — direct + identity link (BUG3 follow-up)", async () => {
+  // Item 1(б): уже-привязанные аккаунты (Анастасия и пр.), у кого фото есть
+  // на граф-персоне, но profile.photoUrl пуст, получают аватар при
+  // реконсиляции связей. Покрываем обе связи: person.userId и identity.
+  const ctx = await startConfiguredTestServer();
+  const directPhoto = "https://cdn.rodnya-tree.test/uploads/direct.jpg";
+  const identityPhoto = "https://cdn.rodnya-tree.test/uploads/identity.jpg";
+  const keptPhoto = "https://cdn.rodnya-tree.test/uploads/kept.jpg";
+
+  try {
+    const direct = await registerTestUser(ctx, "retro-direct@rodnya.app", "Direct");
+    const viaId = await registerTestUser(ctx, "retro-identity@rodnya.app", "Identity");
+    const kept = await registerTestUser(ctx, "retro-kept@rodnya.app", "Kept");
+
+    const db = await ctx.store._read();
+    const ts = new Date(0).toISOString();
+    // Прямая связь person.userId.
+    db.persons.push({
+      id: "retro-p-direct", treeId: "retro-tree", userId: direct.user.id,
+      identityId: null, name: "Direct", photoUrl: directPhoto,
+      primaryPhotoUrl: directPhoto, createdAt: ts, updatedAt: ts,
+    });
+    // Связь через identity.claimedByUserId.
+    db.persons.push({
+      id: "retro-p-identity", treeId: "retro-tree", userId: null,
+      identityId: "retro-identity-1", name: "Identity", photoUrl: identityPhoto,
+      primaryPhotoUrl: identityPhoto, createdAt: ts, updatedAt: ts,
+    });
+    db.personIdentities = Array.isArray(db.personIdentities)
+      ? db.personIdentities
+      : [];
+    db.personIdentities.push({
+      id: "retro-identity-1", userId: viaId.user.id,
+      claimedByUserId: viaId.user.id, createdAt: ts, updatedAt: ts,
+    });
+    // Уже есть загруженный аватар — НЕ перетираем.
+    db.persons.push({
+      id: "retro-p-kept", treeId: "retro-tree", userId: kept.user.id,
+      identityId: null, name: "Kept", photoUrl: "https://cdn.test/person-kept.jpg",
+      primaryPhotoUrl: "https://cdn.test/person-kept.jpg", createdAt: ts, updatedAt: ts,
+    });
+    const keptUser = db.users.find((u) => u.id === kept.user.id);
+    keptUser.profile = keptUser.profile || {};
+    keptUser.profile.photoUrl = keptPhoto;
+    await ctx.store._write(db);
+
+    // Реконсиляция связей запускает ретро-бэкфилл.
+    const db2 = await ctx.store._read();
+    ctx.store._reconcilePersonIdentities(db2);
+    await ctx.store._write(db2);
+
+    const after = await ctx.store._read();
+    const find = (id) => after.users.find((u) => u.id === id).profile?.photoUrl;
+    assert.equal(find(direct.user.id), directPhoto, "прямая связь бэкфиллена");
+    assert.equal(find(viaId.user.id), identityPhoto, "identity-связь бэкфиллена");
+    assert.equal(find(kept.user.id), keptPhoto, "существующий аватар не перетёрт");
   } finally {
     await stopTestServer(ctx);
   }

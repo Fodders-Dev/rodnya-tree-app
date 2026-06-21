@@ -2512,6 +2512,14 @@ function createApp({
     const linkedProfile = dossier.linkedProfile
       ? sanitizeProfile(dossier.linkedProfile, viewerContext)
       : null;
+    // BUG3 follow-up: экран профиля читает аватар из user-профиля (пустой у
+    // только что вошедшего), но фото есть на граф-персоне (поставлено ДО
+    // регистрации). Тот же фолбэк, что в чат/звонок-маппинге — read-time
+    // safety поверх ретро-бэкфилла (на случай фото, добавленного персоне
+    // уже ПОСЛЕ привязки).
+    if (linkedProfile && !linkedProfile.photoUrl && mappedPerson.photoUrl) {
+      linkedProfile.photoUrl = mappedPerson.photoUrl;
+    }
     const contributionPolicy = normalizeProfileContributionPolicy(
       linkedProfile?.profileContributionPolicy,
     );
