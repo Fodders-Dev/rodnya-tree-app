@@ -597,6 +597,78 @@ test("POST /v1/calls answers instantly without waiting on a hanging push (P0)", 
   }
 });
 
+test("terminal call sends a call_cancelled data push so the recipient ring dismisses (BUG 2)", async () => {
+  // FIX BUG 2: на терминальном состоянии (cancelled/missed/ended/rejected)
+  // получателю шлётся data-пуш call_cancelled/call_ended с callId — нативный
+  // RodnyaPushService снимет full-screen уведомку у убитого приложения и,
+  // если звонок не принят, покажет «Пропущенный».
+  const rustoreRequests = [];
+  const ctx = await startConfiguredTestServer({
+    liveKitService: createFakeLiveKitService(),
+    configOverrides: {
+      rustorePushProjectId: "test-project",
+      rustorePushServiceToken: "test-token",
+    },
+    pushGatewayFactory: ({store, config}) =>
+      new PushGateway({
+        store,
+        config,
+        httpClient: async (url, options) => {
+          rustoreRequests.push(JSON.parse(String(options?.body || "{}")));
+          return {ok: true, status: 200, text: async () => "{}"};
+        },
+      }),
+  });
+
+  try {
+    const caller = await registerTestUser(ctx, "bug2-caller@rodnya.app", "Caller");
+    const callee = await registerTestUser(ctx, "bug2-callee@rodnya.app", "Callee");
+    const chat = await createDirectChat(ctx, caller.accessToken, callee.user.id);
+    await registerPushDevice(ctx, callee.accessToken, {
+      provider: "rustore",
+      token: "bug2-callee-token",
+      platform: "android",
+    });
+
+    const started = await startDirectCall(ctx, caller.accessToken, chat.id, "audio");
+
+    // Звонящий отменяет ещё звонящий вызов → терминальное «cancelled».
+    const cancelResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${started.call.id}/cancel`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${caller.accessToken}`,
+          "content-type": "application/json",
+        },
+      },
+    );
+    assert.equal(cancelResponse.status, 200);
+
+    const waitFor = async (predicate, timeoutMs = 3000) => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        const result = predicate();
+        if (result) return result;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error("timed out waiting for call_cancelled push");
+    };
+
+    const cancelPush = await waitFor(() =>
+      rustoreRequests.find((r) => r?.message?.data?.event === "call_cancelled"),
+    );
+    assert.equal(cancelPush.message.data.callId, started.call.id);
+    assert.equal(cancelPush.message.data.callState, "cancelled");
+    // data-only: нет message.notification — нативный код сам снимает/рисует.
+    assert.equal(cancelPush.message.notification, undefined);
+    // несёт имя звонящего для «Пропущенный звонок от …».
+    assert.equal(cancelPush.message.data.callerName, "Caller");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("group call starts from group chat and creates LiveKit sessions for every participant", async () => {
   const ensuredRooms = [];
   const createdSessions = [];

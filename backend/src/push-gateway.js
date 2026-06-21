@@ -153,7 +153,7 @@ class PushGateway {
   }
 
   _buildWebPushPayload(notification) {
-    const isIncomingCall = this._isIncomingCallNotification(notification);
+    const isIncomingCall = this._isCallSignalNotification(notification);
     const payload = {
       title: notification.title || "Родня",
       body: notification.body || "",
@@ -163,7 +163,7 @@ class PushGateway {
     };
 
     if (isIncomingCall) {
-      payload.event = "incoming_call";
+      payload.event = this._callEventName(notification);
       payload.urgency = "high";
       payload.ttlSeconds = this._notificationTtlSeconds(notification);
       payload.timeSensitive = true;
@@ -226,7 +226,7 @@ class PushGateway {
     // For everything else (chats, post replies, etc.) we keep the
     // notification field so the OS displays a clean heads-up even
     // when our process is dead.
-    const isIncomingCall = this._isIncomingCallNotification(notification);
+    const isIncomingCall = this._isCallSignalNotification(notification);
     const androidConfig = {
       priority: isIncomingCall ? "HIGH" : "NORMAL",
       ttl: `${this._notificationTtlSeconds(notification)}s`,
@@ -302,7 +302,7 @@ class PushGateway {
   }
 
   _buildRustoreDataPayload(notification) {
-    const isIncomingCall = this._isIncomingCallNotification(notification);
+    const isIncomingCall = this._isCallSignalNotification(notification);
     const payload = {
       notificationId: notification.id,
       type: notification.type || "generic",
@@ -322,7 +322,7 @@ class PushGateway {
       payload.urgency = "high";
       payload.ttlSeconds = String(this._notificationTtlSeconds(notification));
       payload.timeSensitive = "true";
-      payload.event = "incoming_call";
+      payload.event = this._callEventName(notification);
       payload.collapseKey = this._notificationTag(notification);
       // Calls go data-only (see _deliverRustorePush) — when we drop
       // `message.notification` the native side loses access to
@@ -348,20 +348,40 @@ class PushGateway {
       data: notification.data || {},
     };
 
-    if (this._isIncomingCallNotification(notification)) {
+    if (this._isCallSignalNotification(notification)) {
       payload.priority = "high";
       payload.urgency = "high";
       payload.ttlSeconds = this._notificationTtlSeconds(notification);
       payload.timeSensitive = true;
-      payload.event = "incoming_call";
+      payload.event = this._callEventName(notification);
     }
 
     return payload;
   }
 
-  _isIncomingCallNotification(notification) {
+  // Call-control pushes go data-only + high-priority so they wake the
+  // native RodnyaPushService even when the app is killed: incoming call
+  // (full-screen ring) AND terminal signals (call_cancelled/call_ended)
+  // that dismiss the ringing notification / post a missed-call entry.
+  _isCallSignalNotification(notification) {
+    return this._callEventName(notification) != null;
+  }
+
+  // Maps a call notification type to the client-facing push `event`.
+  // BUG 2: terminal call states reuse the data-only call transport but
+  // carry their own event so the client can dismiss / show «missed».
+  _callEventName(notification) {
     const type = String(notification?.type || "").trim();
-    return type === "call_invite" || type === "call";
+    if (type === "call_invite" || type === "call") {
+      return "incoming_call";
+    }
+    if (type === "call_cancelled") {
+      return "call_cancelled";
+    }
+    if (type === "call_ended") {
+      return "call_ended";
+    }
+    return null;
   }
 
   /**
@@ -380,7 +400,7 @@ class PushGateway {
    */
   _androidChannelId(notification) {
     const type = String(notification?.type || "").trim();
-    if (this._isIncomingCallNotification(notification)) {
+    if (this._isCallSignalNotification(notification)) {
       return "calls";
     }
     if (type === "chat_message" || type === "chat") {
@@ -402,7 +422,7 @@ class PushGateway {
   }
 
   _notificationUrgency(notification) {
-    return this._isIncomingCallNotification(notification) ? "high" : "normal";
+    return this._isCallSignalNotification(notification) ? "high" : "normal";
   }
 
   _notificationTtlSeconds(notification) {
@@ -411,11 +431,11 @@ class PushGateway {
     // still avoids stale all-day call alerts but gives the backend/OS enough
     // room to deliver while the call timeout/reconciliation path can cancel
     // terminal calls.
-    return this._isIncomingCallNotification(notification) ? 90 : 3600;
+    return this._isCallSignalNotification(notification) ? 90 : 3600;
   }
 
   _notificationTag(notification) {
-    if (this._isIncomingCallNotification(notification)) {
+    if (this._isCallSignalNotification(notification)) {
       const callId = notification?.data?.callId;
       if (callId != null && String(callId).trim()) {
         return `call:${String(callId).trim()}`;

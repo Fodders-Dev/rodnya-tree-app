@@ -19,15 +19,33 @@ class IncomingCallWatcher with WidgetsBindingObserver {
     Stream<CustomApiRealtimeEvent>? realtimeEvents,
     Duration pollInterval = const Duration(seconds: 5),
     IncomingCallFallbackTimerFactory? timerFactory,
+    Future<void> Function(String callId)? onTerminalCallState,
   })  : _coordinator = coordinator,
         _realtimeEvents = realtimeEvents ?? realtimeService?.events,
         _pollInterval = pollInterval,
-        _timerFactory = timerFactory ?? Timer.new;
+        _timerFactory = timerFactory ?? Timer.new,
+        _onTerminalCallState = onTerminalCallState;
 
   final CallCoordinatorService _coordinator;
   final Stream<CustomApiRealtimeEvent>? _realtimeEvents;
   final Duration _pollInterval;
   final IncomingCallFallbackTimerFactory _timerFactory;
+
+  // BUG 2: на терминальном call.state.updated снимаем входящую уведомку
+  // звонка. Это catch-all поверх call_runtime_host (который снимает по
+  // currentCall координатора): покрывает случай, когда уведомка уже
+  // показана, а звонок в координаторе ещё/уже не «текущий». «Пропущенный»
+  // показывает нативный RodnyaPushService по data-пушу — здесь только
+  // снимаем, чтобы не дублировать.
+  final Future<void> Function(String callId)? _onTerminalCallState;
+
+  static const Set<String> _terminalCallStates = <String>{
+    'ended',
+    'missed',
+    'rejected',
+    'cancelled',
+    'failed',
+  };
 
   StreamSubscription<CustomApiRealtimeEvent>? _realtimeSubscription;
   Timer? _fallbackTimer;
@@ -85,6 +103,31 @@ class IncomingCallWatcher with WidgetsBindingObserver {
     if (event.type == 'connection.disconnected') {
       _realtimeDisconnected = true;
       _updateFallbackPolling();
+      return;
+    }
+
+    if (event.type == 'call.state.updated') {
+      final call = event.call;
+      final callId = call?['id']?.toString().trim();
+      final state = call?['state']?.toString().trim();
+      if (callId != null &&
+          callId.isNotEmpty &&
+          state != null &&
+          _terminalCallStates.contains(state)) {
+        unawaited(_dismissTerminalCallNotification(callId));
+      }
+    }
+  }
+
+  Future<void> _dismissTerminalCallNotification(String callId) async {
+    final dismiss = _onTerminalCallState;
+    if (dismiss == null) {
+      return;
+    }
+    try {
+      await dismiss(callId);
+    } catch (_) {
+      // Снятие уведомки не должно ломать обработку realtime.
     }
   }
 

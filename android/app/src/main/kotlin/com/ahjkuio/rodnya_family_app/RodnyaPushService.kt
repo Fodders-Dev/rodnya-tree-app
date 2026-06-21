@@ -69,6 +69,14 @@ class RodnyaPushService : RuStoreMessagingService() {
         // 3) Custom call-invite full-screen notification.
         val type = (message.data["type"] ?: extractTypeFromPayload(message.data["payload"]))
             ?.trim().orEmpty()
+        // BUG 2: терминальные сигналы звонка — снять зависшую входящую
+        // уведомку (full-screen ring) и, если звонок не приняли, показать
+        // «Пропущенный». Это вытаскивает убитое приложение из состояния
+        // «звонок давно кончился, а уведомка висит».
+        if (type == "call_cancelled" || type == "call_ended") {
+            handleCallTerminal(message, type)
+            return
+        }
         if (type != "call_invite" && type != "call") {
             return
         }
@@ -237,6 +245,91 @@ class RodnyaPushService : RuStoreMessagingService() {
         // the existing notification instead of stacking.
         val notificationId = callId.hashCode() and 0x7fffffff
         manager.notify(notificationId, builder.build())
+    }
+
+    // BUG 2: терминальный data-пуш (call_cancelled / call_ended). Снимаем
+    // входящую уведомку звонка (тот же стабильный id, что в
+    // showIncomingCallNotification) и, если звонок не был принят
+    // (callState = missed/cancelled), показываем «Пропущенный звонок».
+    // call_ended (соединение состоялось) и rejected/failed — только снять.
+    private fun handleCallTerminal(message: RemoteMessage, type: String) {
+        val callId = (message.data["callId"]
+            ?: extractFromPayload(message.data["payload"], "callId"))
+            ?.trim().orEmpty()
+        if (callId.isEmpty()) {
+            return
+        }
+        val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
+            as? NotificationManager ?: return
+
+        val notificationId = callId.hashCode() and 0x7fffffff
+        manager.cancel(notificationId)
+
+        if (type == "call_ended") {
+            return
+        }
+
+        val callState = (message.data["callState"]
+            ?: extractFromPayload(message.data["payload"], "callState"))
+            ?.trim().orEmpty()
+        // Только реально пропущенные: missed (не успел) и cancelled (звонящий
+        // бросил до ответа). rejected (сам отклонил) / failed — без «пропущен».
+        if (callState != "missed" && callState != "cancelled") {
+            return
+        }
+
+        val callerName = (
+            message.data["callerName"]
+                ?: message.notification?.title
+                ?: extractFromPayload(message.data["payload"], "callerName")
+            )?.trim().orEmpty().ifEmpty { "Звонок" }
+        val isVideo = message.data["isVideo"] == "true" ||
+            message.data["mediaMode"] == "video" ||
+            extractFromPayload(message.data["payload"], "mediaMode") == "video"
+
+        showMissedCallNotification(callId, callerName, isVideo)
+    }
+
+    private fun showMissedCallNotification(
+        callId: String,
+        callerName: String,
+        isVideo: Boolean,
+    ) {
+        val context = applicationContext
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE)
+            as? NotificationManager ?: return
+
+        val openPendingIntent = buildActionPendingIntent(
+            context = context,
+            action = "open",
+            callId = callId,
+            chatId = null,
+            isVideo = isVideo,
+            requestCodeOffset = 4,
+        )
+        val iconResId = getNotificationIconResId(context)
+        val text = if (isVideo) "Пропущенный видеозвонок" else "Пропущенный звонок"
+
+        // SOCIAL-канал (IMPORTANCE_DEFAULT) — уведомление без повторного
+        // звонка/full-screen; пропущенный не должен снова «звонить».
+        val builder = NotificationCompat.Builder(
+            context,
+            RodnyaNotificationChannels.SOCIAL_ID,
+        )
+            .setSmallIcon(iconResId)
+            .setColor(context.getColor(R.color.colorAccent))
+            .setContentTitle(callerName)
+            .setContentText(text)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setAutoCancel(true)
+            .setContentIntent(openPendingIntent)
+
+        // Отдельный id от входящей (которую только что сняли), чтобы
+        // «пропущенный» не схлопнулся с её удалением.
+        val missedId = (callId.hashCode() and 0x7fffffff) xor 0x4D495353
+        manager.notify(missedId, builder.build())
     }
 
     private fun buildActionPendingIntent(

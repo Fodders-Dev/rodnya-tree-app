@@ -46,6 +46,50 @@ void main() {
     coordinator.dispose();
   });
 
+  test(
+      'IncomingCallWatcher dismisses the call notification on a terminal '
+      'realtime update (BUG 2)', () async {
+    final realtimeEvents = StreamController<CustomApiRealtimeEvent>.broadcast();
+    final service = _IncomingCallService(activeCall: null);
+    final coordinator = CallCoordinatorService(callService: service);
+    final dismissed = <String>[];
+    final watcher = IncomingCallWatcher(
+      coordinator: coordinator,
+      realtimeEvents: realtimeEvents.stream,
+      onTerminalCallState: (callId) async => dismissed.add(callId),
+    )..start();
+
+    await _settle();
+
+    // Терминальный апдейт → снимаем входящую уведомку этого звонка.
+    realtimeEvents.add(
+      const CustomApiRealtimeEvent(
+        type: 'call.state.updated',
+        payload: <String, dynamic>{
+          'call': <String, dynamic>{'id': 'call-77', 'state': 'cancelled'},
+        },
+      ),
+    );
+    await _settle();
+    expect(dismissed, <String>['call-77']);
+
+    // Не-терминальный апдейт уведомку НЕ снимает.
+    realtimeEvents.add(
+      const CustomApiRealtimeEvent(
+        type: 'call.state.updated',
+        payload: <String, dynamic>{
+          'call': <String, dynamic>{'id': 'call-77', 'state': 'ringing'},
+        },
+      ),
+    );
+    await _settle();
+    expect(dismissed, <String>['call-77']);
+
+    await watcher.dispose();
+    await realtimeEvents.close();
+    coordinator.dispose();
+  });
+
   test('IncomingCallWatcher polls active call while realtime is disconnected',
       () async {
     final realtimeEvents = StreamController<CustomApiRealtimeEvent>.broadcast();

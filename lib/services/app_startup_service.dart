@@ -290,6 +290,15 @@ class AppStartupService implements AppStartupServiceInterface {
     final incomingCallWatcher = IncomingCallWatcher(
       coordinator: callCoordinatorService,
       realtimeService: customApiRealtimeService,
+      // BUG 2: терминальный звонок по realtime → снять входящую уведомку
+      // (lazy: notification-сервис регистрируется ниже, а колбэк зовётся
+      // только при событии — к тому моменту он уже есть).
+      onTerminalCallState: (callId) async {
+        if (_getIt.isRegistered<CustomApiNotificationService>()) {
+          await _getIt<CustomApiNotificationService>()
+              .dismissCallNotification(callId);
+        }
+      },
     )..start();
     _registerOrReplaceSingleton<IncomingCallWatcher>(
       incomingCallWatcher,

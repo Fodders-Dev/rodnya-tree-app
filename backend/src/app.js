@@ -218,6 +218,53 @@ function createApp({
           }),
         );
       }
+      // BUG 2: снимаем входящую уведомку звонка у получателей. Realtime
+      // publish выше доходит только до живого WS — у убитого приложения
+      // нативная full-screen уведомка зависала бы. Шлём data-пуш
+      // call_cancelled/call_ended (через push-gateway) — нативный
+      // RodnyaPushService снимет уведомку и, если звонок не принят,
+      // выложит «Пропущенный».
+      await dispatchCallTerminalSignal(call);
+    }
+  }
+
+  // BUG 2: терминальный сигнал звонка получателям (НЕ инициатору — у него
+  // не было входящей уведомки). data-пуш в фоне (awaitPush:false, как P0):
+  // не держит обработчик, и недоступное устройство не тормозит остальных.
+  async function dispatchCallTerminalSignal(call) {
+    const state = String(call?.state || "").trim();
+    const type = state === "ended" ? "call_ended" : "call_cancelled";
+    const initiatorId = String(call.initiatorId || "").trim();
+    let callerName = "Звонок";
+    if (initiatorId) {
+      try {
+        const initiator = await store.findUserById(initiatorId);
+        if (initiator) {
+          callerName = displayNameForCallParticipant(initiator);
+        }
+      } catch (_) {
+        // best-effort — без имени покажем дефолтный заголовок
+      }
+    }
+    const recipients = (call.participantIds || [])
+      .map((id) => String(id || "").trim())
+      .filter((id) => id && id !== initiatorId);
+    for (const recipientId of recipients) {
+      await createAndDispatchNotification({
+        userId: recipientId,
+        type,
+        title: callerName,
+        body: "",
+        data: {
+          callId: call.id,
+          chatId: call.chatId,
+          callState: state,
+          mediaMode: call.mediaMode,
+        },
+        // Контрольный сигнал, не элемент списка уведомлений.
+        silent: true,
+        awaitPush: false,
+      });
     }
   }
 
