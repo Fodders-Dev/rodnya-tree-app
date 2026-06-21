@@ -960,7 +960,12 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
 
     await _plugin.show(
-      id: callId.hashCode,
+      // NTV-3: тот же id, что у нативной уведомки звонка
+      // (RodnyaPushService/RodnyaTelecomBridge считают
+      // `callId.hashCode() and 0x7fffffff` по Java-алгоритму). Dart
+      // String.hashCode даёт ДРУГОЕ число → снятие с killed-пуша или
+      // натива промахнулось бы мимо plugin-уведомки. Считаем Java-совместимо.
+      id: _androidCallNotificationId(callId),
       title: resolvedCallerName,
       body: body,
       // Calls go on the dedicated «calls» channel — bypasses DND,
@@ -995,9 +1000,28 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
     await initialize();
     await _androidIncomingCallService?.dismissCall(callId);
-    // 21.x switched cancel to a named-arg form too.
-    await _plugin.cancel(id: callId.hashCode);
+    // 21.x switched cancel to a named-arg form too. NTV-3: тот же
+    // Java-совместимый id, что и при показе/в нативе.
+    await _plugin.cancel(id: _androidCallNotificationId(callId));
   }
+
+  /// NTV-3: id уведомки звонка, СОВПАДАЮЩИЙ с нативным
+  /// (`callId.hashCode() and 0x7fffffff` в Kotlin — алгоритм Java
+  /// String.hashCode). Dart `String.hashCode` другой, поэтому считаем
+  /// Java-хэш руками: h = 31*h + char, по модулю 32 бит, затем срезаем
+  /// знаковый бит (& 0x7fffffff). Тогда снятие через flutter_local_-
+  /// notifications бьёт ровно по той же уведомке, что показал/снимает натив.
+  static int _androidCallNotificationId(String callId) {
+    var hash = 0;
+    for (final unit in callId.codeUnits) {
+      hash = (31 * hash + unit) & 0xFFFFFFFF; // держим младшие 32 бита
+    }
+    return hash & 0x7FFFFFFF;
+  }
+
+  @visibleForTesting
+  static int debugAndroidCallNotificationId(String callId) =>
+      _androidCallNotificationId(callId);
 
   /// Снимает system-уведомление для конкретного чата. Зовётся когда
   /// юзер открывает экран чата — старая нотификация в шторке больше

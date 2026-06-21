@@ -42,6 +42,38 @@ void main() {
     await GetIt.I.reset();
   });
 
+  // NTV-3: id уведомки звонка, которым flutter_local_notifications
+  // показывает/снимает фолбэк-уведомку, ДОЛЖЕН совпадать с нативным
+  // (`callId.hashCode() and 0x7fffffff` в Kotlin — алгоритм Java
+  // String.hashCode). Иначе снятие с killed-пуша/натива промахнётся.
+  group('NTV-3 call notification id (Java String.hashCode parity)', () {
+    test('matches known Java String.hashCode values', () {
+      int id(String s) =>
+          CustomApiNotificationService.debugAndroidCallNotificationId(s);
+      // Эталонные значения Java "<s>".hashCode() (& 0x7fffffff — все
+      // неотрицательные, маска не меняет их).
+      expect(id(''), 0);
+      expect(id('a'), 97);
+      expect(id('abc'), 96354);
+      expect(id('test'), 3556498);
+      expect(id('Hello'), 69609650);
+    });
+
+    test('masks the sign bit to a non-negative 31-bit id', () {
+      for (final callId in <String>[
+        '550e8400-e29b-41d4-a716-446655440000',
+        'call_${'x' * 64}',
+        'звонок-кириллица-id',
+        'a' * 200,
+      ]) {
+        final id =
+            CustomApiNotificationService.debugAndroidCallNotificationId(callId);
+        expect(id, greaterThanOrEqualTo(0));
+        expect(id, lessThanOrEqualTo(0x7FFFFFFF));
+      }
+    });
+  });
+
   test(
     'CustomApiNotificationService treats call_invite as incoming call signal',
     () async {
