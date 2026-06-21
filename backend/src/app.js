@@ -2502,6 +2502,11 @@ function createApp({
     data,
     silent = false,
     targetSessionPublicId = null,
+    // FIX A2: latency-чувствительные пути (звонки) ставят awaitPush:false —
+    // запись уведомления в БД + realtime остаются синхронными (быстро,
+    // онлайн-клиент уже звенит через них), а МЕДЛЕННЫЙ HTTP-пуш (VKPNS на
+    // мёртвый токен) уходит в фон и не держит ответ обработчика.
+    awaitPush = true,
   }) {
     const notification = await store.createNotification({
       userId,
@@ -2525,9 +2530,16 @@ function createApp({
       },
       {sessionPublicId: targetSessionPublicId},
     );
-    await resolvedPushGateway.dispatchNotification(notification, {
+    const pushDispatch = resolvedPushGateway.dispatchNotification(notification, {
       targetSessionPublicId,
     });
+    if (awaitPush) {
+      await pushDispatch;
+    } else {
+      Promise.resolve(pushDispatch).catch((error) =>
+        console.error("[push] background dispatch failed", error),
+      );
+    }
 
     return mappedNotification;
   }
@@ -2924,27 +2936,12 @@ function createApp({
       return;
     }
 
-    const callerName = displayNameForCallParticipant(req.auth.user);
-    const isGroupCall = participantIds.length > 2;
-    for (const inviteeId of participantIds) {
-      if (inviteeId === req.auth.user.id) {
-        continue;
-      }
-      await createAndDispatchNotification({
-        userId: inviteeId,
-        type: "call_invite",
-        title: callerName,
-        body: isGroupCall
-          ? (mediaMode === "video" ? "Групповой видеозвонок" : "Групповой аудиозвонок")
-          : (mediaMode === "video" ? "Видеозвонок" : "Аудиозвонок"),
-        data: {
-          chatId,
-          callId: call.id,
-          mediaMode,
-        },
-      });
-    }
-
+    // FIX A1 (P0 latency): realtimeHub publish онлайн-получателям ИДЁТ
+    // ПЕРВЫМ — in-memory WS доставляет звонок мгновенно и не должен стоять
+    // за последовательной рассылкой HTTP-пушей. Раньше цикл пушей (await
+    // на VKPNS-fetch без таймаута к мёртвому токену) висел до 30с, и из-за
+    // этого и звонящий (ждёт ответ POST), и онлайн-получатель (publish был
+    // ПОСЛЕ цикла) получали звонок с задержкой.
     const originatedSessionId = String(call.originatedBySessionId || "").trim();
     for (const participantId of call.participantIds || []) {
       realtimeHub?.publishToUser(participantId, ({sessionPublicId}) => {
@@ -2972,6 +2969,35 @@ function createApp({
     });
     scheduleCallInviteTimeout(call);
 
+    // FIX A2: запись уведомления (createNotification + realtime) синхронная
+    // и быстрая, а МЕДЛЕННЫЙ HTTP-пуш уходит в фон (awaitPush:false) — мёртвый
+    // токен больше не держит ответ. Последовательно (не Promise.all) — у
+    // FileStore read-modify-write, параллельные записи затирали бы друг друга.
+    const callerName = displayNameForCallParticipant(req.auth.user);
+    const isGroupCall = participantIds.length > 2;
+    for (const inviteeId of participantIds) {
+      if (inviteeId === req.auth.user.id) {
+        continue;
+      }
+      await createAndDispatchNotification({
+        userId: inviteeId,
+        type: "call_invite",
+        title: callerName,
+        body: isGroupCall
+          ? (mediaMode === "video" ? "Групповой видеозвонок" : "Групповой аудиозвонок")
+          : (mediaMode === "video" ? "Видеозвонок" : "Аудиозвонок"),
+        data: {
+          chatId,
+          callId: call.id,
+          mediaMode,
+        },
+        awaitPush: false,
+      });
+    }
+
+    // Отвечаем сразу — звонящий (custom_api_call_service ждёт ответ POST)
+    // показывает экран мгновенно; онлайн-получатель уже зазвенел по
+    // realtime-публикации выше, не дожидаясь HTTP-пушей.
     res.status(201).json({
       call: mapCallRecord(call, {
         viewerUserId: req.auth.user.id,
@@ -3041,6 +3067,19 @@ function createApp({
 
     const callerName = displayNameForCallParticipant(req.auth.user);
     const isGroupCall = callParticipantIds.length > 2;
+    // FIX A2: realtime publish мгновенно онлайн-получателям…
+    for (const inviteeId of recipientIds) {
+      realtimeHub?.publishToUser(inviteeId, ({sessionPublicId}) => ({
+        type: "call.invite.created",
+        call: mapCallRecord(call, {
+          viewerUserId: inviteeId,
+          viewerSessionId: sessionPublicId,
+        }),
+      }));
+    }
+
+    // …запись уведомления синхронно, медленный HTTP-пуш в фоне
+    // (awaitPush:false). Тот же паттерн, что и POST /v1/calls.
     for (const inviteeId of recipientIds) {
       await createAndDispatchNotification({
         userId: inviteeId,
@@ -3054,14 +3093,8 @@ function createApp({
           callId: call.id,
           mediaMode: call.mediaMode,
         },
+        awaitPush: false,
       });
-      realtimeHub?.publishToUser(inviteeId, ({sessionPublicId}) => ({
-        type: "call.invite.created",
-        call: mapCallRecord(call, {
-          viewerUserId: inviteeId,
-          viewerSessionId: sessionPublicId,
-        }),
-      }));
     }
 
     logCallEvent("invite.nudged", call, {

@@ -535,6 +535,68 @@ test("direct call lifecycle works with backend signaling and webhook updates", a
   }
 });
 
+test("POST /v1/calls answers instantly without waiting on a hanging push (P0)", async () => {
+  // FIX A1/A2: пуш-рассылка ушла в фон, realtime publish + res.json идут
+  // ПЕРЕД ней. Мокаем rustore httpClient, который НИКОГДА не резолвится —
+  // если бы пуш всё ещё стоял на критическом пути (как до фикса), ответ
+  // POST висел бы (≈30с в проде, в тесте — до таймаута). Раз publish идёт
+  // синхронно перед res.json, быстрый ответ ⇒ realtime publish тоже не
+  // заблокирован пушем.
+  let pushAttempted = false;
+  const hangingFetch = () => {
+    pushAttempted = true;
+    return new Promise(() => {}); // никогда не резолвится
+  };
+  const ctx = await startConfiguredTestServer({
+    liveKitService: createFakeLiveKitService(),
+    configOverrides: {
+      rustorePushProjectId: "test-project",
+      rustorePushServiceToken: "test-token",
+    },
+    pushGatewayFactory: ({store, config}) =>
+      new PushGateway({store, config, httpClient: hangingFetch}),
+  });
+
+  try {
+    const caller = await registerTestUser(ctx, "p0-caller@rodnya.app", "Caller");
+    const callee = await registerTestUser(ctx, "p0-callee@rodnya.app", "Callee");
+    const chat = await createDirectChat(ctx, caller.accessToken, callee.user.id);
+
+    // Получатель с rustore-устройством → путь пуша реально дёргается и
+    // зависает (в фоне).
+    await registerPushDevice(ctx, callee.accessToken, {
+      provider: "rustore",
+      token: "device-token-callee",
+      platform: "android",
+    });
+
+    const started = Date.now();
+    const response = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({chatId: chat.id, mediaMode: "audio"}),
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.ok(payload.call?.id, "call created");
+    assert.ok(
+      elapsed < 3000,
+      `expected instant response despite hanging push, got ${elapsed}ms`,
+    );
+
+    // Дать фоновому диспатчу шанс дойти до зависшего fetch — подтверждает,
+    // что пуш ушёл в фон ПОСЛЕ ответа, а не блокировал его.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(pushAttempted, true, "push dispatched in background");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("group call starts from group chat and creates LiveKit sessions for every participant", async () => {
   const ensuredRooms = [];
   const createdSessions = [];
@@ -13354,6 +13416,22 @@ test("incoming call push uses high-priority metadata for WebPush and RuStore", a
     );
 
     assert.equal(startedCall.call.state, "ringing");
+
+    // FIX A2: пуш звонка теперь уходит в фоне ПОСЛЕ ответа POST /v1/calls
+    // (раньше блокировал ответ). Дождёмся фактической доставки, прежде чем
+    // проверять метаданные.
+    const waitFor = async (predicate, timeoutMs = 3000) => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        if (predicate()) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error("timed out waiting for background call push delivery");
+    };
+    await waitFor(
+      () => sentWebPush.length === 1 && observedRustoreRequests.length === 1,
+    );
+
     assert.equal(sentWebPush.length, 1);
     assert.equal(observedRustoreRequests.length, 1);
 

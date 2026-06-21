@@ -271,6 +271,10 @@ class PushGateway {
           "content-type": "application/json",
         },
         body: JSON.stringify(requestBody),
+        // FIX A3 (defense): без таймаута зависший VKPNS-fetch (мёртвый
+        // токен / убитая Huawei) держал доставку бесконечно. AbortSignal
+        // обрывает на 8с → catch ниже помечает delivery 'failed' быстро.
+        signal: AbortSignal.timeout(8000),
       });
 
       if (response.ok) {
