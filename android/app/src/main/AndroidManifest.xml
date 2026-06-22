@@ -56,6 +56,22 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />
+    <!-- OEM autostart deep-link (Huawei «Запуск приложений» /
+         «Защищённые приложения»). EMUI's systemmanager autostart activities
+         (com.huawei.systemmanager.startupmgr/appcontrol/optimize) are
+         component-protected by this permission. Объявляем его, чтобы
+         deep-link срабатывал там, где permission грантится.
+
+         РЕАЛЬНОСТЬ (проверено на HUAWEI TGR-W09 / HarmonyOS на базе
+         Android 12): здесь protectionLevel = signature|privileged, поэтому
+         sideload-сборке (подписанной нашим ключом, не системным) он НЕ
+         грантится — startActivity в эти экраны ловит «Permission Denial …
+         requires …USE_COMPONENT», и мы корректно уходим в фолбэк (общие
+         настройки приложения). На более старых EMUI этот permission бывает
+         normal-level / активности экспортированы — там deep-link открывается
+         напрямую. Декларация безопасна: на не-Huawei и там, где не грантится,
+         просто игнорируется (не dangerous → без рантайм-промпта). -->
+    <uses-permission android:name="com.huawei.permission.external_app_settings.USE_COMPONENT" />
 
     <application
         android:label="Родня"

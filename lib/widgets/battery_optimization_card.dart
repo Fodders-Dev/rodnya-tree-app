@@ -61,16 +61,37 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
   }
 
   Future<void> _openSettings() async {
+    // 1) Standard battery-exemption prompt (best-effort; some vendor ROMs
+    //    don't expose it — the steps below still help there).
     try {
       final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
       if (!batteryStatus.isGranted) {
         await Permission.ignoreBatteryOptimizations.request();
       }
     } catch (_) {
-      // Some vendor ROMs do not expose the standard Android exemption
-      // screen. The app settings fallback below is still useful there.
+      // Ignore: the autostart deep-link / app-settings fallback still run.
     }
-    await openAppSettings();
+
+    // 2) Deep-link straight into the OEM autostart / "protected apps"
+    //    whitelist — the actual switch that lets a killed app wake up on a
+    //    push/call. This screen is NOT reachable from the general app
+    //    settings on Huawei/Xiaomi/Oppo/Vivo, so it's the important step.
+    var openedAutostart = false;
+    if (GetIt.I.isRegistered<BatteryOptimizationAdvisor>()) {
+      try {
+        openedAutostart =
+            await GetIt.I<BatteryOptimizationAdvisor>().openAutostartSettings();
+      } catch (_) {
+        openedAutostart = false;
+      }
+    }
+
+    // 3) Fallback: if we couldn't open the vendor autostart screen (unknown
+    //    vendor, firmware drift, missing permission), open the general app
+    //    settings so the user always lands on *some* useful screen.
+    if (!openedAutostart) {
+      await openAppSettings();
+    }
   }
 
   @override
@@ -112,7 +133,7 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Чтобы звонки доходили в фоне',
+                      'Разрешите автозапуск «Родне»',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w800,
                         color: tokens.ink,
@@ -120,10 +141,11 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Откройте настройки Родни и проверьте: уведомления '
-                      'разрешены, батарея — «Без ограничений», автозапуск '
-                      'и работа в фоне — включены. На Huawei/Honor это '
-                      'обычно в «Батарея» → «Запуск приложений».',
+                      'Иначе звонки и сообщения не придут, когда приложение '
+                      'закрыто. Нажмите кнопку и включите «Родню» в списке '
+                      'автозапуска (на Huawei/Honor — «Запуск приложений», на '
+                      'Xiaomi — «Автозапуск»). Заодно поставьте батарею — '
+                      '«Без ограничений».',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: tokens.inkSecondary,
                         height: 1.3,
@@ -135,7 +157,7 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                       child: FilledButton.icon(
                         onPressed: _openSettings,
                         icon: const Icon(Icons.settings_rounded, size: 18),
-                        label: const Text('Открыть настройки Родни'),
+                        label: const Text('Разрешить автозапуск'),
                         style: FilledButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                           padding: const EdgeInsets.symmetric(

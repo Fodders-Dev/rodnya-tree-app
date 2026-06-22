@@ -1,6 +1,7 @@
 package com.ahjkuio.rodnya_family_app
 
 import android.app.PictureInPictureParams
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
 import android.util.Rational
@@ -45,6 +46,27 @@ class MainActivity: FlutterActivity() {
             when (call.method) {
                 "getInstallerPackageName" ->
                     result.success(resolveInstallerPackageName())
+                else -> result.notImplemented()
+            }
+        }
+        // OEM autostart deep-link (Huawei/Xiaomi/Oppo/Vivo/OnePlus).
+        // Dart (BatteryOptimizationAdvisor) знает vendor-специфичные
+        // компоненты экрана автозапуска и просит запустить каждый по
+        // очереди явным ComponentName. Любая ошибка (ActivityNotFound,
+        // SecurityException, отсутствие пакета) → false, Dart пробует
+        // следующий кандидат или фолбэкает на общие настройки. Логика
+        // выбора компонентов намеренно живёт в Dart (тестируемо), натив —
+        // тонкий «запусти этот explicit-Activity».
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "rodnya/oem_settings"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startActivity" -> {
+                    val pkg = call.argument<String>("package")
+                    val component = call.argument<String>("component")
+                    result.success(startExplicitActivity(pkg, component))
+                }
                 else -> result.notImplemented()
             }
         }
@@ -101,6 +123,29 @@ class MainActivity: FlutterActivity() {
             // а не null — иначе апдейтер мог бы активироваться в
             // магазинной сборке при сбое натива.
             INSTALLER_SOURCE_UNAVAILABLE
+        }
+    }
+
+    /**
+     * Запускает явную Activity стороннего пакета (экран автозапуска OEM)
+     * по паре package + полное имя класса. Возвращает true только при
+     * успешном старте; ЛЮБАЯ ошибка (ActivityNotFoundException — версия
+     * прошивки не имеет такого класса; SecurityException — компонент
+     * защищён и у нас нет нужного permission; отсутствие пакета и т.п.)
+     * → false, чтобы Dart мог попробовать следующий кандидат или уйти
+     * в фолбэк на общие настройки приложения. Никогда не кидаем наружу.
+     */
+    private fun startExplicitActivity(pkg: String?, component: String?): Boolean {
+        if (pkg.isNullOrBlank() || component.isNullOrBlank()) return false
+        return try {
+            val intent = Intent().apply {
+                this.component = ComponentName(pkg, component)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            true
+        } catch (_: Throwable) {
+            false
         }
     }
 
