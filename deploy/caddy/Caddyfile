@@ -1,13 +1,6 @@
-# NOTE: Caddy is NOT the production front-end as of 2026-04-22.
-# caddy.service crashed and was killed by systemd; nginx took over
-# (binds 80/443 directly). The active config lives at
-# `deploy/nginx/rodnya.conf` and is installed via
-# `deploy/nginx/install_nginx_config.sh`.
-#
-# This Caddyfile is kept for reference / future migration. Do NOT
-# expect changes here to land in production until/unless Caddy is
-# brought back, nginx is stopped on 80/443, and the prod README is
-# updated to point back at this file.
+# NOTE: Caddy is the active production front-end as of 2026-06-22.
+# nginx config is still kept as a tested fallback in deploy/nginx, but
+# public traffic on 80/443 is currently bound by caddy.service.
 
 {
   servers {
@@ -34,6 +27,10 @@ turn.rodnya-tree.ru {
 }
 
 rodnya-tree.ru, www.rodnya-tree.ru {
+  tls {
+    protocols tls1.2 tls1.2
+    curves x25519 secp256r1 secp384r1
+  }
   encode zstd gzip
   root * /var/www/rodnya-site
 
@@ -57,35 +54,48 @@ rodnya-tree.ru, www.rodnya-tree.ru {
   }
   header @pushWorker Cache-Control "no-cache, must-revalidate"
 
-  # Android Verified App Links manifest. Caddy hides dotfiles by
-  # default, so we explicitly serve `.well-known/*` with the right
-  # content-type. Without this Android can't auto-verify the
-  # `https://rodnya-tree.ru/oauth/*` intent filter and the OAuth
-  # spoofing protection never kicks in.
-  @assetLinks {
-    path /.well-known/assetlinks.json
-  }
+  # Android Verified App Links manifest. Keep the exact JSON content-type
+  # independent of the static server behind 127.0.0.1:8098.
+  @assetLinks path /.well-known/assetlinks.json
   handle @assetLinks {
-    header Content-Type "application/json"
+    root * /var/www/rodnya-site
+    header >Content-Type "application/json"
     header Cache-Control "public, max-age=300"
-    file_server {
-      hide
-    }
+    file_server
   }
 
-  # OAuth callback bridge page. Verified App Links: if the user has
-  # the app installed AND assetlinks.json is verified, the OS
-  # intercepts before the browser ever loads this URL. If NOT,
-  # we render a meta-refresh that hops to the legacy custom scheme
-  # and an "Open in Родня" button as a last-resort fallback.
-  @oauthBridge {
-    path /oauth/callback
-    path /oauth/callback/
-  }
-  handle @oauthBridge {
-    header Cache-Control "no-store, no-cache, must-revalidate"
-    rewrite * /oauth/callback/index.html
+  handle_path /dl/* {
+    root * /opt/rodnya/static/dl
     file_server
+  }
+
+  route {
+    # Invite interstitial for links opened inside in-app browsers.
+    # Android Verified App Links can open the app directly from normal
+    # browsers; Telegram/Chrome in-app surfaces often land here first,
+    # so serve the bridge page and let it hop to the verified https App
+    # Link / fallback.
+    @inviteBridge path /invite /invite/*
+    handle @inviteBridge {
+      header Cache-Control "no-store, no-cache, must-revalidate"
+      rewrite * /invite/index.html
+      reverse_proxy 127.0.0.1:8098
+    }
+
+    # OAuth callback bridge page. Verified App Links: if the user has
+    # the app installed AND assetlinks.json is verified, the OS
+    # intercepts before the browser ever loads this URL. If NOT,
+    # we render a meta-refresh that hops to the legacy custom scheme
+    # and an "Open in Родня" button as a last-resort fallback.
+    @oauthBridge path /oauth/callback /oauth/callback/
+    handle @oauthBridge {
+      header Cache-Control "no-store, no-cache, must-revalidate"
+      rewrite * /oauth/callback/index.html
+      reverse_proxy 127.0.0.1:8098
+    }
+
+    try_files {path} /index.html
+    reverse_proxy 127.0.0.1:8098
   }
 
   @staticAssets {
@@ -94,5 +104,4 @@ rodnya-tree.ru, www.rodnya-tree.ru {
   }
   header @staticAssets Cache-Control "public, max-age=86400"
 
-  file_server
 }

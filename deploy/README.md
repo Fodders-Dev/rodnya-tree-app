@@ -1,23 +1,20 @@
 # Deploy
 
-> **Production front-end is nginx**, not Caddy.
-> `caddy.service` crashed on 2026-04-22 and never came back; nginx
-> now binds `0.0.0.0:80/443` directly. The active config lives at
-> [`deploy/nginx/rodnya.conf`](nginx/rodnya.conf) and is installed
-> via [`deploy/nginx/install_nginx_config.sh`](nginx/install_nginx_config.sh).
-> The Caddyfile in `deploy/caddy/` is kept for reference but is **not**
-> applied on the host — changes there have no production effect until
-> someone stops nginx on 80/443 and brings caddy.service back.
+> **Production front-end is Caddy** as of 2026-06-22.
+> `caddy.service` binds `0.0.0.0:80/443` and routes Rodnya web traffic
+> through `rodnya-web-static.service` on `127.0.0.1:8098`. nginx is
+> installed but not active; [`deploy/nginx/rodnya.conf`](nginx/rodnya.conf)
+> is kept as a tested fallback.
 
-Rodnya web production is served by nginx from `/var/www/rodnya-site`,
-while the API runs as `rodnya-backend.service` from `/opt/rodnya/backend`
-behind `api.rodnya-tree.ru`.
+Rodnya web production is served by Caddy from `/var/www/rodnya-site`
+via `rodnya-web-static.service`, while the API runs as
+`rodnya-backend.service` from `/opt/rodnya/backend` behind
+`api.rodnya-tree.ru`.
 
 LiveKit pilot production runs on the same VM from `/opt/rodnya/livekit`
 as a Docker stack managed by `rodnya-livekit.service`, with:
 
-- `livekit.rodnya-tree.ru` proxied by nginx to `127.0.0.1:7880`
-  (WebSocket-aware location block in `rodnya.conf`)
+- `livekit.rodnya-tree.ru` proxied by Caddy to `127.0.0.1:7880`
 - `turn.rodnya-tree.ru` used by LiveKit TURN/TLS
 
 Current production nuance: on the shared VM, embedded TURN/UDP proved
@@ -30,12 +27,10 @@ L4 proxy, the same-VM pilot should stay on:
 
 The current working VM config also pins LiveKit to the public `ens1` interface and a static node IP instead of STUN-based external-IP discovery.
 
-## Web / nginx front-end
+## Web / Caddy front-end
 
-`deploy/nginx/rodnya.conf` is the canonical configuration for the
-`rodnya-tree.ru`, `www.rodnya-tree.ru`, `api.rodnya-tree.ru`,
-`livekit.rodnya-tree.ru`, and `turn.rodnya-tree.ru` server blocks. It
-captures the current production behaviour, including:
+`deploy/caddy/Caddyfile` is the canonical front-end configuration for
+the current production host. It captures:
 
 - `/.well-known/assetlinks.json` served as `application/json` for
   Android Verified App Links (see
@@ -43,12 +38,29 @@ captures the current production behaviour, including:
 - `/oauth/callback` routed to the static bridge HTML at
   `web/oauth/callback/index.html` so unverified-link installs still
   fall back to the legacy `rodnya://oauth/callback` custom scheme.
-- `/doc-coauthoring` falling through to the Flutter SPA.
+- `/invite` routed to the static invite interstitial at
+  `web/invite/index.html` so in-app browsers can still offer
+  "open in app" and web fallback.
+- `/dl/*` served from `/opt/rodnya/static/dl` for direct APK downloads.
 - Cache-Control bands for SPA entry / runtime / long-cached assets
-  matching the Caddy chain we used to run.
+  before falling through to the Flutter SPA.
 
-After updating `rodnya.conf` (or `connection-upgrade.conf`) in this
-repo, push to the host and run as root:
+After changing `/etc/caddy/Caddyfile` on the host:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+## nginx fallback
+
+`deploy/nginx/rodnya.conf` mirrors the public Rodnya surface for a
+manual fallback if Caddy must be stopped and nginx brought back to
+80/443. It references the current Caddy-managed certificate store so
+`nginx -t` stays valid on the production VM.
+
+After updating `rodnya.conf` or `connection-upgrade.conf`, push to the
+host and run as root:
 
 ```
 sudo deploy/nginx/install_nginx_config.sh
@@ -59,8 +71,9 @@ The installer is idempotent: it copies the conf to
 `rodnya.conf.bak*` / `rodnya.conf.codex*` siblings that nginx has
 been warning about, symlinks into `sites-enabled/`, then runs
 `nginx -t` and `systemctl reload nginx` only after validation
-succeeds. If validation fails, it leaves the previous live config in
-place.
+succeeds. If nginx is not active, it validates and installs the fallback
+config without trying to reload the inactive service. If validation
+fails, it restores the previous config.
 
 ## Backend production flow
 

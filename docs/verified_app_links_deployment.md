@@ -7,20 +7,26 @@ legacy hash-routed root invite (`https://rodnya-tree.ru/#/invite?...`).
 for Android to grant exclusive ownership is publishing the matching
 `assetlinks.json` on the marketing site so autoVerify succeeds.
 
-> **Front-end note**: production currently uses nginx, not Caddy.
-> The active site config is in
-> [`deploy/nginx/rodnya.conf`](../deploy/nginx/rodnya.conf) and is
-> installed via [`deploy/nginx/install_nginx_config.sh`](../deploy/nginx/install_nginx_config.sh).
-> Both the `assetlinks.json` content-type override and the
-> `/oauth/callback` bridge route are already in that conf.
+> **Front-end note**: production currently uses Caddy.
+> The active site config is represented by
+> [`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile). nginx remains
+> available only as a fallback via
+> [`deploy/nginx/rodnya.conf`](../deploy/nginx/rodnya.conf).
 
 The deployment is a single push of the latest commit to prod:
 
 1. Publish the latest web build so `web/.well-known/assetlinks.json`
    and `web/oauth/callback/index.html` land in `/var/www/rodnya-site`.
-2. Re-run `deploy/nginx/install_nginx_config.sh` on the host so the
-   server blocks pick up any updates to `rodnya.conf` (cache headers,
-   SPA fallback, etc.). Idempotent — safe to run on every release.
+2. If the Caddyfile changed, validate and reload it on the host:
+
+   ```
+   sudo caddy validate --config /etc/caddy/Caddyfile
+   sudo systemctl reload caddy
+   ```
+
+   If only the web build changed, the Caddy reload is not required.
+   Re-run `deploy/nginx/install_nginx_config.sh` only when maintaining
+   the inactive nginx fallback config.
 3. Confirm via:
 
    ```
