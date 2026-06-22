@@ -29,8 +29,13 @@ The current working VM config also pins LiveKit to the public `ens1` interface a
 
 ## Web / Caddy front-end
 
-`deploy/caddy/Caddyfile` is the canonical front-end configuration for
-the current production host. It captures:
+`deploy/caddy/Caddyfile` is a full snapshot of the active
+`/etc/caddy/Caddyfile` from the production host and is the canonical
+front-end configuration for the current production host. Do not replace
+it with a Rodnya-only snippet: the same file also carries shared host
+routes such as RadioAtlas and the temporary `nip.io` smoke endpoint.
+
+It captures:
 
 - `/.well-known/assetlinks.json` served as `application/json` for
   Android Verified App Links (see
@@ -50,6 +55,15 @@ After changing `/etc/caddy/Caddyfile` on the host:
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
+```
+
+After a manual production edit, copy `/etc/caddy/Caddyfile` back into
+`deploy/caddy/Caddyfile` and commit it so the repo stays in sync with
+the real front-end state. Temporary Caddyfile backups from the 2026-06-22
+invite/App Links repair were moved out of `/tmp` to:
+
+```text
+/opt/rodnya/backups/caddy/20260622-codex-caddyfile-backups
 ```
 
 ## nginx fallback

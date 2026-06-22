@@ -1,107 +1,158 @@
-# NOTE: Caddy is the active production front-end as of 2026-06-22.
-# nginx config is still kept as a tested fallback in deploy/nginx, but
-# public traffic on 80/443 is currently bound by caddy.service.
-
 {
-  servers {
-    protocols h1 h2
-  }
+	servers {
+		protocols h1 h2
+	}
 }
 
+# RadioAtlas Caddy snippet.
+# Merge this block into the server's full /etc/caddy/Caddyfile instead of overwriting
+# an existing multi-site config.
+
 radioatlas.duckdns.org {
-  reverse_proxy 127.0.0.1:3001
+	root * /opt/RadioAtlas/current/apps/webapp/dist
+
+	route {
+		handle_path /api/* {
+			reverse_proxy 127.0.0.1:3001
+		}
+
+		handle /api {
+			reverse_proxy 127.0.0.1:3001
+		}
+
+		@hashedAssets {
+			path /assets/* /winamp-skins/*
+		}
+		handle @hashedAssets {
+			header Cache-Control "public, max-age=31536000, immutable"
+			header Vary "Accept-Encoding"
+			file_server {
+				precompressed br gzip
+			}
+		}
+
+		@appStatic {
+			path /catalog-fast.json /catalog-full.json /favicon* /manifest.json
+		}
+		handle @appStatic {
+			header Cache-Control "public, max-age=86400"
+			header Vary "Accept-Encoding"
+			file_server {
+				precompressed br gzip
+			}
+		}
+
+		@appEntry {
+			path / /index.html
+		}
+		handle @appEntry {
+			header Cache-Control "no-store, no-cache, must-revalidate"
+			header Vary "Accept-Encoding"
+			file_server {
+				precompressed br gzip
+			}
+		}
+
+		handle {
+			try_files {path} /index.html
+			header Cache-Control "no-store, no-cache, must-revalidate"
+			header Vary "Accept-Encoding"
+			file_server {
+				precompressed br gzip
+			}
+		}
+	}
 }
 
 api.rodnya-tree.ru {
-  encode zstd gzip
-  reverse_proxy 127.0.0.1:8080
-}
-
-livekit.rodnya-tree.ru {
-  encode zstd gzip
-  reverse_proxy 127.0.0.1:7880
-}
-
-turn.rodnya-tree.ru {
-  respond 204
+	tls {
+		protocols tls1.2 tls1.2
+		curves x25519 secp256r1 secp384r1
+	}
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080
 }
 
 rodnya-tree.ru, www.rodnya-tree.ru {
-  tls {
-    protocols tls1.2 tls1.2
-    curves x25519 secp256r1 secp384r1
-  }
-  encode zstd gzip
-  root * /var/www/rodnya-site
+	tls {
+		protocols tls1.2 tls1.2
+		curves x25519 secp256r1 secp384r1
+	}
+	encode zstd gzip
+	root * /var/www/rodnya-site
 
-  @appEntry {
-    path / /index.html /flutter_bootstrap.js /version.json /manifest.json /AssetManifest.bin.json /AssetManifest.json /FontManifest.json
-  }
-  header @appEntry Cache-Control "no-store, no-cache, must-revalidate"
+	@appEntry {
+		path / /index.html /flutter_bootstrap.js /version.json /manifest.json /AssetManifest.bin.json /AssetManifest.json /FontManifest.json
+	}
+	header @appEntry Cache-Control "no-store, no-cache, must-revalidate"
 
-  @startupAssets {
-    path /assets/AssetManifest.bin.json /assets/AssetManifest.json /assets/FontManifest.json /favicon.ico
-  }
-  header @startupAssets Cache-Control "no-store, no-cache, must-revalidate"
+	@startupAssets {
+		path /assets/AssetManifest.bin.json /assets/AssetManifest.json /assets/FontManifest.json /favicon.ico
+	}
+	header @startupAssets Cache-Control "no-store, no-cache, must-revalidate"
 
-  @appRuntime {
-    path /flutter.js /main.dart.js
-  }
-  header @appRuntime Cache-Control "no-cache, must-revalidate"
+	@appRuntime {
+		path /flutter.js /main.dart.js
+	}
+	header @appRuntime Cache-Control "no-cache, must-revalidate"
 
-  @pushWorker {
-    path /push/push-sw.js
-  }
-  header @pushWorker Cache-Control "no-cache, must-revalidate"
+	@pushWorker {
+		path /push/push-sw.js
+	}
+	header @pushWorker Cache-Control "no-cache, must-revalidate"
 
-  # Android Verified App Links manifest. Keep the exact JSON content-type
-  # independent of the static server behind 127.0.0.1:8098.
-  @assetLinks path /.well-known/assetlinks.json
-  handle @assetLinks {
-    root * /var/www/rodnya-site
-    header >Content-Type "application/json"
-    header Cache-Control "public, max-age=300"
-    file_server
-  }
+	@staticAssets {
+		path /assets/* /icons/* /canvaskit/* /splash/* /favicon.png /apple-touch-icon.png
+		not path /assets/AssetManifest.bin.json /assets/AssetManifest.json /assets/FontManifest.json
+	}
+	header @staticAssets Cache-Control "public, max-age=86400"
 
-  handle_path /dl/* {
-    root * /opt/rodnya/static/dl
-    file_server
-  }
 
-  route {
-    # Invite interstitial for links opened inside in-app browsers.
-    # Android Verified App Links can open the app directly from normal
-    # browsers; Telegram/Chrome in-app surfaces often land here first,
-    # so serve the bridge page and let it hop to the verified https App
-    # Link / fallback.
-    @inviteBridge path /invite /invite/*
-    handle @inviteBridge {
-      header Cache-Control "no-store, no-cache, must-revalidate"
-      rewrite * /invite/index.html
-      reverse_proxy 127.0.0.1:8098
-    }
 
-    # OAuth callback bridge page. Verified App Links: if the user has
-    # the app installed AND assetlinks.json is verified, the OS
-    # intercepts before the browser ever loads this URL. If NOT,
-    # we render a meta-refresh that hops to the legacy custom scheme
-    # and an "Open in Родня" button as a last-resort fallback.
-    @oauthBridge path /oauth/callback /oauth/callback/
-    handle @oauthBridge {
-      header Cache-Control "no-store, no-cache, must-revalidate"
-      rewrite * /oauth/callback/index.html
-      reverse_proxy 127.0.0.1:8098
-    }
+	# Android Verified App Links manifest. Keep the exact JSON content-type
+	# independent of the static server behind 127.0.0.1:8098.
+	@assetLinks path /.well-known/assetlinks.json
+	handle @assetLinks {
+		root * /var/www/rodnya-site
+		header >Content-Type "application/json"
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
 
-    try_files {path} /index.html
-    reverse_proxy 127.0.0.1:8098
-  }
+	handle_path /dl/* {
+		root * /opt/rodnya/static/dl
+		file_server
+	}
 
-  @staticAssets {
-    path /assets/* /icons/* /canvaskit/* /splash/* /favicon.png /apple-touch-icon.png
-    not path /assets/AssetManifest.bin.json /assets/AssetManifest.json /assets/FontManifest.json
-  }
-  header @staticAssets Cache-Control "public, max-age=86400"
+	route {
+		@inviteBridge path /invite /invite/*
+		handle @inviteBridge {
+			header Cache-Control "no-store, no-cache, must-revalidate"
+			rewrite * /invite/index.html
+			reverse_proxy 127.0.0.1:8098
+		}
 
+		@oauthBridge path /oauth/callback /oauth/callback/
+		handle @oauthBridge {
+			header Cache-Control "no-store, no-cache, must-revalidate"
+			rewrite * /oauth/callback/index.html
+			reverse_proxy 127.0.0.1:8098
+		}
+		try_files {path} /index.html
+		reverse_proxy 127.0.0.1:8098
+	}
+}
+
+212-69-84-167.nip.io {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8800
+}
+
+livekit.rodnya-tree.ru {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:7880
+}
+
+turn.rodnya-tree.ru {
+	respond 204
 }
