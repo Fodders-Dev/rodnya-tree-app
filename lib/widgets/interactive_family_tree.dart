@@ -5138,8 +5138,19 @@ class FamilyTreePainter extends CustomPainter {
             anchors.length;
     final direction = averageChildY >= parentBarY ? 1.0 : -1.0;
     final verticalGap = (averageChildY - parentBarY).abs();
-    final busOffset = verticalGap.clamp(26.0, 58.0).toDouble() * direction;
-    final busY = parentBarY + busOffset;
+    // Anchor the shared bus to the CHILDREN, not the parent. Previously the
+    // bus sat at parentBarY + clamp(verticalGap, 26, 58), so at a typical
+    // ~50-70px generation gap the per-child stub (verticalGap - clamp)
+    // collapsed to 0-12px: children sat flush against the bus and were
+    // indistinguishable from a child's spouse. Anchoring to the children
+    // guarantees a visible vertical stub (≈20-40px) dropping onto every
+    // child; the parent→bus segment takes the remaining gap.
+    final targetStub = (verticalGap * 0.45).clamp(20.0, 40.0).toDouble();
+    // Overshoot guard: in unusually tight layouts (verticalGap < targetStub)
+    // never let the bus cross above the parent bar — keep at least a small
+    // parent→bus segment so the connector still reads top-down.
+    final childStub = min(targetStub, max(verticalGap - 12.0, 0.0));
+    final busY = averageChildY - childStub * direction;
     final sortedAnchors = [...anchors]..sort((a, b) => a.dx.compareTo(b.dx));
     final minChildX = min(
       familyCenterX,
