@@ -1,0 +1,56 @@
+name: Regen Tree Goldens
+
+# Ручной реген golden-PNG painter'а дерева на Linux (CI-среда, где они и
+# генерились исходно). На Windows-дев-боксе регенерить нельзя — там ~2%
+# font/AA-diff забивает плохой baseline (см. memory project_golden_tests_windows).
+# Запускать после изменения отрисовки рёбер дерева
+# (lib/widgets/interactive_family_tree.dart), когда goldens легитимно поехали.
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_path:
+        description: "Golden-тест для регена"
+        required: false
+        default: "test/family_tree_painter_foreign_edge_golden_test.dart"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: regen-tree-goldens
+  cancel-in-progress: false
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Regenerate goldens
+        run: flutter test --update-goldens "${{ inputs.test_path }}"
+
+      - name: Commit updated goldens (if changed)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test/goldens
+          if git diff --cached --quiet; then
+            echo "Goldens без изменений — нечего коммитить."
+          else
+            git commit -m "chore(golden): реген tree-goldens на Linux после фикса коннекторов"
+            git push origin main
+            echo "Обновлённые goldens запушены."
+          fi
