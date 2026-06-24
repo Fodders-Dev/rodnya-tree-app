@@ -3482,6 +3482,17 @@ class _TreeLayoutEngine {
         peopleById: peopleById,
         componentStartX: offsetX,
       );
+      // Authoritative X pass: guarantee each pair's children are a contiguous,
+      // non-overlapping block under their parents (no branch interleaving).
+      // Runs last so it overrides any residual greedy/center drift; uses the
+      // earlier passes only for stable left→right ordering.
+      _enforceContiguousSubtreeBlocks(
+        componentPositions,
+        groupsByLevel,
+        childToParents,
+        peopleById,
+        componentStartX: offsetX,
+      );
       _anchorComponentToStart(
         componentPositions,
         componentStartX: offsetX,
@@ -4115,6 +4126,250 @@ class _TreeLayoutEngine {
             childCenters.reduce((a, b) => a + b) / childCenters.length;
         final shift = childCenter - currentCenter;
         for (final memberId in group.memberIds) {
+          final current = positions[memberId]!;
+          positions[memberId] = Offset(current.dx + shift, current.dy);
+        }
+      }
+    }
+  }
+
+  /// Tidy-tree post-pass that recomputes X so every parent group's children
+  /// form a single CONTIGUOUS, non-overlapping block centered under the
+  /// parents, with sibling families ≥ [siblingSeparation] apart.
+  ///
+  /// Fixes branch interleaving: the flat per-level placement reserved no
+  /// horizontal room for whole subtrees, so a wide/deep subtree — or the
+  /// spouse-anchor in [_desiredCenterForGroup] averaging across BOTH spouses'
+  /// parent families — could scatter one pair's children into a neighbour's
+  /// child-bus span (a child then looked like it belonged to two couples).
+  ///
+  /// Every spouse group is assigned to exactly ONE primary parent group
+  /// (the family with the most parent links into it; ties broken left-most),
+  /// so subtree widths can be reserved without a child belonging to two
+  /// blocks. Width is reserved bottom-up, positions assigned top-down.
+  ///
+  /// A final pass (step 5) recenters a couple that bridges TWO parent
+  /// families (the blended-family case — each spouse has their own ancestors)
+  /// back toward the midpoint of both, clamped so it never crosses a
+  /// level-neighbour's subtree. So the common blended couple still straddles
+  /// its two grandparent families instead of floating under one with a long
+  /// cross-link. Levels (Y) are preserved; only X is rewritten.
+  void _enforceContiguousSubtreeBlocks(
+    Map<String, Offset> positions,
+    Map<int, List<_SpouseGroup>> groupsByLevel,
+    Map<String, Set<String>> childToParents,
+    Map<String, FamilyPerson> peopleById, {
+    required double componentStartX,
+  }) {
+    final allGroups = <_SpouseGroup>[];
+    final levelOfGroup = <_SpouseGroup, int>{};
+    final groupOfMember = <String, _SpouseGroup>{};
+    groupsByLevel.forEach((level, groups) {
+      for (final group in groups) {
+        allGroups.add(group);
+        levelOfGroup[group] = level;
+        for (final memberId in group.memberIds) {
+          groupOfMember[memberId] = group;
+        }
+      }
+    });
+    if (allGroups.isEmpty) {
+      return;
+    }
+
+    double groupCenterX(_SpouseGroup group) =>
+        group.memberIds
+            .map((memberId) => positions[memberId]!.dx)
+            .reduce((a, b) => a + b) /
+        group.memberIds.length;
+
+    // 1) Assign each group to a single primary parent group + collect kids.
+    final childGroups = <_SpouseGroup, List<_SpouseGroup>>{};
+    final primaryParent = <_SpouseGroup, _SpouseGroup?>{};
+    for (final group in allGroups) {
+      final groupLevel = levelOfGroup[group]!;
+      final linkCounts = <_SpouseGroup, int>{};
+      for (final memberId in group.memberIds) {
+        for (final parentId in childToParents[memberId] ?? const <String>{}) {
+          final parentGroup = groupOfMember[parentId];
+          if (parentGroup == null) continue;
+          final parentLevel = levelOfGroup[parentGroup];
+          // Parents must live on a shallower level — guards against cycles
+          // and same-level spouse edges masquerading as parentage.
+          if (parentLevel == null || parentLevel >= groupLevel) continue;
+          linkCounts[parentGroup] = (linkCounts[parentGroup] ?? 0) + 1;
+        }
+      }
+      _SpouseGroup? primary;
+      if (linkCounts.isNotEmpty) {
+        final entries = linkCounts.entries.toList()
+          ..sort((a, b) {
+            if (a.value != b.value) return b.value.compareTo(a.value);
+            return groupCenterX(a.key).compareTo(groupCenterX(b.key));
+          });
+        primary = entries.first.key;
+      }
+      primaryParent[group] = primary;
+      if (primary != null) {
+        childGroups.putIfAbsent(primary, () => <_SpouseGroup>[]).add(group);
+      }
+    }
+
+    // 2) Order each parent's children left→right by current X (preserves the
+    //    arrangement the earlier passes settled), tie → descendant weight.
+    for (final kids in childGroups.values) {
+      kids.sort((a, b) {
+        final centerCompare = groupCenterX(a).compareTo(groupCenterX(b));
+        if (centerCompare != 0) return centerCompare;
+        return _comparePersons(
+          peopleById[a.memberIds.first]!,
+          peopleById[b.memberIds.first]!,
+        );
+      });
+    }
+
+    // 3) Reserve subtree width bottom-up.
+    final widthOf = <_SpouseGroup, double>{};
+    final levelsDeepFirst = groupsByLevel.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+    for (final level in levelsDeepFirst) {
+      for (final group in groupsByLevel[level] ?? const <_SpouseGroup>[]) {
+        final ownWidth = _groupWidth(group.memberIds.length);
+        final kids = childGroups[group] ?? const <_SpouseGroup>[];
+        if (kids.isEmpty) {
+          widthOf[group] = ownWidth;
+          continue;
+        }
+        var kidsWidth = 0.0;
+        for (var i = 0; i < kids.length; i++) {
+          kidsWidth +=
+              widthOf[kids[i]] ?? _groupWidth(kids[i].memberIds.length);
+          if (i < kids.length - 1) {
+            kidsWidth += InteractiveFamilyTree.siblingSeparation;
+          }
+        }
+        widthOf[group] = max(ownWidth, kidsWidth);
+      }
+    }
+
+    // 4) Assign X top-down: center each group over its reserved block and lay
+    //    its children block contiguously beneath it.
+    final placed = <_SpouseGroup>{};
+    void placeSubtree(_SpouseGroup group, double leftEdge) {
+      if (!placed.add(group)) return; // forest is acyclic; guard anyway
+      final width = widthOf[group]!;
+      final center = leftEdge + width / 2;
+      final ordered = [...group.memberIds]
+        ..sort((a, b) => positions[a]!.dx.compareTo(positions[b]!.dx));
+      final ownWidth = _groupWidth(ordered.length);
+      for (var i = 0; i < ordered.length; i++) {
+        final memberId = ordered[i];
+        final x = center -
+            ownWidth / 2 +
+            InteractiveFamilyTree.nodeWidth / 2 +
+            i *
+                (InteractiveFamilyTree.nodeWidth +
+                    InteractiveFamilyTree.spouseSeparation);
+        positions[memberId] = Offset(x, positions[memberId]!.dy);
+      }
+      final kids = childGroups[group] ?? const <_SpouseGroup>[];
+      if (kids.isEmpty) return;
+      var kidsWidth = 0.0;
+      for (var i = 0; i < kids.length; i++) {
+        kidsWidth += widthOf[kids[i]]!;
+        if (i < kids.length - 1) {
+          kidsWidth += InteractiveFamilyTree.siblingSeparation;
+        }
+      }
+      var childLeft = center - kidsWidth / 2;
+      for (final child in kids) {
+        placeSubtree(child, childLeft);
+        childLeft += widthOf[child]! + InteractiveFamilyTree.siblingSeparation;
+      }
+    }
+
+    final roots = allGroups.where((g) => primaryParent[g] == null).toList()
+      ..sort((a, b) {
+        final levelCompare = levelOfGroup[a]!.compareTo(levelOfGroup[b]!);
+        if (levelCompare != 0) return levelCompare;
+        return groupCenterX(a).compareTo(groupCenterX(b));
+      });
+    var cursor = componentStartX;
+    for (final root in roots) {
+      placeSubtree(root, cursor);
+      cursor += widthOf[root]! + InteractiveFamilyTree.siblingSeparation;
+    }
+    // Defensive: place any group the root forest didn't reach (disconnected
+    // primary-parent chain) so nothing keeps a stale X.
+    for (final group in allGroups) {
+      if (placed.contains(group)) continue;
+      placeSubtree(group, cursor);
+      cursor += widthOf[group]! + InteractiveFamilyTree.siblingSeparation;
+    }
+
+    // 5) Bridge recenter: a couple that is a child of TWO parent families
+    //    (the blended-family case — each spouse has their own ancestors in
+    //    the tree) is placed under a single primary block above, which would
+    //    leave the other grandparents floating with a long cross-link. Shift
+    //    each such couple + its whole subtree toward the midpoint of its two
+    //    parent families so it STRADDLES them, clamped so it never crosses a
+    //    level-neighbour's subtree (keeps the contiguity guarantee intact).
+    List<String> subtreeMembers(_SpouseGroup group) {
+      final out = <String>[];
+      final stack = <_SpouseGroup>[group];
+      final seen = <_SpouseGroup>{};
+      while (stack.isNotEmpty) {
+        final current = stack.removeLast();
+        if (!seen.add(current)) continue;
+        out.addAll(current.memberIds);
+        stack.addAll(childGroups[current] ?? const <_SpouseGroup>[]);
+      }
+      return out;
+    }
+
+    List<double> subtreeExtent(_SpouseGroup group) {
+      var lo = double.infinity;
+      var hi = double.negativeInfinity;
+      for (final memberId in subtreeMembers(group)) {
+        final x = positions[memberId]!.dx;
+        lo = min(lo, x - InteractiveFamilyTree.nodeWidth / 2);
+        hi = max(hi, x + InteractiveFamilyTree.nodeWidth / 2);
+      }
+      return <double>[lo, hi];
+    }
+
+    final levelsShallowFirst = groupsByLevel.keys.toList()..sort();
+    for (final level in levelsShallowFirst) {
+      final levelGroups = [...(groupsByLevel[level] ?? const <_SpouseGroup>[])]
+        ..sort((a, b) => groupCenterX(a).compareTo(groupCenterX(b)));
+      for (var index = 0; index < levelGroups.length; index++) {
+        final group = levelGroups[index];
+        final parentFamilies = <_SpouseGroup>{};
+        for (final memberId in group.memberIds) {
+          for (final parentId in childToParents[memberId] ?? const <String>{}) {
+            final parentGroup = groupOfMember[parentId];
+            if (parentGroup == null) continue;
+            if ((levelOfGroup[parentGroup] ?? level) >= level) continue;
+            parentFamilies.add(parentGroup);
+          }
+        }
+        if (parentFamilies.length < 2) continue; // not a bridge
+        final target =
+            parentFamilies.map(groupCenterX).reduce((a, b) => a + b) /
+                parentFamilies.length;
+        var shift = target - groupCenterX(group);
+        final extent = subtreeExtent(group);
+        if (shift < 0 && index > 0) {
+          final leftBound = subtreeExtent(levelGroups[index - 1])[1] +
+              InteractiveFamilyTree.siblingSeparation;
+          shift = max(shift, leftBound - extent[0]);
+        } else if (shift > 0 && index < levelGroups.length - 1) {
+          final rightBound = subtreeExtent(levelGroups[index + 1])[0] -
+              InteractiveFamilyTree.siblingSeparation;
+          shift = min(shift, rightBound - extent[1]);
+        }
+        if (shift.abs() < 0.5) continue;
+        for (final memberId in subtreeMembers(group)) {
           final current = positions[memberId]!;
           positions[memberId] = Offset(current.dx + shift, current.dy);
         }
