@@ -3678,4 +3678,171 @@ void main() {
     // Катя — поколением ниже своего родителя Марата.
     expect(katyaOffset.dy, greaterThan(maratOffset.dy));
   });
+
+  // B1 (adversarial-review regression): the real «Родня» shape that exposed
+  // branch interleaving — Козловы pair → several children (each blood child +
+  // married-in spouse) → grandchildren of varying subtree width. Asserts the
+  // permanent invariant: for EVERY parent pair, no FOREIGN (non-spouse) child
+  // of another pair has its dx inside that pair's child-bus span.
+  testWidgets(
+      'Layout: no foreign child sits inside another pair child-bus span (Родня)',
+      (tester) async {
+    tester.view.physicalSize = const Size(2600, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    FamilyPerson person(String id, Gender gender) => FamilyPerson(
+          id: id,
+          treeId: 'tree-1',
+          name: id,
+          gender: gender,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+
+    var relId = 0;
+    FamilyRelation parentRel(String parent, String child) => FamilyRelation(
+          id: 'p${relId++}',
+          treeId: 'tree-1',
+          person1Id: parent,
+          person2Id: child,
+          relation1to2: RelationType.parent,
+          relation2to1: RelationType.child,
+          isConfirmed: true,
+          createdAt: DateTime(2024, 1, 1),
+        );
+    FamilyRelation spouseRel(String a, String b) => FamilyRelation(
+          id: 's${relId++}',
+          treeId: 'tree-1',
+          person1Id: a,
+          person2Id: b,
+          relation1to2: RelationType.spouse,
+          relation2to1: RelationType.spouse,
+          isConfirmed: true,
+          createdAt: DateTime(2024, 1, 1),
+        );
+
+    // L0 Козловы. L1 blood children + married-in spouses. L2/L3 grandchildren.
+    final ids = <String, Gender>{
+      'kozlovAA': Gender.male, 'kozlovaA': Gender.female,
+      'hodusT': Gender.female, 'hodusA': Gender.male,
+      'suprunovV': Gender.male, 'suprunovaA': Gender.female,
+      'kurbatovaG': Gender.female, 'kurbatovV': Gender.male,
+      'nazmutdinovM': Gender.male,
+      'chegodaevaA': Gender.female, 'chegodaevV': Gender.male,
+      'suprunovAlex': Gender.male,
+      'betehtinaM': Gender.female,
+      'dmitrovaT': Gender.female, 'dmitrovE': Gender.male,
+      'nazmutdinovaE': Gender.female,
+      'chegodaevVen': Gender.male, 'chegodaevaArina': Gender.female,
+      'chegodaevaAlex': Gender.female,
+      'dmitrovS': Gender.male,
+    };
+    final relations = <FamilyRelation>[
+      spouseRel('kozlovAA', 'kozlovaA'),
+      // Козловы children (blood) + their married-in spouses.
+      for (final c in ['hodusT', 'suprunovV', 'kurbatovaG', 'nazmutdinovM']) ...[
+        parentRel('kozlovAA', c), parentRel('kozlovaA', c),
+      ],
+      spouseRel('hodusT', 'hodusA'),
+      spouseRel('suprunovV', 'suprunovaA'),
+      spouseRel('kurbatovaG', 'kurbatovV'),
+      // Супруновы grandchildren (a married daughter + a single son).
+      for (final c in ['chegodaevaA', 'suprunovAlex']) ...[
+        parentRel('suprunovV', c), parentRel('suprunovaA', c),
+      ],
+      spouseRel('chegodaevaA', 'chegodaevV'),
+      // Курбатовы grandchildren incl. Бетехтина (single) + a married daughter.
+      for (final c in ['betehtinaM', 'dmitrovaT']) ...[
+        parentRel('kurbatovaG', c), parentRel('kurbatovV', c),
+      ],
+      spouseRel('dmitrovaT', 'dmitrovE'),
+      // Назмутдинов grandchild.
+      parentRel('nazmutdinovM', 'nazmutdinovaE'),
+      // Great-grandchildren (Чегодаевы wide, Дмитровы narrow).
+      for (final c in ['chegodaevVen', 'chegodaevaArina', 'chegodaevaAlex']) ...[
+        parentRel('chegodaevaA', c), parentRel('chegodaevV', c),
+      ],
+      parentRel('dmitrovaT', 'dmitrovS'), parentRel('dmitrovE', 'dmitrovS'),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InteractiveFamilyTree(
+            peopleData: [
+              for (final e in ids.entries)
+                {'person': person(e.key, e.value), 'userProfile': null},
+            ],
+            relations: relations,
+            onPersonTap: (_) {},
+            onAddRelativeTapWithType: (_, __) {},
+            currentUserIsInTree: true,
+            onAddSelfTapWithType: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final painter = tester
+        .widget<CustomPaint>(find.byWidgetPredicate(
+          (widget) =>
+              widget is CustomPaint && widget.painter is FamilyTreePainter,
+        ))
+        .painter! as FamilyTreePainter;
+    final pos = painter.nodePositions;
+
+    // Invariant (ported from the throwaway topology battery): for every
+    // parent pair, no foreign non-spouse child of a DIFFERENT pair sits inside
+    // [min(childX)-w/2, max(childX)+w/2] at that child level.
+    const w = InteractiveFamilyTree.nodeWidth;
+    final childToParents = <String, Set<String>>{};
+    final spouseOf = <String, Set<String>>{};
+    for (final r in relations) {
+      if (r.relation1to2 == RelationType.parent) {
+        childToParents
+            .putIfAbsent(r.person2Id, () => <String>{})
+            .add(r.person1Id);
+      } else if (r.relation1to2 == RelationType.spouse) {
+        spouseOf.putIfAbsent(r.person1Id, () => <String>{}).add(r.person2Id);
+        spouseOf.putIfAbsent(r.person2Id, () => <String>{}).add(r.person1Id);
+      }
+    }
+    final familyChildren = <String, List<String>>{};
+    childToParents.forEach((child, parents) {
+      final key = (parents.toList()..sort()).join('+');
+      familyChildren.putIfAbsent(key, () => <String>[]).add(child);
+    });
+
+    familyChildren.forEach((familyKey, children) {
+      final placed = children.where((c) => pos[c] != null).toList();
+      if (placed.isEmpty) return;
+      final xs = placed.map((c) => pos[c]!.dx);
+      final minX = xs.reduce((a, b) => a < b ? a : b) - w / 2;
+      final maxX = xs.reduce((a, b) => a > b ? a : b) + w / 2;
+      final childY = pos[placed.first]!.dy;
+      for (final entry in pos.entries) {
+        final id = entry.key;
+        if (children.contains(id)) continue; // own child
+        if ((entry.value.dy - childY).abs() > 1) continue; // other level
+        // Allowed: a spouse of one of this family's children sits in-row.
+        final isSpouseOfChild = placed.any(
+          (c) => (spouseOf[c] ?? const <String>{}).contains(id),
+        );
+        if (isSpouseOfChild) continue;
+        // Only foreign CHILDREN (of another pair) are interleave violations.
+        if (!childToParents.containsKey(id)) continue;
+        expect(
+          entry.value.dx > minX && entry.value.dx < maxX,
+          isFalse,
+          reason:
+              'foreign child "$id" (dx=${entry.value.dx.toStringAsFixed(1)}) '
+              'falls inside pair [$familyKey] bus span '
+              '[${minX.toStringAsFixed(1)}..${maxX.toStringAsFixed(1)}]',
+        );
+      }
+    });
+  });
 }
