@@ -2152,7 +2152,11 @@ test("google auth creates a social account and reuses it on repeated login", asy
     const firstResponse = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({idToken: "google-token-new-user"}),
+      // New social account → consent required (152-ФЗ).
+      body: JSON.stringify({
+        idToken: "google-token-new-user",
+        consentDocVersion: "2026-06-01",
+      }),
     });
     assert.equal(firstResponse.status, 200);
     const firstPayload = await firstResponse.json();
@@ -2291,7 +2295,8 @@ test("Bug B: google login still succeeds for actual same-provider re-login", asy
     const first = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({idToken: "tok-1"}),
+      // Fresh signup → consent required.
+      body: JSON.stringify({idToken: "tok-1", consentDocVersion: "2026-06-01"}),
     });
     assert.equal(first.status, 200);
     const firstPayload = await first.json();
@@ -2336,13 +2341,109 @@ test("Bug B: brand-new email signup still creates fresh account", async () => {
     const response = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({idToken: "new-token"}),
+      body: JSON.stringify({
+        idToken: "new-token",
+        consentDocVersion: "2026-06-01",
+      }),
     });
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.equal(payload.user.email, "brand-new@rodnya.app");
     assert.ok(payload.user.providerIds.includes("google"));
     assert.equal(payload.requiresOnboarding, true);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("google fresh signup WITHOUT consent → requiresConsent, no account created", async () => {
+  const googleTokenVerifier = {
+    async verifyIdToken() {
+      return {
+        sub: "google-sub-consent-gate",
+        email: "consent-gate@rodnya.app",
+        email_verified: true,
+        name: "Consent Gate",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  try {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "tok-no-consent"}),
+    });
+    // 200 (flow step), NOT an auth error — client shows the consent modal.
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.requiresConsent, true);
+    assert.equal(payload.provider, "google");
+    assert.ok(!payload.accessToken, "no session must be issued");
+    // The account must NOT exist yet.
+    const created = await ctx.store.findUserByEmail("consent-gate@rodnya.app");
+    assert.equal(created, null, "account must not be created without consent");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("google fresh signup WITH consent → account created + consent recorded", async () => {
+  const googleTokenVerifier = {
+    async verifyIdToken() {
+      return {
+        sub: "google-sub-consent-given",
+        email: "consent-given@rodnya.app",
+        email_verified: true,
+        name: "Consent Given",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  try {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        idToken: "tok-with-consent",
+        consentDocVersion: "2026-06-01",
+      }),
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.ok(payload.accessToken, "session issued");
+    assert.equal(payload.user.email, "consent-given@rodnya.app");
+
+    const created = await ctx.store.findUserByEmail("consent-given@rodnya.app");
+    assert.ok(created, "account created");
+    assert.equal(created.consentDocVersion, "2026-06-01");
+    assert.ok(created.consentAt, "consentAt timestamp recorded");
+
+    // Existing user re-login (no consent field) still authenticates — the
+    // consent gate is for fresh signups only.
+    const relogin = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "tok-with-consent-again"}),
+    });
+    assert.equal(relogin.status, 200);
+    const reloginPayload = await relogin.json();
+    assert.ok(reloginPayload.accessToken, "existing user logs in without consent");
+    assert.equal(reloginPayload.user.id, payload.user.id);
   } finally {
     await stopTestServer(ctx);
   }

@@ -92,6 +92,13 @@ function registerVkAuthRoutes(
         finalRedirectRaw && /^[a-z][a-z0-9+.-]*:\/\//.test(finalRedirectRaw)
             ? finalRedirectRaw
             : null;
+    // 152-ФЗ: carry the consent version (set on the client's re-start after
+    // the consent modal) through the redirect dance so the callback can write
+    // it when creating a brand-new VK account.
+    const consentDocVersion =
+        typeof req.query?.consentDocVersion === "string"
+            ? req.query.consentDocVersion.trim()
+            : "";
     const authFlowHandoff = await store.createAuthHandoff({
       type: "vk_auth_flow",
       payload: {
@@ -100,6 +107,7 @@ function registerVkAuthRoutes(
         redirectUri: callbackUrl,
         deviceContext,
         finalRedirect,
+        consentDocVersion: consentDocVersion || null,
       },
     });
 
@@ -355,12 +363,39 @@ function registerVkAuthRoutes(
         return;
       }
 
+      // 152-ФЗ / RuStore: a brand-new VK account needs the same affirmative
+      // consent the email-registration checkbox captures. The consent version
+      // was stashed at /start (set by the client's re-start after the consent
+      // modal). Without it, DON'T create the account — hand back a
+      // requires_consent result so the client shows the consent step and
+      // re-runs the VK flow with consentDocVersion.
+      const consentDocVersion =
+          typeof authFlowHandoff.payload?.consentDocVersion === "string"
+              ? authFlowHandoff.payload.consentDocVersion.trim()
+              : "";
+      if (!consentDocVersion) {
+        const authHandoff = await store.createAuthHandoff({
+          type: "vk_auth_result",
+          payload: {
+            status: "requires_consent",
+            provider: "vk",
+            vkProfile,
+          },
+        });
+        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
+          intent,
+          finalRedirect: stashedFinalRedirect,
+        }));
+        return;
+      }
+
       const user = await store.createUser({
         email: vkIdentity.email,
         displayName: vkIdentity.displayName || vkIdentity.email,
         password: null,
         authIdentity: vkIdentity,
         photoUrl: vkIdentity.metadata?.avatar || null,
+        consentDocVersion,
       });
       const sessionTokens = await store.createSession(user.id, effectiveDeviceContext);
       const authHandoff = await store.createAuthHandoff({

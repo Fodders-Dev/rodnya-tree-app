@@ -59,12 +59,26 @@ function registerGoogleAuthRoutes(
           return;
         }
 
+        // 152-ФЗ / RuStore: a brand-new social account needs the same
+        // affirmative consent the email-registration checkbox captures.
+        // Without a consentDocVersion we DON'T create the account — we ask the
+        // client to show the consent step and re-POST. Returned as HTTP 200 so
+        // the client treats it as a flow step, not an auth error.
+        const consentDocVersion = String(
+          req.body?.consentDocVersion || "",
+        ).trim();
+        if (!consentDocVersion) {
+          res.json({requiresConsent: true, provider: "google"});
+          return;
+        }
+
         user = await store.createUser({
           email: verifiedEmail,
           displayName: googleIdentity.displayName || verifiedEmail,
           password: null,
           authIdentity: googleIdentity,
           photoUrl: googleIdentity.metadata?.picture || null,
+          consentDocVersion,
         });
         isFreshSignup = true;
       }
