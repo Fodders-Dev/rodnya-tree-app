@@ -138,15 +138,31 @@ class VkAuthCompletion {
   final String? phoneNumber;
   final String? photoUrl;
 
+  const VkAuthCompletion.requiresConsent()
+      : this._(status: VkAuthCompletionStatus.requiresConsent);
+
   bool get isAuthenticated => status == VkAuthCompletionStatus.authenticated;
 
   bool get isAlreadyLinked => status == VkAuthCompletionStatus.alreadyLinked;
+
+  bool get isRequiresConsent =>
+      status == VkAuthCompletionStatus.requiresConsent;
 }
 
 enum VkAuthCompletionStatus {
   authenticated,
   pendingLink,
   alreadyLinked,
+  requiresConsent,
+}
+
+/// Returned by a social sign-in when the backend refuses to create a BRAND-NEW
+/// account without affirmative consent (152-ФЗ). The caller shows the consent
+/// step and retries the same provider flow with `consentDocVersion`.
+class SocialConsentRequired {
+  const SocialConsentRequired({required this.provider});
+
+  final String provider;
 }
 
 class MaxAuthCompletion {
@@ -483,6 +499,7 @@ class CustomApiAuthService implements AuthServiceInterface {
   @override
   Future<Object?> signInWithGoogle({
     GoogleAccountConfirmCallback? confirm,
+    String? consentDocVersion,
   }) {
     if (!isGoogleSignInConfigured) {
       throw const CustomApiException(
@@ -490,7 +507,10 @@ class CustomApiAuthService implements AuthServiceInterface {
       );
     }
 
-    return _signInWithResolvedGoogleAccount(confirm: confirm);
+    return _signInWithResolvedGoogleAccount(
+      confirm: confirm,
+      consentDocVersion: consentDocVersion,
+    );
   }
 
   Future<void> linkGoogleIdentity() async {
@@ -527,6 +547,7 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   Future<Object?> _signInWithResolvedGoogleAccount({
     GoogleAccountConfirmCallback? confirm,
+    String? consentDocVersion,
   }) async {
     final account = kIsWeb
         ? await _resolveCurrentGoogleAccountForTokenExchange(
@@ -563,7 +584,10 @@ class CustomApiAuthService implements AuthServiceInterface {
             // Best-effort — proceed even if signOut fails.
           }
           _lastGoogleAccount = null;
-          return _signInWithResolvedGoogleAccount(confirm: confirm);
+          return _signInWithResolvedGoogleAccount(
+            confirm: confirm,
+            consentDocVersion: consentDocVersion,
+          );
         case GoogleAccountConfirmDecision.cancel:
           throw const CustomApiException('Вход через Google отменён.');
       }
@@ -573,6 +597,8 @@ class CustomApiAuthService implements AuthServiceInterface {
       path: '/v1/auth/google',
       payload: {
         'idToken': idToken,
+        if (consentDocVersion != null && consentDocVersion.isNotEmpty)
+          'consentDocVersion': consentDocVersion,
       },
     );
   }
@@ -829,7 +855,10 @@ class CustomApiAuthService implements AuthServiceInterface {
     ).toString();
   }
 
-  Future<String> resolveVkLoginStartUrl({bool linkMode = false}) async {
+  Future<String> resolveVkLoginStartUrl({
+    bool linkMode = false,
+    String? consentDocVersion,
+  }) async {
     final descriptor = await _resolveOauthDeviceDescriptor();
     final finalRedirect = _resolveOauthFinalRedirect();
     return _buildUri(
@@ -837,6 +866,10 @@ class CustomApiAuthService implements AuthServiceInterface {
       queryParameters: <String, String>{
         if (linkMode) 'intent': 'link',
         if (finalRedirect != null) 'finalRedirect': finalRedirect,
+        // Set only on the re-start after the consent modal; carried through
+        // the redirect dance so the callback can write it on account creation.
+        if (consentDocVersion != null && consentDocVersion.isNotEmpty)
+          'consentDocVersion': consentDocVersion,
         ...descriptor,
       },
     ).toString();
@@ -987,6 +1020,12 @@ class CustomApiAuthService implements AuthServiceInterface {
       return VkAuthCompletion.alreadyLinked(
         message: response['message']?.toString(),
       );
+    }
+
+    // 152-ФЗ: brand-new VK account needs consent. Caller shows the consent
+    // modal and re-runs the VK flow with consentDocVersion (code is one-time).
+    if (status == 'requires_consent') {
+      return const VkAuthCompletion.requiresConsent();
     }
 
     // Ship Bug B (2026-05-26): cross-provider email collision routed
@@ -1351,6 +1390,14 @@ class CustomApiAuthService implements AuthServiceInterface {
       path: path,
       body: enrichedPayload,
     );
+    // 152-ФЗ: backend refused to create a new social account without consent.
+    // Surface a marker (not a session) so the caller shows the consent step
+    // and retries with consentDocVersion. HTTP was 200, so no error was thrown.
+    if (response['requiresConsent'] == true) {
+      return SocialConsentRequired(
+        provider: response['provider']?.toString() ?? '',
+      );
+    }
     final session = _sessionFromResponse(response);
     await _saveSession(session);
     _authStateController.add(session.userId);

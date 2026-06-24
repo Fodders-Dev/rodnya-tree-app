@@ -140,6 +140,7 @@ class PendingBackendAuthService implements AuthServiceInterface {
   @override
   Future<Object?> signInWithGoogle({
     GoogleAccountConfirmCallback? confirm,
+    String? consentDocVersion,
   }) {
     throw UnsupportedError(_pendingProviderMessage('auth'));
   }

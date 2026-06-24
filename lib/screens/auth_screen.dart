@@ -337,26 +337,45 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _signInWithGoogle() async {
+  Future<void> _signInWithGoogle() => _runGoogleSignIn();
+
+  /// [consentDocVersion] is set on the retry after the consent modal — a
+  /// brand-new Google account needs affirmative consent (152-ФЗ). On that
+  /// retry the account is already chosen, so we skip the confirm dialog.
+  Future<void> _runGoogleSignIn({String? consentDocVersion}) async {
     _clearSessionIssue();
     setState(() {
       _isGoogleLoading = true;
     });
 
+    final isConsentRetry = consentDocVersion != null;
     try {
       // Ship Q2 (2026-05-25): surface confirm dialog после Google
       // chooser returns account info, ПЕРЕД backend session exchange.
       // Captures «silent wrong-account» case (Артёма mama hit это on
       // his old phone — Google chooser showed только his account,
       // she tapped reflex, landed в его production).
-      await _authService.signInWithGoogle(
-        confirm: (preview) async {
-          if (!mounted) return GoogleAccountConfirmDecision.cancel;
-          return showGoogleAccountConfirmDialog(context, preview);
-        },
+      final result = await _authService.signInWithGoogle(
+        confirm: isConsentRetry
+            ? null
+            : (preview) async {
+                if (!mounted) return GoogleAccountConfirmDecision.cancel;
+                return showGoogleAccountConfirmDialog(context, preview);
+              },
+        consentDocVersion: consentDocVersion,
       );
+      if (!mounted) return;
 
-      if (mounted && _authService.currentUserId != null) {
+      // New social account → backend asked for consent. Show the consent
+      // step and retry the SAME Google flow with the accepted doc version.
+      if (result is SocialConsentRequired) {
+        final accepted = await _showSocialConsentSheet('Google');
+        if (!mounted || !accepted) return;
+        await _runGoogleSignIn(consentDocVersion: kLegalDocsVersion);
+        return;
+      }
+
+      if (_authService.currentUserId != null) {
         context.go(_resolvePostAuthRedirect());
       }
     } on EmailProviderMismatchException catch (mismatch) {
@@ -388,6 +407,62 @@ class _AuthScreenState extends State<AuthScreen> {
         });
       }
     }
+  }
+
+  /// Consent step for a brand-new social account (152-ФЗ). Mirrors the
+  /// email-registration checkbox: same Соглашение + ПДН texts and the same
+  /// link recognizers. Returns true if the user affirmatively accepts.
+  Future<bool> _showSocialConsentSheet(String providerLabel) async {
+    final theme = Theme.of(context);
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Согласие на обработку данных'),
+          content: Text.rich(
+            TextSpan(
+              style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+              children: [
+                TextSpan(
+                  text: 'Чтобы создать аккаунт через $providerLabel, примите ',
+                ),
+                TextSpan(
+                  text: 'Пользовательское соглашение',
+                  style: TextStyle(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  recognizer: _termsLinkRecognizer,
+                ),
+                const TextSpan(text: ' и дайте '),
+                TextSpan(
+                  text: 'согласие на обработку персональных данных',
+                  style: TextStyle(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  recognizer: _privacyLinkRecognizer,
+                ),
+                const TextSpan(
+                  text: ' в соответствии с Политикой конфиденциальности.',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Принимаю'),
+            ),
+          ],
+        );
+      },
+    );
+    return accepted ?? false;
   }
 
   Future<void> _startTelegramSignIn() async {
@@ -426,7 +501,7 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _startVkSignIn() async {
+  Future<void> _startVkSignIn({String? consentDocVersion}) async {
     final authService = _authService;
     if (authService is! CustomApiAuthService) {
       _showPlannedSocialAuthMessage('VK ID');
@@ -439,7 +514,11 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      final vkStartUrl = await authService.resolveVkLoginStartUrl();
+      // consentDocVersion is set on the re-start after the consent modal so a
+      // brand-new VK account can be created with recorded consent (152-ФЗ).
+      final vkStartUrl = await authService.resolveVkLoginStartUrl(
+        consentDocVersion: consentDocVersion,
+      );
       final started = await launchUrl(
         Uri.parse(vkStartUrl),
         mode: LaunchMode.platformDefault,
@@ -670,6 +749,16 @@ class _AuthScreenState extends State<AuthScreen> {
         if (isLinkIntent) {
           context.go('/profile/edit');
         }
+        return;
+      }
+
+      // New VK account → backend asked for consent. Show the consent step and
+      // re-run the VK flow with the accepted doc version (the VK code is
+      // one-time, so we restart the provider flow rather than reuse a token).
+      if (completion.isRequiresConsent) {
+        final accepted = await _showSocialConsentSheet('VK ID');
+        if (!mounted || !accepted) return;
+        await _startVkSignIn(consentDocVersion: kLegalDocsVersion);
         return;
       }
 

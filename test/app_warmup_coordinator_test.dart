@@ -101,6 +101,7 @@ class _FakeAuthService implements AuthServiceInterface {
   @override
   Future<Object?> signInWithGoogle({
     GoogleAccountConfirmCallback? confirm,
+    String? consentDocVersion,
   }) {
     throw UnimplementedError();
   }

@@ -45,6 +45,10 @@ abstract class AuthServiceInterface {
   /// null → auto-confirm (backward-compat for tests / scripted flows).
   Future<Object?> signInWithGoogle({
     GoogleAccountConfirmCallback? confirm,
+    // 152-ФЗ: set on the retry after the consent modal for a brand-new social
+    // account. A null/absent value means "consent not yet captured" → the
+    // backend may return a SocialConsentRequired marker for a fresh signup.
+    String? consentDocVersion,
   });
   Future<void> signOut();
   Future<void> resetPassword(String email);
