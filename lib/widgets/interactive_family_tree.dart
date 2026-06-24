@@ -3490,6 +3490,7 @@ class _TreeLayoutEngine {
         componentPositions,
         groupsByLevel,
         childToParents,
+        parentToChildren,
         peopleById,
         componentStartX: offsetX,
       );
@@ -4146,18 +4147,23 @@ class _TreeLayoutEngine {
   /// Every spouse group is assigned to exactly ONE primary parent group
   /// (the family with the most parent links into it; ties broken left-most),
   /// so subtree widths can be reserved without a child belonging to two
-  /// blocks. Width is reserved bottom-up, positions assigned top-down.
+  /// blocks. Children order by a structural key (descendant weight, B4); a
+  /// bridge child biases to the block edge toward its other family. Width is
+  /// reserved bottom-up, positions assigned top-down.
   ///
-  /// A final pass (step 5) recenters a couple that bridges TWO parent
-  /// families (the blended-family case — each spouse has their own ancestors)
-  /// back toward the midpoint of both, clamped so it never crosses a
-  /// level-neighbour's subtree. So the common blended couple still straddles
-  /// its two grandparent families instead of floating under one with a long
-  /// cross-link. Levels (Y) are preserved; only X is rewritten.
+  /// A couple that bridges TWO parent families (the blended case — each spouse
+  /// has their own ancestors) is nudged toward the midpoint of both so it
+  /// straddles them instead of floating under one with a long cross-link. The
+  /// nudge is UNCLAMPED; a left→right separation sweep per level (deepest
+  /// first) then guarantees no two subtrees overlap — so no foreign child can
+  /// land inside another pair's child-bus span (B2, safe by construction). The
+  /// two iterate to convergence. False roots (B3) are reseeded near their
+  /// parents. Levels (Y) are preserved; only X is rewritten.
   void _enforceContiguousSubtreeBlocks(
     Map<String, Offset> positions,
     Map<int, List<_SpouseGroup>> groupsByLevel,
     Map<String, Set<String>> childToParents,
+    Map<String, Set<String>> parentToChildren,
     Map<String, FamilyPerson> peopleById, {
     required double componentStartX,
   }) {
@@ -4184,13 +4190,23 @@ class _TreeLayoutEngine {
         group.memberIds.length;
 
     // 1) Assign each group to a single primary parent group + collect kids.
+    //    Also record ALL resolved parent families per group: a group with 2+
+    //    is a BRIDGE (blended/cross case) and is ordered to the edge of its
+    //    block toward its other family (step 2) so it can straddle. A group
+    //    that references parents but resolves NONE is a FALSE root (B3) —
+    //    reseeded near its parents in step 5 instead of dumped far-left.
     final childGroups = <_SpouseGroup, List<_SpouseGroup>>{};
     final primaryParent = <_SpouseGroup, _SpouseGroup?>{};
+    final parentFamiliesOf = <_SpouseGroup, List<_SpouseGroup>>{};
+    final falseRootParentIds = <_SpouseGroup, Set<String>>{};
     for (final group in allGroups) {
       final groupLevel = levelOfGroup[group]!;
       final linkCounts = <_SpouseGroup, int>{};
+      final referencedParentIds = <String>{};
       for (final memberId in group.memberIds) {
         for (final parentId in childToParents[memberId] ?? const <String>{}) {
+          if (group.memberIds.contains(parentId)) continue; // self/spouse edge
+          referencedParentIds.add(parentId);
           final parentGroup = groupOfMember[parentId];
           if (parentGroup == null) continue;
           final parentLevel = levelOfGroup[parentGroup];
@@ -4208,25 +4224,47 @@ class _TreeLayoutEngine {
             return groupCenterX(a.key).compareTo(groupCenterX(b.key));
           });
         primary = entries.first.key;
+        parentFamiliesOf[group] = entries.map((e) => e.key).toList();
       }
       primaryParent[group] = primary;
       if (primary != null) {
         childGroups.putIfAbsent(primary, () => <_SpouseGroup>[]).add(group);
+      } else if (referencedParentIds.isNotEmpty) {
+        falseRootParentIds[group] = referencedParentIds;
       }
     }
 
-    // 2) Order each parent's children left→right by current X (preserves the
-    //    arrangement the earlier passes settled), tie → descendant weight.
-    for (final kids in childGroups.values) {
+    // 2) Order each parent's children by a STRUCTURAL key, not the greedy
+    //    groupCenterX from the prior passes (B4 — that inherited the very
+    //    interleave drift we're fixing and was non-deterministic). A bridge
+    //    child is biased to the block EDGE toward its OTHER parent family so it
+    //    can straddle (the side it must reach); the rest order by descendant
+    //    weight (heaviest first) then a stable person compare, matching the
+    //    convention already used in _buildGroupsByLevel.
+    childGroups.forEach((family, kids) {
+      final familyX = groupCenterX(family);
+      double bridgeSide(_SpouseGroup child) {
+        final families = parentFamiliesOf[child];
+        if (families == null || families.length < 2) return 0;
+        final others = families.where((g) => g != family).toList();
+        if (others.isEmpty) return 0;
+        final othersMean =
+            others.map(groupCenterX).reduce((a, b) => a + b) / others.length;
+        return (othersMean - familyX).sign;
+      }
+
       kids.sort((a, b) {
-        final centerCompare = groupCenterX(a).compareTo(groupCenterX(b));
-        if (centerCompare != 0) return centerCompare;
+        final sideCompare = bridgeSide(a).compareTo(bridgeSide(b));
+        if (sideCompare != 0) return sideCompare;
+        final aWeight = _groupDescendantWeight(a.memberIds, parentToChildren);
+        final bWeight = _groupDescendantWeight(b.memberIds, parentToChildren);
+        if (aWeight != bWeight) return bWeight.compareTo(aWeight);
         return _comparePersons(
           peopleById[a.memberIds.first]!,
           peopleById[b.memberIds.first]!,
         );
       });
-    }
+    });
 
     // 3) Reserve subtree width bottom-up.
     final widthOf = <_SpouseGroup, double>{};
@@ -4307,13 +4345,7 @@ class _TreeLayoutEngine {
       cursor += widthOf[group]! + InteractiveFamilyTree.siblingSeparation;
     }
 
-    // 5) Bridge recenter: a couple that is a child of TWO parent families
-    //    (the blended-family case — each spouse has their own ancestors in
-    //    the tree) is placed under a single primary block above, which would
-    //    leave the other grandparents floating with a long cross-link. Shift
-    //    each such couple + its whole subtree toward the midpoint of its two
-    //    parent families so it STRADDLES them, clamped so it never crosses a
-    //    level-neighbour's subtree (keeps the contiguity guarantee intact).
+    // Subtree helpers shared by the recenter, reseed and sweep below.
     List<String> subtreeMembers(_SpouseGroup group) {
       final out = <String>[];
       final stack = <_SpouseGroup>[group];
@@ -4338,42 +4370,73 @@ class _TreeLayoutEngine {
       return <double>[lo, hi];
     }
 
-    final levelsShallowFirst = groupsByLevel.keys.toList()..sort();
-    for (final level in levelsShallowFirst) {
-      final levelGroups = [...(groupsByLevel[level] ?? const <_SpouseGroup>[])]
-        ..sort((a, b) => groupCenterX(a).compareTo(groupCenterX(b)));
-      for (var index = 0; index < levelGroups.length; index++) {
-        final group = levelGroups[index];
-        final parentFamilies = <_SpouseGroup>{};
-        for (final memberId in group.memberIds) {
-          for (final parentId in childToParents[memberId] ?? const <String>{}) {
-            final parentGroup = groupOfMember[parentId];
-            if (parentGroup == null) continue;
-            if ((levelOfGroup[parentGroup] ?? level) >= level) continue;
-            parentFamilies.add(parentGroup);
+    void shiftSubtree(_SpouseGroup group, double shift) {
+      if (shift.abs() < 0.5) return;
+      for (final memberId in subtreeMembers(group)) {
+        final current = positions[memberId]!;
+        positions[memberId] = Offset(current.dx + shift, current.dy);
+      }
+    }
+
+    // 5) Orphan reseed (B3): a false root (parents referenced but none
+    //    resolved to a placed group) was laid out at the component's far-left
+    //    corner. Pull its subtree to the mean X of whatever parents ARE
+    //    positioned. The sweep below resolves any overlap this introduces.
+    falseRootParentIds.forEach((group, parentIds) {
+      final parentXs = parentIds
+          .map((id) => positions[id]?.dx)
+          .whereType<double>()
+          .toList();
+      if (parentXs.isEmpty) return;
+      final target = parentXs.reduce((a, b) => a + b) / parentXs.length;
+      shiftSubtree(group, target - groupCenterX(group));
+    });
+
+    // 6) Bridge recenter + separation sweep (B2). A bridge couple sits at the
+    //    edge of its primary block (step 2) toward its other parent family;
+    //    nudge it + its subtree toward the midpoint of its parent families so
+    //    it STRADDLES them. The nudge is UNCLAMPED — instead of the old fragile
+    //    immediate-neighbour clamp, a final left→right separation sweep per
+    //    level makes it safe BY CONSTRUCTION: no two subtrees overlap, so no
+    //    foreign child can land inside another pair's child-bus span. The sweep
+    //    settles families, so we iterate {sweep → recentre bridges} until the
+    //    inter-family gap opens and the midpoint stops moving (converges fast),
+    //    then sweep once more so the invariant holds after the last recentre.
+    final bridges = parentFamiliesOf.entries
+        .where((e) => e.value.length >= 2)
+        .map((e) => e.key)
+        .toList()
+      ..sort((a, b) => levelOfGroup[a]!.compareTo(levelOfGroup[b]!));
+    final sweepLevelsDeepFirst = groupsByLevel.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+    void separationSweep() {
+      for (final level in sweepLevelsDeepFirst) {
+        final ordered = [...(groupsByLevel[level] ?? const <_SpouseGroup>[])]
+          ..sort((a, b) => subtreeExtent(a)[0].compareTo(subtreeExtent(b)[0]));
+        var runningRight = double.negativeInfinity;
+        for (final group in ordered) {
+          final extent = subtreeExtent(group);
+          if (runningRight.isFinite &&
+              extent[0] <
+                  runningRight + InteractiveFamilyTree.siblingSeparation) {
+            shiftSubtree(
+              group,
+              runningRight + InteractiveFamilyTree.siblingSeparation - extent[0],
+            );
           }
-        }
-        if (parentFamilies.length < 2) continue; // not a bridge
-        final target =
-            parentFamilies.map(groupCenterX).reduce((a, b) => a + b) /
-                parentFamilies.length;
-        var shift = target - groupCenterX(group);
-        final extent = subtreeExtent(group);
-        if (shift < 0 && index > 0) {
-          final leftBound = subtreeExtent(levelGroups[index - 1])[1] +
-              InteractiveFamilyTree.siblingSeparation;
-          shift = max(shift, leftBound - extent[0]);
-        } else if (shift > 0 && index < levelGroups.length - 1) {
-          final rightBound = subtreeExtent(levelGroups[index + 1])[0] -
-              InteractiveFamilyTree.siblingSeparation;
-          shift = min(shift, rightBound - extent[1]);
-        }
-        if (shift.abs() < 0.5) continue;
-        for (final memberId in subtreeMembers(group)) {
-          final current = positions[memberId]!;
-          positions[memberId] = Offset(current.dx + shift, current.dy);
+          runningRight = subtreeExtent(group)[1];
         }
       }
+    }
+
+    for (var iteration = 0; iteration < 4; iteration++) {
+      for (final bridge in bridges) {
+        final centers =
+            parentFamiliesOf[bridge]!.map(groupCenterX).toList();
+        final mid = centers.reduce((a, b) => a + b) / centers.length;
+        shiftSubtree(bridge, mid - groupCenterX(bridge));
+      }
+      separationSweep();
     }
   }
 
