@@ -2379,7 +2379,8 @@ test("google fresh signup WITHOUT consent → requiresConsent, no account create
     const response = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({idToken: "tok-no-consent"}),
+      // consentCapable:true → a consent-aware client opts INTO the gate.
+      body: JSON.stringify({idToken: "tok-no-consent", consentCapable: true}),
     });
     // 200 (flow step), NOT an auth error — client shows the consent modal.
     assert.equal(response.status, 200);
@@ -2390,6 +2391,49 @@ test("google fresh signup WITHOUT consent → requiresConsent, no account create
     // The account must NOT exist yet.
     const created = await ctx.store.findUserByEmail("consent-gate@rodnya.app");
     assert.equal(created, null, "account must not be created without consent");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("google legacy client WITHOUT consentCapable → account created, no gate", async () => {
+  // Rollout safety: an old client (Android 1.0.18 / pre-update web) sends
+  // neither consentCapable nor consentDocVersion. It must NOT be gated —
+  // account is created exactly as before, so the unconditional gate doesn't
+  // break new signups on clients that can't handle a requiresConsent reply.
+  const googleTokenVerifier = {
+    async verifyIdToken() {
+      return {
+        sub: "google-sub-legacy",
+        email: "legacy-client@rodnya.app",
+        email_verified: true,
+        name: "Legacy Client",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  try {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "tok-legacy"}),
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.ok(payload.accessToken, "legacy client still gets a session");
+    assert.equal(payload.user.email, "legacy-client@rodnya.app");
+
+    const created = await ctx.store.findUserByEmail("legacy-client@rodnya.app");
+    assert.ok(created, "account created for legacy client");
+    assert.ok(!created.consentAt, "no consent timestamp for legacy signup");
+    assert.equal(created.consentDocVersion, null);
   } finally {
     await stopTestServer(ctx);
   }

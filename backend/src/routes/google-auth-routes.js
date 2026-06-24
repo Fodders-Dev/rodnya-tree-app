@@ -60,14 +60,19 @@ function registerGoogleAuthRoutes(
         }
 
         // 152-ФЗ / RuStore: a brand-new social account needs the same
-        // affirmative consent the email-registration checkbox captures.
-        // Without a consentDocVersion we DON'T create the account — we ask the
-        // client to show the consent step and re-POST. Returned as HTTP 200 so
-        // the client treats it as a flow step, not an auth error.
+        // affirmative consent the email-registration checkbox captures. But
+        // the gate is rollout-guarded by `consentCapable` so it ONLY applies
+        // to clients that know how to handle a requiresConsent response — old
+        // clients (Android 1.0.18, pre-update web) would otherwise break on a
+        // response they don't understand. Three-way:
+        //   consentDocVersion present     → consent given, create with it.
+        //   consentCapable & no version   → ask: 200 {requiresConsent:true}.
+        //   neither (legacy client)       → create as before, NO gate.
         const consentDocVersion = String(
           req.body?.consentDocVersion || "",
         ).trim();
-        if (!consentDocVersion) {
+        const consentCapable = req.body?.consentCapable === true;
+        if (!consentDocVersion && consentCapable) {
           res.json({requiresConsent: true, provider: "google"});
           return;
         }
@@ -78,7 +83,7 @@ function registerGoogleAuthRoutes(
           password: null,
           authIdentity: googleIdentity,
           photoUrl: googleIdentity.metadata?.picture || null,
-          consentDocVersion,
+          consentDocVersion: consentDocVersion || null,
         });
         isFreshSignup = true;
       }

@@ -597,6 +597,10 @@ class CustomApiAuthService implements AuthServiceInterface {
       path: '/v1/auth/google',
       payload: {
         'idToken': idToken,
+        // This build understands a requiresConsent response, so it opts INTO
+        // the consent gate. Old clients omit this flag and are not gated
+        // (rollout safety). On the consent retry consentDocVersion is also set.
+        'consentCapable': true,
         if (consentDocVersion != null && consentDocVersion.isNotEmpty)
           'consentDocVersion': consentDocVersion,
       },
@@ -866,6 +870,9 @@ class CustomApiAuthService implements AuthServiceInterface {
       queryParameters: <String, String>{
         if (linkMode) 'intent': 'link',
         if (finalRedirect != null) 'finalRedirect': finalRedirect,
+        // This build understands the requires_consent handoff → opts into the
+        // gate. Old clients omit this and are not gated (rollout safety).
+        'consentCapable': 'true',
         // Set only on the re-start after the consent modal; carried through
         // the redirect dance so the callback can write it on account creation.
         if (consentDocVersion != null && consentDocVersion.isNotEmpty)

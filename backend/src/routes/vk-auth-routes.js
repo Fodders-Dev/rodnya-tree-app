@@ -93,12 +93,14 @@ function registerVkAuthRoutes(
             ? finalRedirectRaw
             : null;
     // 152-ФЗ: carry the consent version (set on the client's re-start after
-    // the consent modal) through the redirect dance so the callback can write
-    // it when creating a brand-new VK account.
+    // the consent modal) AND the consentCapable capability flag (sent by a
+    // consent-aware client on the first attempt) through the redirect dance so
+    // the callback can apply the same rollout-guarded gate as Google.
     const consentDocVersion =
         typeof req.query?.consentDocVersion === "string"
             ? req.query.consentDocVersion.trim()
             : "";
+    const consentCapable = String(req.query?.consentCapable || "") === "true";
     const authFlowHandoff = await store.createAuthHandoff({
       type: "vk_auth_flow",
       payload: {
@@ -108,6 +110,7 @@ function registerVkAuthRoutes(
         deviceContext,
         finalRedirect,
         consentDocVersion: consentDocVersion || null,
+        consentCapable,
       },
     });
 
@@ -363,17 +366,18 @@ function registerVkAuthRoutes(
         return;
       }
 
-      // 152-ФЗ / RuStore: a brand-new VK account needs the same affirmative
-      // consent the email-registration checkbox captures. The consent version
-      // was stashed at /start (set by the client's re-start after the consent
-      // modal). Without it, DON'T create the account — hand back a
-      // requires_consent result so the client shows the consent step and
-      // re-runs the VK flow with consentDocVersion.
+      // 152-ФЗ / RuStore: same rollout-guarded gate as Google (see
+      // google-auth-routes). consentDocVersion + consentCapable were stashed
+      // at /start. Three-way:
+      //   consentDocVersion present    → consent given, create with it.
+      //   consentCapable & no version  → requires_consent handoff (ask).
+      //   neither (legacy client)      → create as before, NO gate.
       const consentDocVersion =
           typeof authFlowHandoff.payload?.consentDocVersion === "string"
               ? authFlowHandoff.payload.consentDocVersion.trim()
               : "";
-      if (!consentDocVersion) {
+      const consentCapable = authFlowHandoff.payload?.consentCapable === true;
+      if (!consentDocVersion && consentCapable) {
         const authHandoff = await store.createAuthHandoff({
           type: "vk_auth_result",
           payload: {
@@ -395,7 +399,7 @@ function registerVkAuthRoutes(
         password: null,
         authIdentity: vkIdentity,
         photoUrl: vkIdentity.metadata?.avatar || null,
-        consentDocVersion,
+        consentDocVersion: consentDocVersion || null,
       });
       const sessionTokens = await store.createSession(user.id, effectiveDeviceContext);
       const authHandoff = await store.createAuthHandoff({
