@@ -2493,6 +2493,141 @@ test("google fresh signup WITH consent → account created + consent recorded", 
   }
 });
 
+test("sanitizeFinalRedirect allows only same-origin web + the app deep-link scheme", () => {
+  const {sanitizeFinalRedirect} = require("../src/routes/auth-redirect-util");
+  const appUrl = "https://rodnya-tree.ru";
+  // Allowed — the app's own web origin and its mobile deep-link scheme.
+  assert.equal(
+    sanitizeFinalRedirect("rodnya://oauth/callback", appUrl),
+    "rodnya://oauth/callback",
+  );
+  assert.equal(
+    sanitizeFinalRedirect("https://rodnya-tree.ru/oauth/callback", appUrl),
+    "https://rodnya-tree.ru/oauth/callback",
+  );
+  // Blocked — auth-code exfiltration, suffix trick, scheme downgrade, junk.
+  assert.equal(sanitizeFinalRedirect("https://evil.example/grab", appUrl), null);
+  assert.equal(
+    sanitizeFinalRedirect("https://rodnya-tree.ru.evil.example", appUrl),
+    null,
+  );
+  assert.equal(sanitizeFinalRedirect("http://rodnya-tree.ru/x", appUrl), null);
+  assert.equal(sanitizeFinalRedirect("rodnyabilling://x", appUrl), null);
+  assert.equal(sanitizeFinalRedirect("javascript://%0aalert(1)", appUrl), null);
+  assert.equal(sanitizeFinalRedirect("not-a-url", appUrl), null);
+  assert.equal(sanitizeFinalRedirect("", appUrl), null);
+  assert.equal(sanitizeFinalRedirect(null, appUrl), null);
+});
+
+test("vk start ignores an off-origin finalRedirect → auth code not exfiltrated", async () => {
+  // Open-redirect guard: a crafted finalRedirect=attacker host must NOT
+  // receive the single-use auth code; it falls back to the app's own origin.
+  const vkAuthClient = {
+    isEnabled: true,
+    webAppId: "54549672",
+    async exchangeCode({code}) {
+      return {access_token: `vk-token-${code}`};
+    },
+    async fetchUserInfo() {
+      return {
+        user: {
+          user_id: "vk-redir",
+          first_name: "VK",
+          last_name: "Redir",
+          email: "vk-redir@rodnya.app",
+        },
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      publicAppUrl: "https://rodnya-tree.ru",
+      publicApiUrl: "",
+      vkWebAppId: "54549672",
+      vkAuthEnabled: true,
+    },
+    vkAuthClient,
+  });
+  try {
+    const startResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/start?finalRedirect=${encodeURIComponent("https://evil.example/grab")}`,
+      {redirect: "manual"},
+    );
+    assert.equal(startResponse.status, 302);
+    const state = new URL(startResponse.headers.get("location")).searchParams.get(
+      "state",
+    );
+    const callbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/callback?state=${encodeURIComponent(state)}&code=redir-code&device_id=device-evil`,
+      {redirect: "manual"},
+    );
+    assert.equal(callbackResponse.status, 302);
+    const location = callbackResponse.headers.get("location");
+    assert.ok(
+      !location.includes("evil.example"),
+      "auth code must NOT be redirected to an off-origin host",
+    );
+    assert.ok(
+      location.startsWith("https://rodnya-tree.ru"),
+      "falls back to the app's own origin",
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("vk start honors the app's rodnya:// deep-link finalRedirect", async () => {
+  // Positive case: the legit mobile deep-link must still work after the guard.
+  const vkAuthClient = {
+    isEnabled: true,
+    webAppId: "54549672",
+    async exchangeCode({code}) {
+      return {access_token: `vk-token-${code}`};
+    },
+    async fetchUserInfo() {
+      return {
+        user: {
+          user_id: "vk-deeplink",
+          first_name: "VK",
+          last_name: "Deeplink",
+          email: "vk-deeplink@rodnya.app",
+        },
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      publicAppUrl: "https://rodnya-tree.ru",
+      publicApiUrl: "",
+      vkWebAppId: "54549672",
+      vkAuthEnabled: true,
+    },
+    vkAuthClient,
+  });
+  try {
+    const startResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/start?finalRedirect=${encodeURIComponent("rodnya://oauth/callback")}`,
+      {redirect: "manual"},
+    );
+    const state = new URL(startResponse.headers.get("location")).searchParams.get(
+      "state",
+    );
+    const callbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/callback?state=${encodeURIComponent(state)}&code=deeplink-code&device_id=device-deeplink`,
+      {redirect: "manual"},
+    );
+    assert.equal(callbackResponse.status, 302);
+    const location = callbackResponse.headers.get("location");
+    assert.ok(
+      location.startsWith("rodnya://oauth/callback"),
+      "legit mobile deep-link redirect is preserved",
+    );
+    assert.match(location, /vkAuthCode=/);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("google link endpoint attaches google to the current account and enables later google login", async () => {
   const googleTokenVerifier = {
     async verifyIdToken(idToken) {

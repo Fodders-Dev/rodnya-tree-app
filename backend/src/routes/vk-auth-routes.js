@@ -2,6 +2,7 @@ const {
   buildVkAuthorizeUrl,
   createVkPkcePair,
 } = require("../vk-auth");
+const {sanitizeFinalRedirect} = require("./auth-redirect-util");
 
 function resolveVkDisplayName(user) {
   const explicitName = [
@@ -64,10 +65,14 @@ function registerVkAuthRoutes(
       vkAuthCode: code,
       ...(intent === "link" ? {vkIntent: "link"} : {}),
     };
-    if (finalRedirect && /^[a-z][a-z0-9+.-]*:\/\//.test(String(finalRedirect))) {
-      const sep = String(finalRedirect).includes("?") ? "&" : "?";
+    // Single output chokepoint: only an allowlisted finalRedirect ever
+    // receives the auth code; anything else falls back to the app's own
+    // /#/login (blocks open-redirect auth-code exfiltration).
+    const safeRedirect = sanitizeFinalRedirect(finalRedirect, resolvePublicAppUrl());
+    if (safeRedirect) {
+      const sep = safeRedirect.includes("?") ? "&" : "?";
       const query = new URLSearchParams(params).toString();
-      return `${finalRedirect}${sep}${query}`;
+      return `${safeRedirect}${sep}${query}`;
     }
     const query = new URLSearchParams(params);
     return `${resolvePublicAppUrl()}/#/login?${query.toString()}`;
@@ -88,10 +93,12 @@ function registerVkAuthRoutes(
     const finalRedirectRaw = typeof req.query?.finalRedirect === "string"
         ? req.query.finalRedirect
         : null;
-    const finalRedirect =
-        finalRedirectRaw && /^[a-z][a-z0-9+.-]*:\/\//.test(finalRedirectRaw)
-            ? finalRedirectRaw
-            : null;
+    // Don't even stash an off-origin redirect in the handoff (defence in
+    // depth — the builder re-checks at the output chokepoint too).
+    const finalRedirect = sanitizeFinalRedirect(
+        finalRedirectRaw,
+        resolvePublicAppUrl(),
+    );
     // 152-ФЗ: carry the consent version (set on the client's re-start after
     // the consent modal) AND the consentCapable capability flag (sent by a
     // consent-aware client on the first attempt) through the redirect dance so

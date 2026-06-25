@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const {sanitizeFinalRedirect} = require("./auth-redirect-util");
 
 function escapeHtml(value) {
   return String(value || "")
@@ -156,13 +157,15 @@ function registerTelegramAuthRoutes(
       telegramAuthCode: code,
       ...(intent === "link" ? {telegramIntent: "link"} : {}),
     };
-    if (finalRedirect && /^[a-z][a-z0-9+.-]*:\/\//.test(String(finalRedirect))) {
-      // Custom scheme path — append the auth code to whatever URI the
-      // mobile client registered. We accept ANY rfc3986-style scheme
-      // so flutter_app_links etc. all work.
-      const sep = String(finalRedirect).includes("?") ? "&" : "?";
+    // Single output chokepoint: only an allowlisted finalRedirect (the app's
+    // own web origin, or its rodnya:// deep-link scheme) ever receives the
+    // auth code; anything else falls back to the app's own /#/login. This
+    // blocks open-redirect auth-code exfiltration to an attacker host.
+    const safeRedirect = sanitizeFinalRedirect(finalRedirect, resolvePublicAppUrl());
+    if (safeRedirect) {
+      const sep = safeRedirect.includes("?") ? "&" : "?";
       const query = new URLSearchParams(params).toString();
-      return `${finalRedirect}${sep}${query}`;
+      return `${safeRedirect}${sep}${query}`;
     }
     const query = new URLSearchParams(params);
     return `${resolvePublicAppUrl()}/#/login?${query.toString()}`;
