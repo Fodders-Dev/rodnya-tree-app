@@ -669,7 +669,18 @@ class _MyAppState extends State<MyApp> {
         // версии sideload-сборки. Оборачивает всё приложение (как
         // CallRuntimeHost) — не трогает go_router-роуты.
         wrapped = AppUpdateGate(child: wrapped);
-        return wrapped;
+        // Cap runaway OS font scaling — the dominant cause of an oversized,
+        // cramped UI (esp. chat) on phones with an enlarged system font —
+        // while still allowing mild accessibility scaling. Never below 1.0.
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: MediaQuery.textScalerOf(context).clamp(
+              minScaleFactor: 1.0,
+              maxScaleFactor: 1.15,
+            ),
+          ),
+          child: wrapped,
+        );
       },
     );
   }

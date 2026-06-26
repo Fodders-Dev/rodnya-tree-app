@@ -1461,7 +1461,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           },
           onLongPress: () => _openChatActions(chat),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
             child: Row(
               children: [
                 Stack(
@@ -1475,7 +1475,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
                         final ringSoft =
                             useWarm ? tokens.warmSoft : tokens.accentSoft;
                         return CircleAvatar(
-                          radius: 24,
+                          radius: 22,
                           backgroundImage: avatarImage,
                           backgroundColor:
                               avatarImage == null ? ring : ringSoft,
@@ -1554,7 +1554,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
                           ),
                         ],
                       ),
-                      const SizedBox(height: 5),
+                      const SizedBox(height: 3),
                       Row(
                         children: [
                           if (isLastFromMe && !hasDraft) ...[
