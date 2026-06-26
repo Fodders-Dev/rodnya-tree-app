@@ -618,6 +618,12 @@ function createApp({
     req.requestId = forwardedRequestId || crypto.randomUUID();
     req.startedAt = Date.now();
     res.setHeader("x-request-id", req.requestId);
+    // Authed API responses must never be cached by any upstream (proxy / CDN /
+    // browser). Without this, a shared cache could serve a stale GET /v1/chats
+    // — the suspected cause of a group's updated photoUrl missing from the chat
+    // list while the details endpoint returned it fresh. The backend serves
+    // only dynamic, per-user API data, so a blanket no-store is safe.
+    res.setHeader("Cache-Control", "no-store");
     if (normalizedRuntimeInfo.releaseLabel) {
       res.setHeader("x-rodnya-release", normalizedRuntimeInfo.releaseLabel);
     }
