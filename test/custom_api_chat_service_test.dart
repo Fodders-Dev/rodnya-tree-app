@@ -970,6 +970,127 @@ void main() {
     },
   );
 
+  test(
+    'CustomApiChatService refresh never drops messages on an empty or '
+    'shorter server page (P0 data-loss guard)',
+    () async {
+      // Regression: a no-afterId refresh (fired on every websocket reconnect /
+      // app resume) used to REPLACE the local list with the latest server
+      // page — an empty page wiped everything, a 100-row page truncated longer
+      // chats. The fix merges (union by id). Drive the no-afterId path via
+      // refreshMessages with an empty page then a latest-only page; assert no
+      // message is ever dropped.
+      var getCalls = 0;
+      Map<String, dynamic> msg(
+        String id,
+        String text,
+        String ts,
+        String sender,
+      ) =>
+          {
+            'id': id,
+            'chatId': 'chat-1',
+            'senderId': sender,
+            'text': text,
+            'timestamp': ts,
+            'isRead': true,
+            'participants': ['user-1', 'other-user'],
+            'senderName': sender == 'user-1' ? 'Dev User' : 'Собеседник',
+          };
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/chats/chat-1/messages' &&
+            request.method == 'GET') {
+          getCalls += 1;
+          final List<Map<String, dynamic>> messages;
+          if (getCalls == 1) {
+            messages = [
+              msg('m-1', 'Раз', '2026-04-01T10:00:00.000Z', 'other-user'),
+              msg('m-2', 'Два', '2026-04-01T10:01:00.000Z', 'user-1'),
+              msg('m-3', 'Три', '2026-04-01T10:02:00.000Z', 'other-user'),
+            ];
+          } else if (getCalls == 2) {
+            messages = const <Map<String, dynamic>>[]; // transient empty page
+          } else {
+            messages = [
+              msg('m-3', 'Три', '2026-04-01T10:02:00.000Z', 'other-user'),
+            ]; // latest-only short page
+          }
+          return http.Response(
+            jsonEncode({'messages': messages, 'hasMore': false}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final chatService = CustomApiChatService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+      );
+
+      final snapshots = <List<ChatMessage>>[];
+      final subscription =
+          chatService.getMessagesStream('chat-1').listen(snapshots.add);
+      addTearDown(subscription.cancel);
+
+      // First full (no-afterId) fetch lands 3 messages, newest first.
+      for (var i = 0;
+          i < 50 && !(snapshots.isNotEmpty && snapshots.last.length == 3);
+          i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(snapshots.last.map((m) => m.id).toList(), ['m-3', 'm-2', 'm-1']);
+
+      // Reconnect-style no-afterId refresh returns an EMPTY page → must NOT wipe.
+      await chatService.refreshMessages('chat-1');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(getCalls >= 2, isTrue);
+      expect(
+        snapshots.last.map((m) => m.id).toList(),
+        ['m-3', 'm-2', 'm-1'],
+        reason: 'empty server page must not drop existing messages',
+      );
+
+      // Another no-afterId refresh returns only the latest → older preserved.
+      await chatService.refreshMessages('chat-1');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(getCalls >= 3, isTrue);
+      expect(
+        snapshots.last.map((m) => m.id).toList(),
+        ['m-3', 'm-2', 'm-1'],
+        reason: 'a latest-only short page must not truncate older messages',
+      );
+    },
+  );
+
   test('CustomApiChatService sends forwarded attachments without reupload',
       () async {
     Map<String, dynamic>? sentBody;

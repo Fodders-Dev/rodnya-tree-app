@@ -1333,10 +1333,20 @@ class CustomApiChatService
         afterId: hasAfterId ? normalizedAfterId : null,
       );
       final pageMessages = page.messages;
+      // NEVER destructively replace the local list with a server page.
+      // A no-afterId refresh fetches only the latest 100, and it fires on
+      // every websocket reconnect / app resume. The old `= pageMessages` here
+      // caused data loss two ways: (1) truncation — a chat with up to 200
+      // messages in memory/cache was cut to the newest 100, unrecoverable
+      // (there is no scroll-up pagination); (2) empty-wipe — a transient empty
+      // page (backend listChatMessages returns [] mid group/branch mutation)
+      // erased everything. Always MERGE (union by id): empty/short pages
+      // preserve existing messages; genuine deletions arrive separately via
+      // realtime chat.message.deleted events (_removeRealtimeMessage).
       state.messages = hasAfterId
           ? _mergeMessageLists(state.messages, pageMessages)
           : state.messagesVersion == versionAtRequestStart
-              ? pageMessages
+              ? _mergeMessageLists(state.messages, pageMessages)
               : _mergeMessageListsPreservingExisting(
                   state.messages,
                   pageMessages,
