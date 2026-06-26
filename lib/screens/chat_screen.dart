@@ -174,6 +174,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isApplyingDraft = false;
   int _draftPersistenceVersion = 0;
   String? _lastPersistedDraftKey;
+  // Self-echo suppression: on send, the debounced draft PUT for the last
+  // keystroke can echo back over the websocket and re-type the sent text into
+  // the composer. We record the just-sent text + a short window to drop it.
+  String? _lastSentDraftEcho;
+  DateTime? _draftEchoSuppressUntil;
   final ScrollController _messagesScrollController = ScrollController();
   final GlobalKey _unreadDividerKey = GlobalKey();
   bool _showJumpToLatestButton = false;
@@ -1745,6 +1750,10 @@ class _ChatScreenState extends State<ChatScreen> {
       _recordingController.markSending();
     }
     _messageController.clear();
+    // Drop the echo of this just-sent draft if the debounced PUT lands back
+    // over the websocket right after this clear (see _handleRemoteDraftUpdate).
+    _lastSentDraftEcho = messageText;
+    _draftEchoSuppressUntil = DateTime.now().add(const Duration(seconds: 4));
 
     setState(() {
       _selectedEdit = null;
@@ -2657,6 +2666,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final draft =
         rawDraft == null ? null : ChatDraftSnapshot.fromJson(rawDraft);
     final nextText = draft?.text ?? '';
+    // Suppress the echo of our OWN just-sent draft: a debounced PUT for the
+    // last keystroke can arrive right after send cleared the field, re-typing
+    // the sent text. If it matches what we just sent (within the window), drop
+    // it entirely — neither persist locally nor inject into the composer.
+    final suppressUntil = _draftEchoSuppressUntil;
+    if (suppressUntil != null &&
+        DateTime.now().isBefore(suppressUntil) &&
+        nextText.trim().isNotEmpty &&
+        nextText.trim() == (_lastSentDraftEcho ?? '').trim()) {
+      return;
+    }
     final draftStore = _draftStore;
     if (nextText.trim().isEmpty) {
       unawaited(
@@ -4086,6 +4106,10 @@ class _ChatScreenState extends State<ChatScreen> {
                               isLatestOwnDirectMessage:
                                   message.id == latestOutgoingMessageId,
                             ),
+                            isGroupedWithAbove: _isGroupedWithAbove(
+                              filteredRemoteMessages,
+                              msgIdx,
+                            ),
                           ),
                           messages: filteredRemoteMessages,
                           messageIndex: msgIdx,
@@ -4116,6 +4140,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         isMe: isMe,
                         isLatestOwnDirectMessage:
                             remoteMessage.id == latestOutgoingMessageId,
+                      ),
+                      isGroupedWithAbove: _isGroupedWithAbove(
+                        filteredRemoteMessages,
+                        messageIdx,
                       ),
                     ),
                     messages: filteredRemoteMessages,
@@ -5029,10 +5057,29 @@ class _ChatScreenState extends State<ChatScreen> {
     return '$days д';
   }
 
+  /// Telegram-style message grouping: a message continues a same-sender run
+  /// when the message displayed directly above it (the older neighbour at
+  /// index+1, since the list is newest-first + reversed) is from the same
+  /// sender within 60s. Continuation messages drop the repeated sender label
+  /// and tighten the inter-bubble gap.
+  bool _isGroupedWithAbove(List<ChatMessage> messages, int index) {
+    final aboveIndex = index + 1;
+    if (aboveIndex < 0 || aboveIndex >= messages.length) {
+      return false;
+    }
+    final current = messages[index];
+    final above = messages[aboveIndex];
+    if (current.senderId != above.senderId) {
+      return false;
+    }
+    return current.timestamp.difference(above.timestamp).abs().inSeconds <= 60;
+  }
+
   Widget _buildRemoteBubble(
     ChatMessage message,
     bool isMe, {
     String? footerLabel,
+    bool isGroupedWithAbove = false,
   }) {
     final messageKey = _remoteMessageKeys.putIfAbsent(
       message.id,
@@ -5101,7 +5148,8 @@ class _ChatScreenState extends State<ChatScreen> {
           },
           child: _ChatBubble(
             isMe: isMe,
-            senderLabel: widget.isGroup && !isMe
+            groupedWithPrev: isGroupedWithAbove,
+            senderLabel: widget.isGroup && !isMe && !isGroupedWithAbove
                 ? _groupSenderLabel(message.senderName, message.senderId)
                 : null,
             text: message.text,
@@ -8623,6 +8671,7 @@ class _ChatBubble extends StatelessWidget {
     required this.isHighlighted,
     this.highlightQuery = '',
     this.senderLabel,
+    this.groupedWithPrev = false,
     this.remoteAttachments = const <ChatAttachment>[],
     this.localAttachments = const <XFile>[],
     this.replyTo,
@@ -8645,6 +8694,7 @@ class _ChatBubble extends StatelessWidget {
   final bool isHighlighted;
   final String highlightQuery;
   final String? senderLabel;
+  final bool groupedWithPrev;
   final List<ChatAttachment> remoteAttachments;
   final List<XFile> localAttachments;
   final ChatReplyReference? replyTo;
@@ -8769,7 +8819,12 @@ class _ChatBubble extends StatelessWidget {
         : null;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 10),
+      padding: EdgeInsets.symmetric(
+        // Telegram-style grouping: consecutive same-sender messages tuck
+        // tighter (1px) than the gap between runs (2px).
+        vertical: groupedWithPrev ? 1 : 2,
+        horizontal: 10,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -8842,9 +8897,10 @@ class _ChatBubble extends StatelessWidget {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 360),
                   curve: Curves.easeOutCubic,
-                  // Reference `.msg`: padding 9px 13px 8px, radius 18 + 6 on
-                  // the tail corner. Tighter than the previous 12/8 +20/6
-                  // and reads as more "bubble-y", less card-y.
+                  // Reference `.msg` (Telegram-tight density pass): padding
+                  // 6px 11px, radius 16 + 6 on the tail corner. Was 9/13/8 +
+                  // 18/6 — recovers vertical space without shrinking the 16px
+                  // body font (kept readable for 50+).
                   //
                   // Special case: a "naked" кружочек skips the bubble
                   // entirely (no padding, no background, no border) and
@@ -8855,7 +8911,7 @@ class _ChatBubble extends StatelessWidget {
                   // video notes do — TG / WA convention.
                   padding: (_isVideoNoteOnly || _isNakedMediaOnly)
                       ? EdgeInsets.zero
-                      : const EdgeInsets.fromLTRB(13, 9, 13, 8),
+                      : const EdgeInsets.fromLTRB(11, 6, 11, 6),
                   decoration: (_isVideoNoteOnly || _isNakedMediaOnly)
                       ? null
                       : BoxDecoration(
@@ -8863,10 +8919,10 @@ class _ChatBubble extends StatelessWidget {
                           gradient: outgoingGradient,
                           border: highlightBorder,
                           borderRadius: BorderRadius.only(
-                            topLeft: const Radius.circular(18),
-                            topRight: const Radius.circular(18),
-                            bottomLeft: Radius.circular(isMe ? 18 : 6),
-                            bottomRight: Radius.circular(isMe ? 6 : 18),
+                            topLeft: const Radius.circular(16),
+                            topRight: const Radius.circular(16),
+                            bottomLeft: Radius.circular(isMe ? 16 : 6),
+                            bottomRight: Radius.circular(isMe ? 6 : 16),
                           ),
                           boxShadow: bubbleShadow,
                         ),
@@ -8966,7 +9022,7 @@ class _ChatBubble extends StatelessWidget {
                       // visible on tap via the lightbox / message
                       // detail sheet.
                       if (!_isNakedMediaOnly && !_isVideoNoteOnly) ...[
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
