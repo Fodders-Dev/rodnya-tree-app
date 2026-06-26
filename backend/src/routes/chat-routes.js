@@ -918,19 +918,24 @@ function registerChatRoutes(
           : message.senderName || "Новое сообщение";
 
       for (const recipientId of recipientIds) {
-        // Если получатель прямо сейчас открыт в этом же чате на
-        // любом своём устройстве (ChatScreen объявил
-        // `chat.active.set` через WS), пуш ему не нужен — он уже
-        // видел сообщение через WS-доставку выше. Закрывает жалобу
-        // «нахуя они вообще шлются когда я в чате уже».
+        // Если получатель прямо сейчас открыт в этом же чате на любом своём
+        // устройстве — пуш не нужен, он уже видел сообщение через WS-доставку
+        // выше.
         if (realtimeHub?.isUserActiveInChat?.(recipientId, message.chatId)) {
           continue;
         }
+        // FIX (латентность): медленный VKPNS-HTTP (AbortSignal.timeout 8с на
+        // мёртвый токен) уходит в фон через awaitPush:false. Раньше res.json
+        // висел за этим циклом → оптимистичный баббл застревал на
+        // «отправляется» и очередь по таймауту 10с роняла его в failed (тот же
+        // баг, что у POST /v1/calls). Запись notification-record остаётся
+        // синхронной — лента/непрочитанные получателя обновляются сразу.
         await createAndDispatchNotification({
           userId: recipientId,
           type: "chat_message",
           title: resolvedNotificationTitle,
           body: resolvedNotificationBody,
+          awaitPush: false,
           data: {
             chatId: message.chatId,
             chatType: chat.type || "direct",

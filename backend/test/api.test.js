@@ -13025,14 +13025,28 @@ test("websocket realtime and push queue work for chat delivery", async () => {
       ),
     );
 
-    const deliveriesResponse = await fetch(
-      `${ctx.baseUrl}/v1/push/deliveries?limit=10`,
-      {
-        headers: {authorization: `Bearer ${bob.accessToken}`},
-      },
-    );
-    assert.equal(deliveriesResponse.status, 200);
-    const deliveriesPayload = await deliveriesResponse.json();
+    // Пуш уходит fire-and-forget (awaitPush:false), поэтому delivery-запись
+    // появляется асинхронно — поллим, пока не приедет «queued».
+    let deliveriesPayload = {deliveries: []};
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const deliveriesResponse = await fetch(
+        `${ctx.baseUrl}/v1/push/deliveries?limit=10`,
+        {
+          headers: {authorization: `Bearer ${bob.accessToken}`},
+        },
+      );
+      assert.equal(deliveriesResponse.status, 200);
+      deliveriesPayload = await deliveriesResponse.json();
+      if (
+        deliveriesPayload.deliveries.some(
+          (delivery) =>
+            delivery.provider === "rustore" && delivery.status === "queued",
+        )
+      ) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     assert.ok(deliveriesPayload.deliveries.length >= 1);
     assert.ok(
       deliveriesPayload.deliveries.some(
@@ -13845,6 +13859,11 @@ test("rustore push delivery sends notification through RuStore API", async () =>
     );
     assert.equal(sendMessageResponse.status, 201);
 
+    // Пуш уходит fire-and-forget (awaitPush:false) — дожидаемся фоновой
+    // доставки до RuStore API перед проверкой.
+    for (let attempt = 0; attempt < 50 && observedRequests.length < 1; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     assert.equal(observedRequests.length, 1);
     assert.equal(
       observedRequests[0].url,

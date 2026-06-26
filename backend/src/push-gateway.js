@@ -58,6 +58,9 @@ class PushGateway {
       : allDevices;
     const deliveries = [];
 
+    // Create the delivery records sequentially (fast local store write) — this
+    // keeps `deliveries` ordered for the return value and avoids racing the
+    // store's read-modify-write blob on concurrent creates.
     for (const device of devices) {
       const delivery = await this.store.createPushDelivery({
         notificationId: notification.id,
@@ -71,9 +74,18 @@ class PushGateway {
       this.logger.info?.(
         `[rodnya-backend] queued push delivery ${delivery.id} for ${device.provider}:${device.platform}`,
       );
-
-      await this._deliverNotification(notification, device, delivery);
     }
+
+    // Deliver in PARALLEL. A single dead token (e.g. a stale RuStore device)
+    // burns the full ~8s AbortSignal timeout; serial delivery made the whole
+    // fan-out take N×8s. allSettled isolates per-device failures — and each
+    // _deliverNotification records its own delivery status — so one slow or
+    // failing device never blocks the others.
+    await Promise.allSettled(
+      devices.map((device, index) =>
+        this._deliverNotification(notification, device, deliveries[index]),
+      ),
+    );
 
     return deliveries;
   }
