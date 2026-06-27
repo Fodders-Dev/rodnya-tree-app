@@ -1430,19 +1430,15 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _pickVideoNote() async {
-    // On native (iOS/Android) we now push an in-app Telegram-style
-    // recorder with a round live preview — user complaint was "почему
-    // у нас кружочки пишутся не так, как в телеграм, а через файл
-    // отдельный?". The OS-native ImagePicker camera flow stays as the
-    // web fallback because <input type=file> can't drive a live
-    // preview loop in the browser.
-    if (kIsWeb) {
-      return _pickVideoAttachment(
-        source: ImageSource.gallery,
-        asVideoNote: true,
-        maxDuration: const Duration(minutes: 2),
-      );
-    }
+    // In-app Telegram-style кружок recorder with a round live preview —
+    // user complaint was "почему у нас кружочки пишутся не так, как в
+    // телеграм, а через файл отдельный?". This now runs on WEB too:
+    // camera_web (≥0.3.5) drives getUserMedia preview + MediaRecorder
+    // video recording, so the old «<input type=file> can't preview»
+    // fallback (which silently no-op'd on web — the file dialog needs a
+    // direct user gesture the long-press loses) is gone. If the camera
+    // is missing / permission denied, the recorder shows its own error
+    // affordance instead of doing nothing.
     if (_selectedEdit != null) {
       setState(() => _selectedEdit = null);
     }
@@ -5106,7 +5102,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (callMetadata != null) {
       return _wrapInEnterAnimation(
         animate: isFirstAppearance,
-        isMe: isMe,
         child: KeyedSubtree(
           key: messageKey,
           child: _buildCallSummaryBubble(message, callMetadata, isMe),
@@ -5115,7 +5110,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     return _wrapInEnterAnimation(
       animate: isFirstAppearance,
-      isMe: isMe,
       child: SwipeToReply(
         key: messageKey,
         isMe: isMe,
@@ -5270,14 +5264,16 @@ class _ChatScreenState extends State<ChatScreen> {
     return DateFormat(pattern, 'ru').format(localTimestamp);
   }
 
-  /// Wraps a remote bubble in a slide-up + fade-in tween that runs
-  /// once on first appearance. Direction depends on isMe so own
-  /// echoed-back messages enter from the right side, peer messages
-  /// from the left — same TG asymmetry. Returns the child unchanged
-  /// when [animate] is false (existing messages, history scroll).
+  /// Wraps a bubble in a slide-up + fade-in tween that runs once on
+  /// first appearance. Pure VERTICAL entrance — matches the optimistic
+  /// outgoing bubble (see _buildOutgoingMessageBubble). The earlier
+  /// horizontal nudge (own from the right, peer from the left) made own
+  /// messages visibly jump right→left when the server echo reconciled a
+  /// just-sent message into a "first appearance" remote bubble — the
+  /// «блок улетает справа налево» the user reported. Returns the child
+  /// unchanged when [animate] is false (existing messages, history scroll).
   Widget _wrapInEnterAnimation({
     required bool animate,
-    required bool isMe,
     required Widget child,
   }) {
     if (!animate) return child;
@@ -5289,10 +5285,7 @@ class _ChatScreenState extends State<ChatScreen> {
         return Opacity(
           opacity: t,
           child: Transform.translate(
-            // Vertical slide up + horizontal nudge from the side the
-            // bubble belongs to. Small horizontal offset (8dp) reads
-            // as "arriving from there" without being distracting.
-            offset: Offset((1 - t) * (isMe ? 12 : -12), (1 - t) * 14),
+            offset: Offset(0, (1 - t) * 14),
             child: c,
           ),
         );

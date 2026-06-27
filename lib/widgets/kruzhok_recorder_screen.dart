@@ -4,6 +4,7 @@ import 'dart:io';
 // camera re-exports XFile (via cross_file), so no separate
 // image_picker / cross_file import needed here.
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -235,11 +236,23 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
 
   Future<XFile> _renameToVideoNote(XFile raw) async {
     final prefix = widget.filenamePrefix;
-    try {
-      final dir = await getTemporaryDirectory();
+    // Web: no dart:io / path_provider. camera_web hands back a `blob:`
+    // XFile (video/webm) — just re-wrap it under a `video_note_*` name so
+    // the chat recognises it as a кружок; the blob path stays valid.
+    if (kIsWeb) {
       final extension = p.extension(raw.path).isNotEmpty
           ? p.extension(raw.path)
-          : '.mp4';
+          : (((raw.mimeType ?? '').toLowerCase().contains('webm'))
+              ? '.webm'
+              : '.mp4');
+      final webName =
+          '${prefix}_${DateTime.now().millisecondsSinceEpoch}$extension';
+      return XFile(raw.path, name: webName, mimeType: raw.mimeType);
+    }
+    try {
+      final dir = await getTemporaryDirectory();
+      final extension =
+          p.extension(raw.path).isNotEmpty ? p.extension(raw.path) : '.mp4';
       final newName =
           '${prefix}_${DateTime.now().millisecondsSinceEpoch}$extension';
       final newPath = p.join(dir.path, newName);
@@ -249,8 +262,7 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
       // Rename can fail across volumes (e.g. cache vs tmp) — fall back
       // to wrapping the original path under a prefixed name. The
       // chat / story side check the filename string, not the path.
-      final fallbackName =
-          '${prefix}_${DateTime.now().millisecondsSinceEpoch}'
+      final fallbackName = '${prefix}_${DateTime.now().millisecondsSinceEpoch}'
           '${p.extension(raw.path).isEmpty ? '.mp4' : p.extension(raw.path)}';
       return XFile(raw.path, name: fallbackName, mimeType: raw.mimeType);
     }
@@ -487,9 +499,7 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  _isRecording
-                      ? _formatDuration(_elapsed)
-                      : widget.titleLabel,
+                  _isRecording ? _formatDuration(_elapsed) : widget.titleLabel,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -512,44 +522,43 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
           child: Center(
             child: Semantics(
               button: true,
-              label: _isRecording
-                  ? 'Остановить запись'
-                  : 'Начать запись',
+              label: _isRecording ? 'Остановить запись' : 'Начать запись',
               child: GestureDetector(
-              onTap: _isRecording
-                  ? () => _stopRecording()
-                  : () => _startRecording(),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: _isRecording ? 80 : 72,
-                height: _isRecording ? 80 : 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _isRecording
-                      ? const Color(0xFFE85A40)
-                      : Colors.white,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.7),
-                    width: 4,
+                onTap: _isRecording
+                    ? () => _stopRecording()
+                    : () => _startRecording(),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: _isRecording ? 80 : 72,
+                  height: _isRecording ? 80 : 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        _isRecording ? const Color(0xFFE85A40) : Colors.white,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      width: 4,
+                    ),
                   ),
-                ),
-                alignment: Alignment.center,
-                child: _isFinishing
-                    ? const SizedBox(
-                        width: 28,
-                        height: 28,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          color: Colors.white,
+                  alignment: Alignment.center,
+                  child: _isFinishing
+                      ? const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(
+                          _isRecording
+                              ? Icons.stop_rounded
+                              : Icons.fiber_manual_record,
+                          size: _isRecording ? 36 : 32,
+                          color: _isRecording ? Colors.white : Colors.red,
                         ),
-                      )
-                    : Icon(
-                        _isRecording ? Icons.stop_rounded : Icons.fiber_manual_record,
-                        size: _isRecording ? 36 : 32,
-                        color: _isRecording ? Colors.white : Colors.red,
-                      ),
+                ),
               ),
-            ),
             ),
           ),
         ),
