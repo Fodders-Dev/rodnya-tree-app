@@ -9,6 +9,12 @@ self.addEventListener('notificationclick', (event) => {
 
 async function handlePushEvent(event) {
   const payload = parsePayload(event);
+  // Silent refresh pings (tree_mutated, etc.) must NEVER raise a banner —
+  // they only exist to wake the app for a quiet refetch. Without this, a
+  // background web client showed «Дерево обновлено» on every tree edit.
+  if (payload.silent) {
+    return;
+  }
   const clientList = await self.clients.matchAll({
     type: 'window',
     includeUncontrolled: true,
@@ -79,6 +85,7 @@ function parsePayload(event) {
     event: null,
     renotify: false,
     requireInteraction: false,
+    silent: false,
     timestamp: Date.now(),
   };
 
@@ -97,6 +104,7 @@ function parsePayload(event) {
       event: parsed.event || fallback.event,
       renotify: parsed.renotify === true,
       requireInteraction: parsed.requireInteraction === true,
+      silent: parsed.silent === true,
       timestamp: Number(parsed.timestamp || Date.now()),
     };
   } catch (_) {

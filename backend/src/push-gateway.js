@@ -239,12 +239,22 @@ class PushGateway {
     // notification field so the OS displays a clean heads-up even
     // when our process is dead.
     const isIncomingCall = this._isCallSignalNotification(notification);
+    // A VKPNS/Firebase message with a top-level `notification` block is
+    // AUTO-DISPLAYED by the OS (and skips our onMessageReceived). That's
+    // correct for chats/replies, but WRONG for two cases that must stay
+    // data-only:
+    //   1. incoming calls — native code renders its own full-screen UI;
+    //   2. SILENT refresh pings (tree_mutated, etc.) — data-only wakes
+    //      RodnyaPushService, which refetches and shows NOTHING. Without
+    //      this, every tree edit auto-displayed «Дерево обновлено» to all
+    //      members, repeatedly — the spam the user reported.
+    const skipOsDisplay = isIncomingCall || notification.silent === true;
     const androidConfig = {
       priority: isIncomingCall ? "HIGH" : "NORMAL",
       ttl: `${this._notificationTtlSeconds(notification)}s`,
-      // Only set the system-display notification block for non-call
-      // pushes. Calls render their own UI from native code.
-      ...(isIncomingCall
+      // System-display notification block only for non-call, non-silent
+      // pushes (calls + silent pings render nothing / their own UI).
+      ...(skipOsDisplay
         ? {}
         : {
             notification: {
@@ -259,9 +269,9 @@ class PushGateway {
     const requestBody = {
       message: {
         token: String(device.token || "").trim(),
-        // Same logic at the message root: data-only for calls, mixed
-        // payload for everything else.
-        ...(isIncomingCall
+        // Same logic at the message root: data-only for calls + silent
+        // pings, mixed payload for everything else.
+        ...(skipOsDisplay
           ? {}
           : {
               notification: {
