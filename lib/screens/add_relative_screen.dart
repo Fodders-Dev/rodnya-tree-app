@@ -143,7 +143,6 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   RelationType? _initialRelationType;
   Gender _gender = Gender.unknown; // Пол текущего пользователя
   bool _isLoading = false;
-  bool _isCheckingTreeState = true;
   bool _isFirstPersonInTree = false;
   bool _isUpdatingMedia = false;
   _RelativeEditorMode _editorMode = _RelativeEditorMode.basic;
@@ -355,7 +354,14 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       _contextPerson == null &&
       _isFirstPersonInTree;
 
-  bool get _isBusy => _isLoading || _isLoadingContext || _isCheckingTreeState;
+  // Perf: the form no longer blocks on the tree-state probe. Fetching the
+  // whole persons list just to learn `relatives.isEmpty` made «Добавление
+  // родственника» hang on a spinner for large trees (the persons read is
+  // O(n²) server-side). _loadTreeState now runs in the background and only
+  // flips `_isFirstPersonInTree`. That flag matters ONLY for the first
+  // person of an EMPTY tree — and an empty tree returns instantly — so a
+  // big (slow) tree is never the first-person case: no flicker, no gating.
+  bool get _isBusy => _isLoading || _isLoadingContext;
 
   bool get _isContextualAdd =>
       !widget.isEditing && (_contextPerson != null || widget.relatedTo != null);
@@ -463,19 +469,17 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     }
   }
 
+  // Background probe (does NOT gate the form — see _isBusy). Resolves
+  // whether this is the first person of an empty tree so the relationship
+  // UI can adapt; for a populated tree it just confirms the default.
   Future<void> _loadTreeState() async {
     try {
       final relatives = await _familyService.getRelatives(widget.treeId);
       if (!mounted) return;
       setState(() {
         _isFirstPersonInTree = relatives.isEmpty;
-        _isCheckingTreeState = false;
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isCheckingTreeState = false;
-      });
       debugPrint('Ошибка при определении состояния дерева: $e');
     }
   }
