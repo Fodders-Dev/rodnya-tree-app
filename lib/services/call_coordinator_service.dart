@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+// hide ConnectionState: Flutter's async ConnectionState collides with
+// LiveKit's room ConnectionState; this file only needs LiveKit's.
+import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -126,6 +128,10 @@ class CallCoordinatorService extends ChangeNotifier
   Timer? _ringingRecoveryTimer;
   Timer? _activeCallRecoveryTimer;
   Timer? _reconnectRestoredTimer;
+  // P2: never let the «Переподключение» overlay wedge forever — if the
+  // LiveKit transport is actually live while the flag is still up, this
+  // watchdog force-clears it.
+  Timer? _reconnectWatchdogTimer;
   String? _ringingRecoveryCallId;
   String? _activeCallRecoveryCallId;
 
@@ -136,6 +142,13 @@ class CallCoordinatorService extends ChangeNotifier
   DateTime? _roomConnectStartedAt;
   bool _isConnectingRoom = false;
   bool _isReconnectingRoom = false;
+  // P2: re-entrancy latch for an ACTUAL in-flight room connect. Kept
+  // SEPARATE from the _isReconnectingRoom DISPLAY flag — previously
+  // _handleRoomDisconnected set _isReconnectingRoom=true and then the
+  // reconnect it triggered early-returned on that same flag (deadlock),
+  // so the room never reconnected and «Переподключение» stuck forever
+  // while audio was actually live.
+  bool _connectAttemptInFlight = false;
   bool _microphoneEnabled = true;
   // True когда LiveKit вернул успех на `setMicrophoneEnabled(true)` но
   // фактическая publication отсутствует (publication == null либо
@@ -958,12 +971,17 @@ class CallCoordinatorService extends ChangeNotifier
     if (_room != null && _connectedRoomName == session.roomName) {
       return;
     }
-    if (_isConnectingRoom || _isReconnectingRoom) {
+    // P2: gate only on an ACTUAL in-flight connect — NOT on the
+    // _isReconnectingRoom display flag, which _handleRoomDisconnected
+    // sets before triggering this very reconnect (the old deadlock).
+    if (_connectAttemptInFlight) {
       return;
     }
 
+    _connectAttemptInFlight = true;
     if (reconnect) {
       _isReconnectingRoom = true;
+      _armReconnectWatchdog();
     } else {
       _isConnectingRoom = true;
     }
@@ -980,6 +998,8 @@ class CallCoordinatorService extends ChangeNotifier
           'Нет доступа к микрофону или камере. Разрешите доступ в настройках приложения.';
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
+      _connectAttemptInFlight = false;
+      _cancelReconnectWatchdog();
       notifyListeners();
       return;
     }
@@ -1006,6 +1026,7 @@ class CallCoordinatorService extends ChangeNotifier
         _isReconnectingRoom = true;
         _connectionError = 'Связь прервалась. Переподключаем...';
         _clearReconnectRestoredBanner();
+        _armReconnectWatchdog();
         notifyListeners();
       })
       ..on<RoomReconnectedEvent>((_) {
@@ -1014,6 +1035,7 @@ class CallCoordinatorService extends ChangeNotifier
         );
         _isReconnectingRoom = false;
         _connectionError = null;
+        _cancelReconnectWatchdog();
         _showReconnectRestoredBannerForMoment();
         _syncConnectionQualityFromRoom(room);
         notifyListeners();
@@ -1119,6 +1141,11 @@ class CallCoordinatorService extends ChangeNotifier
     } finally {
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
+      _connectAttemptInFlight = false;
+      // The attempt is over: success cleared _connectionError (and set
+      // _room); failure set a real error. Either way the watchdog's job
+      // is done — a stuck overlay can't outlive a finished attempt.
+      _cancelReconnectWatchdog();
       notifyListeners();
     }
   }
@@ -1139,6 +1166,7 @@ class CallCoordinatorService extends ChangeNotifier
     _connectionError = 'Связь прервалась. Переподключаем...';
     _isReconnectingRoom = true;
     _clearReconnectRestoredBanner();
+    _armReconnectWatchdog();
     notifyListeners();
     await refreshCurrentCall();
   }
@@ -1273,6 +1301,33 @@ class CallCoordinatorService extends ChangeNotifier
     _reconnectRestoredTimer?.cancel();
     _reconnectRestoredTimer = null;
     _showReconnectRestoredBanner = false;
+  }
+
+  // P2: while «Переподключение» is shown, guarantee it can never wedge on
+  // forever. If after the timeout the LiveKit transport is actually live
+  // (the peer is audible), force-clear the overlay — the old code waited
+  // for a RoomReconnectedEvent that, on a disposed or internally-recovered
+  // room, may never arrive.
+  void _armReconnectWatchdog() {
+    _reconnectWatchdogTimer?.cancel();
+    _reconnectWatchdogTimer = Timer(const Duration(seconds: 12), () {
+      _reconnectWatchdogTimer = null;
+      final room = _room;
+      final live =
+          room != null && room.connectionState == ConnectionState.connected;
+      if (_isReconnectingRoom && live) {
+        _isReconnectingRoom = false;
+        _connectionError = null;
+        _showReconnectRestoredBannerForMoment();
+        _syncConnectionQualityFromRoom(room);
+        notifyListeners();
+      }
+    });
+  }
+
+  void _cancelReconnectWatchdog() {
+    _reconnectWatchdogTimer?.cancel();
+    _reconnectWatchdogTimer = null;
   }
 
   void _clearConnectionQualityState() {
@@ -1882,6 +1937,7 @@ class CallCoordinatorService extends ChangeNotifier
     _cancelRingingRecovery();
     _cancelActiveCallRecovery();
     _clearReconnectRestoredBanner();
+    _cancelReconnectWatchdog();
     unawaited(_callEventsSubscription?.cancel());
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_pushSubscription?.cancel());
