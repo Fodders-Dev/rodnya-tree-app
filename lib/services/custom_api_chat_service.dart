@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
+import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
@@ -24,6 +25,7 @@ import 'chat_draft_store.dart';
 import 'chat_message_cache.dart';
 import 'chat_preview_cache.dart';
 import 'chat_pin_store.dart';
+import 'hive_box_recovery.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
 
@@ -69,6 +71,7 @@ class CustomApiChatService
     StorageServiceInterface? storageService,
     ChatMessageCache? messageCache,
     ChatPreviewCache? previewCache,
+    ChatPreviewOverrideCache? overrideCache,
     AppStatusService? appStatusService,
     Duration? pollInterval,
     Duration? overviewPollInterval,
@@ -80,6 +83,11 @@ class CustomApiChatService
         _storageService = storageService,
         _messageCache = messageCache,
         _previewCache = previewCache,
+        // Persist overrides whenever the app wired a (Hive) preview cache —
+        // that's our reliable "Hive is available" signal. Tests that inject
+        // neither stay fully in-memory; the cold-start test injects its own.
+        _overrideCache = overrideCache ??
+            (previewCache != null ? HiveChatPreviewOverrideCache() : null),
         _appStatusService = appStatusService,
         _pollInterval = pollInterval ?? const Duration(seconds: 3),
         _realtimeFallbackPollInterval = realtimeFallbackPollInterval ??
@@ -106,6 +114,20 @@ class CustomApiChatService
   StreamSubscription<CustomApiRealtimeEvent>? _chatPreviewsRealtimeSubscription;
   int _chatPreviewsListenerCount = 0;
   bool _chatPreviewsUpdatesActive = false;
+  // Realtime-sourced overrides for chat-list previews, keyed by chatId. A
+  // realtime chat.updated/chat.created carries the FULL mapped chat (with a
+  // correct photoUrl/title), whereas GET /v1/chats can return a stale null
+  // group photoUrl until the backend is restarted. We overlay these on top of
+  // the fetch result so the fresh event value wins and survives a stale
+  // refetch (which would otherwise blank the group avatar back out).
+  final Map<String, ChatPreviewOverride> _realtimeChatPreviewOverrides =
+      <String, ChatPreviewOverride>{};
+  // Persistence for the override map (cold-start survival). Defaults to a Hive
+  // box when a (Hive) preview cache is wired — i.e. in the real app — and to
+  // null in tests that don't opt in. Hydrated once before the first emit.
+  final ChatPreviewOverrideCache? _overrideCache;
+  bool _overridesHydrated = false;
+  static const int _maxPersistedOverrides = 200;
 
   StreamController<int>? _totalUnreadController;
   Timer? _totalUnreadFallbackTimer;
@@ -794,7 +816,10 @@ class CustomApiChatService
     // Stale-while-revalidate: hydrate from Hive synchronously so the list
     // appears immediately, then trigger the API refresh in the background.
     unawaited(_hydrateChatPreviewsFromCache());
-    unawaited(_emitChatPreviews());
+    // Restore persisted realtime overrides BEFORE the first fetch+emit so the
+    // group avatar survives a cold start (the stale /v1/chats would otherwise
+    // re-blank it before any chat.updated arrives).
+    unawaited(_bootstrapChatPreviewsWithOverrides());
 
     if (_realtimeService != null) {
       unawaited(_realtimeService!.connect());
@@ -810,12 +835,27 @@ class CustomApiChatService
           return;
         }
         if (_shouldRefreshChatPreviewsForRealtimeEvent(event)) {
+          // Patch the matching preview straight from the event's full chat
+          // payload (photoUrl/title) so the group avatar appears immediately,
+          // then schedule the (possibly stale) refetch — the override is
+          // re-applied on top of it below so the fetch can't blank it out.
+          final overriddenChatId = _captureChatPreviewOverride(event);
+          if (overriddenChatId != null) {
+            _patchEmittedChatPreviewsWithOverrides();
+          }
           _scheduleChatPreviewsRefresh();
         }
       });
     } else {
       _startChatPreviewsFallbackPolling();
     }
+  }
+
+  /// Hydrate persisted overrides, THEN do the first fetch+emit — so the very
+  /// first emitted list already carries any restored group avatar.
+  Future<void> _bootstrapChatPreviewsWithOverrides() async {
+    await _hydrateRealtimeOverrides();
+    await _emitChatPreviews();
   }
 
   Future<void> _stopChatPreviewsUpdates() async {
@@ -863,12 +903,16 @@ class CustomApiChatService
 
     try {
       final previews = await _fetchChatPreviews();
-      _lastEmittedPreviews = previews;
+      // Overlay realtime overrides AFTER the fetch so a fresh chat.updated
+      // photoUrl/title beats a stale null from GET /v1/chats.
+      final overridden = _applyRealtimeChatPreviewOverrides(previews);
+      _lastEmittedPreviews = overridden;
       // Persist to cache so the next cold start can show the list before
-      // the network round-trip finishes. Failures are non-fatal — caching
-      // is a UX optimization, not a source of truth.
-      unawaited(_writeChatPreviewsCache(previews));
-      controller.add(previews);
+      // the network round-trip finishes. Cache the overridden version so the
+      // group photo survives a restart (the override map is in-memory).
+      // Failures are non-fatal — caching is a UX optimization, not truth.
+      unawaited(_writeChatPreviewsCache(overridden));
+      controller.add(overridden);
     } on CustomApiException catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
         await _stopChatPreviewsUpdates();
@@ -947,6 +991,141 @@ class CustomApiChatService
       const Duration(milliseconds: 350),
       () => unawaited(_emitChatPreviews()),
     );
+  }
+
+  /// Records the photoUrl/title from a realtime chat.updated/chat.created event
+  /// (which carries the full mapped chat) so a later stale /v1/chats refetch
+  /// can't blank the group photo back out. Returns the affected chatId, or
+  /// null when the event carried no usable chat payload. The latest event
+  /// always wins; a null/empty field falls through to the fetched value.
+  String? _captureChatPreviewOverride(CustomApiRealtimeEvent event) {
+    final chat = event.chat;
+    if (chat == null) {
+      return null;
+    }
+    final chatId = chat['chatId']?.toString() ?? chat['id']?.toString() ?? '';
+    if (chatId.isEmpty) {
+      return null;
+    }
+    final photoUrl = chat['photoUrl']?.toString();
+    final title = chat['title']?.toString();
+    final type = chat['type']?.toString();
+    _realtimeChatPreviewOverrides[chatId] = ChatPreviewOverride(
+      photoUrl: (photoUrl != null && photoUrl.isNotEmpty) ? photoUrl : null,
+      title: (title != null && title.isNotEmpty) ? title : null,
+      type: type,
+    );
+    // Write-through to Hive so the avatar survives a cold start.
+    unawaited(_persistRealtimeOverrides());
+    return chatId;
+  }
+
+  /// Persists the subset of overrides worth surviving a restart: GROUP chats
+  /// with a real photoUrl (exactly the disappearing-group-avatar case). Capped
+  /// to [_maxPersistedOverrides] most-recent entries to bound the box size.
+  Future<void> _persistRealtimeOverrides() async {
+    final cache = _overrideCache;
+    if (cache == null) {
+      return;
+    }
+    final persistable = <String, ChatPreviewOverride>{};
+    _realtimeChatPreviewOverrides.forEach((chatId, override) {
+      if (override.isGroup &&
+          override.photoUrl != null &&
+          override.photoUrl!.isNotEmpty) {
+        persistable[chatId] = override;
+      }
+    });
+    final capped = persistable.length <= _maxPersistedOverrides
+        ? persistable
+        : Map<String, ChatPreviewOverride>.fromEntries(
+            persistable.entries.toList().sublist(
+                  persistable.length - _maxPersistedOverrides,
+                ),
+          );
+    await cache.write(capped);
+  }
+
+  /// Hydrates the in-memory override map from the persistent cache once, before
+  /// the first preview emit, so a stale /v1/chats refetch on cold start can't
+  /// blank a restored group avatar. Idempotent; live captures win over cache.
+  Future<void> _hydrateRealtimeOverrides() async {
+    if (_overridesHydrated) {
+      return;
+    }
+    _overridesHydrated = true;
+    final cache = _overrideCache;
+    if (cache == null) {
+      return;
+    }
+    try {
+      final stored = await cache.read();
+      stored.forEach((chatId, override) {
+        // A live chat.updated captured during hydration is fresher — keep it.
+        _realtimeChatPreviewOverrides.putIfAbsent(chatId, () => override);
+      });
+    } catch (_) {
+      // Best-effort — a missing/corrupt box just means no restore this boot.
+    }
+  }
+
+  /// Overlays the realtime overrides on top of a preview list. A new list is
+  /// returned only if something actually changed (so callers can skip a
+  /// spurious emit); each unchanged preview keeps its identity.
+  List<ChatPreview> _applyRealtimeChatPreviewOverrides(
+    List<ChatPreview> previews,
+  ) {
+    if (_realtimeChatPreviewOverrides.isEmpty) {
+      return previews;
+    }
+    var changed = false;
+    final result = previews.map((preview) {
+      final override = _realtimeChatPreviewOverrides[preview.chatId];
+      if (override == null) {
+        return preview;
+      }
+      final nextPhotoUrl = override.photoUrl ?? preview.photoUrl;
+      final nextTitle = override.title ?? preview.title;
+      if (nextPhotoUrl == preview.photoUrl && nextTitle == preview.title) {
+        return preview;
+      }
+      changed = true;
+      return ChatPreview(
+        id: preview.id,
+        chatId: preview.chatId,
+        userId: preview.userId,
+        type: preview.type,
+        title: nextTitle,
+        photoUrl: nextPhotoUrl,
+        participantIds: preview.participantIds,
+        otherUserId: preview.otherUserId,
+        otherUserName: preview.otherUserName,
+        otherUserPhotoUrl: preview.otherUserPhotoUrl,
+        lastMessage: preview.lastMessage,
+        lastMessageTime: preview.lastMessageTime,
+        unreadCount: preview.unreadCount,
+        lastMessageSenderId: preview.lastMessageSenderId,
+      );
+    }).toList();
+    return changed ? result : previews;
+  }
+
+  /// Re-applies overrides to the currently-emitted previews and pushes the
+  /// patched list immediately, so the group avatar updates the moment the
+  /// realtime event arrives — without waiting for the debounced refetch.
+  void _patchEmittedChatPreviewsWithOverrides() {
+    final controller = _chatPreviewsController;
+    final current = _lastEmittedPreviews;
+    if (controller == null || controller.isClosed || current == null) {
+      return;
+    }
+    final patched = _applyRealtimeChatPreviewOverrides(current);
+    if (identical(patched, current)) {
+      return;
+    }
+    _lastEmittedPreviews = patched;
+    controller.add(patched);
+    unawaited(_writeChatPreviewsCache(patched));
   }
 
   void _ensureTotalUnreadStream() {
@@ -1901,24 +2080,35 @@ class CustomApiChatService
     final name = attachment.name.toLowerCase().trim();
     final url = uploadedUrl.toLowerCase().trim();
 
-    if (mimeType.startsWith('image/') ||
-        ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.gif'].any(
-          (ext) => name.endsWith(ext) || url.endsWith(ext),
-        )) {
+    // MIME type is authoritative when present. Web voice notes are
+    // `audio/webm` with a `voice_note_*.webm` filename — and `.webm` also
+    // lives in the video extension list below. If the extension fall-through
+    // wins, a voice message ships as an unplayable «video». So decide by
+    // mimeType FIRST; only sniff the extension when there's no usable
+    // `<kind>/` mime (e.g. octet-stream from a bare upload).
+    if (mimeType.startsWith('image/')) {
       return ChatAttachmentType.image;
     }
-
-    if (mimeType.startsWith('video/') ||
-        ['.mp4', '.mov', '.webm', '.avi', '.mkv'].any(
-          (ext) => name.endsWith(ext) || url.endsWith(ext),
-        )) {
+    if (mimeType.startsWith('video/')) {
       return ChatAttachmentType.video;
     }
+    if (mimeType.startsWith('audio/')) {
+      return ChatAttachmentType.audio;
+    }
 
-    if (mimeType.startsWith('audio/') ||
-        ['.m4a', '.aac', '.mp3', '.wav', '.ogg', '.flac'].any(
-          (ext) => name.endsWith(ext) || url.endsWith(ext),
-        )) {
+    if (['.jpg', '.jpeg', '.png', '.webp', '.heic', '.gif'].any(
+      (ext) => name.endsWith(ext) || url.endsWith(ext),
+    )) {
+      return ChatAttachmentType.image;
+    }
+    if (['.mp4', '.mov', '.webm', '.avi', '.mkv'].any(
+      (ext) => name.endsWith(ext) || url.endsWith(ext),
+    )) {
+      return ChatAttachmentType.video;
+    }
+    if (['.m4a', '.aac', '.mp3', '.wav', '.ogg', '.flac'].any(
+      (ext) => name.endsWith(ext) || url.endsWith(ext),
+    )) {
       return ChatAttachmentType.audio;
     }
 
@@ -2091,5 +2281,128 @@ class CustomApiChatService
 
     await _authService.clearSessionLocally(sessionExpired: true);
     return true;
+  }
+}
+
+/// A realtime-sourced overlay for a chat-list preview. chat.updated carries the
+/// full mapped chat (with photoUrl/title) — fresher than GET /v1/chats, which
+/// can return a stale null group photoUrl until the backend is restarted.
+/// A null field means "no override; fall through to the fetched value".
+class ChatPreviewOverride {
+  const ChatPreviewOverride({this.photoUrl, this.title, this.type});
+
+  final String? photoUrl;
+  final String? title;
+  final String? type;
+
+  bool get isGroup => type == 'group' || type == 'branch';
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+        'photoUrl': photoUrl,
+        'title': title,
+        'type': type,
+      };
+
+  factory ChatPreviewOverride.fromMap(Map<String, dynamic> map) {
+    return ChatPreviewOverride(
+      photoUrl: map['photoUrl']?.toString(),
+      title: map['title']?.toString(),
+      type: map['type']?.toString(),
+    );
+  }
+}
+
+/// Persists realtime chat-preview overrides (keyed by chatId) so a restored
+/// group avatar survives a cold start / web reload. Without this the in-memory
+/// override map is empty on boot, and the first (stale) /v1/chats refetch blanks
+/// the group photo back out until a fresh chat.updated arrives.
+abstract class ChatPreviewOverrideCache {
+  Future<Map<String, ChatPreviewOverride>> read();
+
+  Future<void> write(Map<String, ChatPreviewOverride> overrides);
+
+  Future<void> clear();
+}
+
+class HiveChatPreviewOverrideCache implements ChatPreviewOverrideCache {
+  HiveChatPreviewOverrideCache({this.boxName = 'chat_preview_overrides_v1'});
+
+  final String boxName;
+  static const String _key = 'overrides';
+  Future<Box<String>>? _openTask;
+
+  Future<Box<String>> _box() {
+    return _openTask ??= openBoxWithRecovery<String>(boxName);
+  }
+
+  @override
+  Future<Map<String, ChatPreviewOverride>> read() async {
+    try {
+      final raw = (await _box()).get(_key);
+      if (raw == null || raw.trim().isEmpty) {
+        return <String, ChatPreviewOverride>{};
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return <String, ChatPreviewOverride>{};
+      }
+      final result = <String, ChatPreviewOverride>{};
+      decoded.forEach((key, value) {
+        if (value is Map) {
+          result[key.toString()] =
+              ChatPreviewOverride.fromMap(Map<String, dynamic>.from(value));
+        }
+      });
+      return result;
+    } catch (_) {
+      // Corrupt cache → ignore; a fresh chat.updated repopulates it.
+      return <String, ChatPreviewOverride>{};
+    }
+  }
+
+  @override
+  Future<void> write(Map<String, ChatPreviewOverride> overrides) async {
+    try {
+      final encoded = <String, dynamic>{};
+      overrides.forEach((key, value) {
+        encoded[key] = value.toMap();
+      });
+      await (await _box()).put(_key, jsonEncode(encoded));
+    } catch (_) {
+      // Best-effort — never fail the foreground flow because of cache I/O.
+    }
+  }
+
+  @override
+  Future<void> clear() async {
+    try {
+      await (await _box()).delete(_key);
+    } catch (_) {
+      // Best-effort.
+    }
+  }
+}
+
+/// Test helper that keeps overrides in memory; pre-fill via the constructor to
+/// simulate a populated Hive box after a restart.
+class InMemoryChatPreviewOverrideCache implements ChatPreviewOverrideCache {
+  InMemoryChatPreviewOverrideCache([
+    Map<String, ChatPreviewOverride>? initial,
+  ]) : _overrides = <String, ChatPreviewOverride>{...?initial};
+
+  Map<String, ChatPreviewOverride> _overrides;
+
+  @override
+  Future<Map<String, ChatPreviewOverride>> read() async =>
+      Map<String, ChatPreviewOverride>.from(_overrides);
+
+  @override
+  Future<void> write(Map<String, ChatPreviewOverride> overrides) async {
+    _overrides = Map<String, ChatPreviewOverride>.from(overrides);
+  }
+
+  @override
+  Future<void> clear() async {
+    _overrides = <String, ChatPreviewOverride>{};
   }
 }

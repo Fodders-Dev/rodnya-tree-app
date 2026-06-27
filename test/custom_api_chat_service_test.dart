@@ -1702,6 +1702,245 @@ void main() {
   });
 
   test(
+      'CustomApiChatService patches group preview photo from realtime '
+      'chat.updated even when /v1/chats stays stale-null', () async {
+    const groupPhotoUrl = 'https://cdn.example.ru/group-1.jpg';
+    // GET /v1/chats keeps returning photoUrl:null for the group (the stale
+    // backend bug); the realtime chat.updated event carries the real photo.
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats' && request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'chats': [
+              {
+                'id': 'group-1_unit',
+                'chatId': 'group-1',
+                'userId': 'user-1',
+                'type': 'group',
+                'title': 'Семья Кузнецовых',
+                'photoUrl': null,
+                'participantIds': ['user-1', 'user-2', 'user-3'],
+                'otherUserId': '',
+                'otherUserName': '',
+                'lastMessage': 'Привет',
+                'lastMessageTime': '2026-04-30T12:00:00.000Z',
+                'unreadCount': 0,
+                'lastMessageSenderId': 'user-2',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response(
+        jsonEncode({'messages': const [], 'totalUnread': 0}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final realtimeController = StreamController<dynamic>.broadcast();
+    final realtimeService = CustomApiRealtimeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      channelFactory: (_) => _FakeWebSocketChannel(realtimeController.stream),
+      reconnectDelay: const Duration(milliseconds: 10),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      httpClient: client,
+      realtimeService: realtimeService,
+      realtimeFallbackPollInterval: const Duration(milliseconds: 10),
+    );
+
+    final previewsStream =
+        chatService.getUserChatsStream('user-1').asBroadcastStream();
+    final initialPreviews = await previewsStream.first;
+    // Baseline: the fetch is stale — group shows no photo.
+    expect(initialPreviews.first.isGroup, isTrue);
+    expect(initialPreviews.first.displayPhotoUrl, isNull);
+
+    // Wait for a preview where the group photo has been patched in.
+    final patchedFuture = previewsStream
+        .firstWhere(
+          (previews) =>
+              previews.isNotEmpty &&
+              previews.first.displayPhotoUrl == groupPhotoUrl,
+        )
+        .timeout(const Duration(seconds: 2));
+
+    realtimeController.add(
+      jsonEncode({
+        'type': 'chat.updated',
+        'chatId': 'group-1',
+        'chat': {
+          'id': 'group-1_unit',
+          'chatId': 'group-1',
+          'userId': 'user-1',
+          'type': 'group',
+          'title': 'Семья Кузнецовых',
+          'photoUrl': groupPhotoUrl,
+          'participantIds': ['user-1', 'user-2', 'user-3'],
+        },
+      }),
+    );
+
+    final patched = await patchedFuture;
+    // Realtime photoUrl wins over the stale-null fetch — and survives the
+    // subsequent debounced refetch (which also returns photoUrl:null).
+    expect(patched.first.displayPhotoUrl, groupPhotoUrl);
+    expect(patched.first.displayName, 'Семья Кузнецовых');
+
+    // Let the debounced stale refetch run; the override must persist.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    final afterRefetch = await chatService.getUserChatsStream('user-1').first;
+    expect(
+      afterRefetch.first.displayPhotoUrl,
+      groupPhotoUrl,
+      reason: 'stale /v1/chats refetch must not blank the realtime photo',
+    );
+
+    await realtimeController.close();
+    await realtimeService.dispose();
+  });
+
+  test(
+      'CustomApiChatService restores group preview photo from a persisted '
+      'override on cold start (first emit, fresh service + filled Hive)',
+      () async {
+    const groupPhotoUrl = 'https://cdn.example.ru/group-1.jpg';
+    // The fetch still returns photoUrl:null (stale backend) on this cold boot.
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats' && request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'chats': [
+              {
+                'id': 'group-1_unit',
+                'chatId': 'group-1',
+                'userId': 'user-1',
+                'type': 'group',
+                'title': 'Семья Кузнецовых',
+                'photoUrl': null,
+                'participantIds': ['user-1', 'user-2', 'user-3'],
+                'otherUserId': '',
+                'otherUserName': '',
+                'lastMessage': 'Привет',
+                'lastMessageTime': '2026-04-30T12:00:00.000Z',
+                'unreadCount': 0,
+                'lastMessageSenderId': 'user-2',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response(
+        jsonEncode({'messages': const [], 'totalUnread': 0}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    // Simulate a Hive box already populated by a previous session.
+    final overrideCache = InMemoryChatPreviewOverrideCache(
+      <String, ChatPreviewOverride>{
+        'group-1': const ChatPreviewOverride(
+          photoUrl: groupPhotoUrl,
+          title: 'Семья Кузнецовых',
+          type: 'group',
+        ),
+      },
+    );
+
+    // Fresh service (no realtime yet) — the cold-start case.
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      httpClient: client,
+      overrideCache: overrideCache,
+      pollInterval: const Duration(hours: 1),
+      realtimeFallbackPollInterval: const Duration(hours: 1),
+    );
+
+    final firstPreviews = await chatService.getUserChatsStream('user-1').first;
+    expect(firstPreviews, hasLength(1));
+    expect(firstPreviews.first.isGroup, isTrue);
+    expect(
+      firstPreviews.first.displayPhotoUrl,
+      groupPhotoUrl,
+      reason: 'the very first emit on cold start must carry the restored group '
+          'avatar from the persisted override, before the stale fetch wins',
+    );
+    expect(firstPreviews.first.displayName, 'Семья Кузнецовых');
+  });
+
+  test(
       'CustomApiChatService starts low-rate fallback after realtime disconnect',
       () async {
     var unreadRequests = 0;
@@ -2499,6 +2738,89 @@ void main() {
       waveform.every((value) => value is num && value >= 0 && value <= 1),
       isTrue,
     );
+  });
+
+  test(
+      'CustomApiChatService classifies a web voice note (audio/webm) as audio, '
+      'not video', () async {
+    // Regression: a web voice note is `voice_note_*.webm` with mime
+    // `audio/webm`. `.webm` is also in the video extension list, so the
+    // old extension-OR-mime check shipped it as an unplayable «video».
+    final uploadedAttachments = <Map<String, dynamic>>[];
+    final storageService = _FakeStorageService(
+      onUpload: (_) => 'https://cdn.example.test/voice-note.webm',
+    );
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        uploadedAttachments.addAll(
+          (body['attachments'] as List<dynamic>)
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item)),
+        );
+        return http.Response(
+          jsonEncode({'ok': true}),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+      storageService: storageService,
+    );
+
+    final voiceDirectory = await Directory.systemTemp.createTemp(
+      'rodnya_voice_webm_test_',
+    );
+    addTearDown(() async {
+      if (await voiceDirectory.exists()) {
+        await voiceDirectory.delete(recursive: true);
+      }
+    });
+    final voiceFile = File('${voiceDirectory.path}/voice_note_2s_777.webm');
+    await voiceFile.writeAsBytes(
+      Uint8List.fromList(List<int>.generate(128, (index) => index % 256)),
+    );
+
+    await chatService.sendMessageToChat(
+      chatId: 'chat-1',
+      attachments: [
+        XFile(voiceFile.path, mimeType: 'audio/webm'),
+      ],
+    );
+
+    expect(uploadedAttachments, hasLength(1));
+    expect(uploadedAttachments.single['type'], 'audio');
   });
 
   test(
