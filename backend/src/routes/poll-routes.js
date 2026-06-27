@@ -23,14 +23,16 @@ function registerPollRoutes(
 ) {
   app.get("/v1/polls", requireAuth, async (req, res) => {
     const treeId = String(req.query.treeId || "").trim() || null;
-    if (!treeId) {
-      res.status(400).json({message: "Нужен treeId"});
-      return;
-    }
-
-    const tree = await requireTreeAccess(req, res, treeId);
-    if (!tree) {
-      return;
+    // null treeId = audience mode (all accessible circles) — the feed's
+    // «Все» tab, mirroring /v1/posts. Only gate on tree access when a
+    // specific circle is requested; the accessibleTreeIds filter below
+    // already scopes the aggregate to what the viewer is allowed to see,
+    // and store.listPolls skips its branch filter when treeId is null.
+    if (treeId) {
+      const tree = await requireTreeAccess(req, res, treeId);
+      if (!tree) {
+        return;
+      }
     }
 
     const accessibleTrees = await store.listUserTrees(req.auth.user.id);

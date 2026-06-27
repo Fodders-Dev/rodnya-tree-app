@@ -6,8 +6,10 @@ import '../../models/post.dart' show TreeContentScopeType;
 /// Phase E5: backend access for «Опросы» (Polls). Mirrors the gathering
 /// service's audience surface + media upload; adds option-based voting.
 abstract class PollServiceInterface {
-  /// Polls for a tree the viewer can see, newest-first.
-  Future<List<Poll>> getPolls({required String treeId});
+  /// Polls the viewer can see, newest-first. [treeId] null/empty → audience
+  /// mode: polls across all accessible circles (the feed's «Все» tab),
+  /// mirroring posts; scoped to a single circle when a treeId is given.
+  Future<List<Poll>> getPolls({String? treeId});
 
   /// Create a poll. [question] + at least two non-empty [options] are
   /// required. [images] are uploaded to the media pipeline.

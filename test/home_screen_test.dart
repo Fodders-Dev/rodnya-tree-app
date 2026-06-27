@@ -181,7 +181,7 @@ class _FakePollService implements PollServiceInterface {
   final List<Poll> polls;
 
   @override
-  Future<List<Poll>> getPolls({required String treeId}) async => polls;
+  Future<List<Poll>> getPolls({String? treeId}) async => polls;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

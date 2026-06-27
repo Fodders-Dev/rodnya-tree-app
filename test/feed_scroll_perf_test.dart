@@ -171,7 +171,7 @@ class _FakeGatheringService implements GatheringServiceInterface {
 
 class _FakePollService implements PollServiceInterface {
   @override
-  Future<List<Poll>> getPolls({required String treeId}) async => const <Poll>[];
+  Future<List<Poll>> getPolls({String? treeId}) async => const <Poll>[];
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

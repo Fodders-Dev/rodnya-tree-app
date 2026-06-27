@@ -698,18 +698,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Phase E5d: best-effort poll load (mirrors _loadGatherings).
+  /// Phase E5d: best-effort poll load. Polls support audience mode (the
+  /// store + /v1/polls aggregate across all accessible circles when no
+  /// treeId is sent), so we pass [branchId] straight through like posts:
+  /// null → «Все» (all circles), non-null → that circle. Earlier this fell
+  /// back to _currentTreeId, so a poll in another circle never showed under
+  /// «Все» — only when its circle was explicitly selected.
   Future<void> _loadPolls({String? branchId}) async {
     final service = _pollService;
-    final treeId = branchId ?? _currentTreeId;
-    if (service == null || treeId == null) {
+    if (service == null) {
       if (_polls.isNotEmpty && mounted) {
         setState(() => _polls = const []);
       }
       return;
     }
     try {
-      final polls = await service.getPolls(treeId: treeId);
+      final polls = await service.getPolls(treeId: branchId);
       if (!mounted || _selectedFeedBranchId != branchId) return;
       setState(() => _polls = polls);
     } catch (_) {

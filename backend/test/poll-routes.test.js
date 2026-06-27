@@ -167,6 +167,41 @@ test("GET /v1/polls is gated by tree access (non-member → 403)", async () => {
   }
 });
 
+test("GET /v1/polls without treeId aggregates the feed «Все» tab (audience mode)", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, tree} =
+        await seedTree(ctx.store, ctx.baseUrl, "p-aud-owner@example.com");
+    await createPoll(ctx.baseUrl, owner.token, {
+      treeId: tree.id,
+      question: "Опрос в ленте?",
+      options: ["Да", "Нет"],
+    });
+
+    // The «Все» tab sends NO treeId. Earlier this 400'd, so a poll never
+    // showed under «Все» — it must now aggregate across accessible circles.
+    const feed = await fetch(`${ctx.baseUrl}/v1/polls`, {
+      headers: {Authorization: `Bearer ${owner.token}`},
+    });
+    assert.equal(feed.status, 200);
+    const polls = await feed.json();
+    assert.equal(polls.length, 1);
+    assert.equal(polls[0].question, "Опрос в ленте?");
+
+    // Audience mode must NOT over-share: a stranger with no access to that
+    // circle gets an empty feed (the accessibleTreeIds filter still scopes).
+    const stranger =
+        await makeUser(ctx.baseUrl, "p-aud-stranger@example.com");
+    const strangerFeed = await fetch(`${ctx.baseUrl}/v1/polls`, {
+      headers: {Authorization: `Bearer ${stranger.token}`},
+    });
+    assert.equal(strangerFeed.status, 200);
+    assert.equal((await strangerFeed.json()).length, 0);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
 test("POST respond upserts the vote; single-choice truncates to one", async () => {
   const ctx = await startTestServer();
   try {

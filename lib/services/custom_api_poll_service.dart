@@ -32,12 +32,16 @@ class CustomApiPollService implements PollServiceInterface {
   static const _requestTimeout = Duration(seconds: 12);
 
   @override
-  Future<List<Poll>> getPolls({required String treeId}) async {
+  Future<List<Poll>> getPolls({String? treeId}) async {
     try {
       final response = await _requestList(
         method: 'GET',
         path: '/v1/polls',
-        queryParams: {'treeId': treeId},
+        // null/empty treeId → audience mode (all accessible circles),
+        // mirroring posts. Only send the param when scoped to a circle.
+        queryParams: {
+          if (treeId != null && treeId.isNotEmpty) 'treeId': treeId,
+        },
       );
       return response.map((json) => Poll.fromJson(json)).toList();
     } on CustomApiPollException catch (error) {

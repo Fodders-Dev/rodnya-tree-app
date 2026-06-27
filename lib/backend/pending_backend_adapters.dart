@@ -1129,7 +1129,7 @@ class PendingBackendPollService implements PollServiceInterface {
   const PendingBackendPollService();
 
   @override
-  Future<List<Poll>> getPolls({required String treeId}) async {
+  Future<List<Poll>> getPolls({String? treeId}) async {
     return const [];
   }
 
