@@ -2,21 +2,29 @@ part of 'chat_screen.dart';
 
 extension _ChatScreenScaffoldSections on _ChatScreenState {
   PreferredSizeWidget _buildChatAppBar(BuildContext context) {
+    // Embedded (desktop pane): no «назад» leading in normal mode — popping
+    // would unwind the whole /chats shell route. Selection / search modes
+    // still need their close affordance, so those keep a leading.
+    final bool showLeading =
+        !widget.embedded || _isSelectionMode || _isSearchMode;
     return AppBar(
-      leading: IconButton(
-        tooltip: _isSelectionMode
-            ? 'Снять выделение'
-            : (_isSearchMode ? 'Закрыть поиск' : 'Назад'),
-        icon: Icon(
-          _isSelectionMode
-              ? Icons.close
-              : (_isSearchMode ? Icons.close : Icons.arrow_back),
-        ),
-        onPressed: _isSelectionMode
-            ? _exitSelectionMode
-            : (_isSearchMode ? _closeSearch : () => context.pop()),
-      ),
-      titleSpacing: 0,
+      automaticallyImplyLeading: false,
+      leading: showLeading
+          ? IconButton(
+              tooltip: _isSelectionMode
+                  ? 'Снять выделение'
+                  : (_isSearchMode ? 'Закрыть поиск' : 'Назад'),
+              icon: Icon(
+                _isSelectionMode
+                    ? Icons.close
+                    : (_isSearchMode ? Icons.close : Icons.arrow_back),
+              ),
+              onPressed: _isSelectionMode
+                  ? _exitSelectionMode
+                  : (_isSearchMode ? _closeSearch : () => context.pop()),
+            )
+          : null,
+      titleSpacing: showLeading ? 0 : 12,
       title: _buildChatAppBarTitle(context),
       actions: _buildChatAppBarActions(),
     );

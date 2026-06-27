@@ -85,6 +85,7 @@ class ChatScreen extends StatefulWidget {
     this.autoDeleteStore,
     this.initialChatDetails,
     this.recordingController,
+    this.embedded = false,
   }) : assert(
           (chatId != null && chatId != '') ||
               (otherUserId != null && otherUserId != ''),
@@ -109,6 +110,12 @@ class ChatScreen extends StatefulWidget {
   /// рекордером) — тогда recording-бар и его живую волну можно проверить
   /// виджет-тестом. В проде null → создаётся свой.
   final ChatRecordingController? recordingController;
+
+  /// Desktop master-detail: when true the screen is hosted inside the
+  /// «Чаты» tab's right pane (not a pushed route), so it must NOT render a
+  /// «назад» leading that would pop the whole shell route. The chat list
+  /// stays visible to the left; switching chats just swaps this pane.
+  final bool embedded;
 
   bool get isGroup => chatType == 'group' || chatType == 'branch';
 
@@ -8798,6 +8805,44 @@ class _ChatBubble extends StatelessWidget {
       );
     }
 
+    // Telegram-style inline timestamp: for short, plain-text messages the meta
+    // (time + read tick) sits in a Wrap next to the text, so it tucks onto the
+    // last line (wrapping below only when there's no room). The message text
+    // stays a clean Text widget (no embedded WidgetSpan) so search / copy /
+    // a11y / find.text are unaffected. Long / reaction / media / reply bubbles
+    // keep the footer meta.
+    final inlineMeta = text.isNotEmpty &&
+        text.trim().length <= 64 &&
+        replyTo == null &&
+        remoteAttachments.isEmpty &&
+        localAttachments.isEmpty &&
+        reactionGroups.isEmpty &&
+        !_isNakedMediaOnly &&
+        !_isVideoNoteOnly;
+    final metaRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          timeLabel,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: metaColor,
+            // M3 (50+): labelSmall (11) мелковат для времени — 12.5 читаемо.
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        if (isMe) ...[
+          const SizedBox(width: 4),
+          _ReadReceiptTick(
+            isRead: isRead,
+            isDelivered: isDelivered,
+            readColor: const Color(0xFF6FC4FF),
+            dimColor: scheme.onPrimary.withValues(alpha: 0.72),
+          ),
+        ],
+      ],
+    );
+
     final highlightBorder = isHighlighted
         ? Border.all(color: scheme.tertiary, width: 1.6)
         : isSelected
@@ -8984,11 +9029,25 @@ class _ChatBubble extends StatelessWidget {
                           const SizedBox(height: 8),
                       ],
                       if (text.isNotEmpty)
-                        _HighlightedMessageText(
-                          text: text,
-                          query: highlightQuery,
-                          color: onBubbleColor,
-                        ),
+                        inlineMeta
+                            ? Wrap(
+                                crossAxisAlignment: WrapCrossAlignment.end,
+                                spacing: 6,
+                                runSpacing: 2,
+                                children: [
+                                  _HighlightedMessageText(
+                                    text: text,
+                                    query: highlightQuery,
+                                    color: onBubbleColor,
+                                  ),
+                                  metaRow,
+                                ],
+                              )
+                            : _HighlightedMessageText(
+                                text: text,
+                                query: highlightQuery,
+                                color: onBubbleColor,
+                              ),
                       if (text.isEmpty &&
                           remoteAttachments.isEmpty &&
                           localAttachments.isEmpty)
@@ -9016,60 +9075,27 @@ class _ChatBubble extends StatelessWidget {
                               .toList(),
                         ),
                       ],
-                      // Naked media skips the in-bubble meta footer
-                      // (timestamp + read receipt) — the message
-                      // floats as just media. Time/read-state still
-                      // visible on tap via the lightbox / message
-                      // detail sheet.
-                      if (!_isNakedMediaOnly && !_isVideoNoteOnly) ...[
+                      // Footer meta (timestamp + read tick) — only when it was
+                      // NOT inlined next to the text above (see inlineMeta).
+                      // Naked media skips it entirely (floats as just media);
+                      // footerLabel shows below regardless of inline vs footer.
+                      if (!inlineMeta &&
+                          !_isNakedMediaOnly &&
+                          !_isVideoNoteOnly) ...[
                         const SizedBox(height: 2),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              timeLabel,
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: metaColor,
-                                // M3 (50+): labelSmall (11) мелковат для
-                                // времени — 12.5 читаемо, баббл не распухает.
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            if (isMe) ...[
-                              const SizedBox(width: 4),
-                              // Telegram-style read receipts:
-                              //   sent only       → single tick
-                              //   delivered       → double tick (faded)
-                              //   read by anyone  → double tick in a calm
-                              //                     blue (cuts through the
-                              //                     accent-green bubble bg)
-                              //
-                              // AnimatedSwitcher cross-fades + scales the
-                              // icon as the state ladder advances, and
-                              // AnimatedDefaultTextStyle isn't quite the
-                              // right tool for icon-color so we read
-                              // status into a key that the switcher uses
-                              // to decide when to swap.
-                              _ReadReceiptTick(
-                                isRead: isRead,
-                                isDelivered: isDelivered,
-                                readColor: const Color(0xFF6FC4FF),
-                                dimColor:
-                                    scheme.onPrimary.withValues(alpha: 0.72),
-                              ),
-                            ],
-                          ],
-                        ),
-                        if (footerLabel != null && footerLabel!.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            footerLabel!,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: metaColor,
-                            ),
+                        metaRow,
+                      ],
+                      if (footerLabel != null &&
+                          footerLabel!.isNotEmpty &&
+                          !_isNakedMediaOnly &&
+                          !_isVideoNoteOnly) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          footerLabel!,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: metaColor,
                           ),
-                        ],
+                        ),
                       ],
                     ],
                   ),

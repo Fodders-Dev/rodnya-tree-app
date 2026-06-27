@@ -9,6 +9,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
@@ -29,9 +30,34 @@ import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/rodnya_avatar.dart';
+import 'chat_screen.dart';
 
 part 'chats_list_screen_create_sheet.dart';
 part 'chats_list_screen_sections.dart';
+
+// Desktop master-detail: resizable chat-list column bounds + persistence.
+const double _kMinChatListWidth = 300;
+const double _kMaxChatListWidth = 460;
+const double _kDefaultChatListWidth = 340;
+const String _kChatListWidthPrefKey = 'chats.desktopListWidth';
+
+/// The chat the desktop right pane is currently showing. Null = no chat
+/// open (the «Связь» quick-actions placeholder is shown instead).
+class _SelectedChatTarget {
+  const _SelectedChatTarget({
+    required this.chatId,
+    required this.chatType,
+    required this.title,
+    this.photoUrl,
+    this.otherUserId,
+  });
+
+  final String chatId;
+  final String chatType;
+  final String title;
+  final String? photoUrl;
+  final String? otherUserId;
+}
 
 String _countLabel(
   int count, {
@@ -109,6 +135,10 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   bool _isLoadingRelatives = false;
   String? _relativesLoadTreeId;
   int _relativesLoadToken = 0;
+  // Desktop master-detail: the chat shown in the right pane (null = none),
+  // and the (persisted, draggable) width of the left list column.
+  _SelectedChatTarget? _selectedChat;
+  double _chatListPaneWidth = _kDefaultChatListWidth;
 
   @override
   void initState() {
@@ -117,6 +147,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     _loadChats();
     _bindDraftRealtimeUpdates();
     _loadRelatives();
+    unawaited(_restoreChatListPaneWidth());
     unawaited(_loadAuxiliaryChatState());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -241,8 +272,90 @@ class _ChatsListScreenState extends State<ChatsListScreen>
       return;
     }
     _observedTreeId = nextTreeId;
+    // Right-pane chat belongs to the previous tree's context — close it so
+    // the pane doesn't show a chat that's no longer in the visible list.
+    if (_selectedChat != null) {
+      setState(() => _selectedChat = null);
+    }
     _loadRelatives();
     unawaited(_loadAuxiliaryChatState());
+  }
+
+  /// Single entry point for opening a chat. On a wide desktop layout the
+  /// chat opens in the right pane (master-detail, Telegram-style) — the
+  /// list stays visible. On narrow layouts it keeps the full-screen pushed
+  /// route. All tap/create call-sites funnel through here.
+  void _openChatTarget({
+    required String chatId,
+    required String chatType,
+    required String title,
+    String? photoUrl,
+    String? otherUserId,
+  }) {
+    final cleanPhoto =
+        (photoUrl != null && photoUrl.isNotEmpty) ? photoUrl : null;
+    final cleanUser =
+        (otherUserId != null && otherUserId.isNotEmpty) ? otherUserId : null;
+
+    if (_isWideLayout(context)) {
+      setState(() {
+        _selectedChat = _SelectedChatTarget(
+          chatId: chatId,
+          chatType: chatType,
+          title: title,
+          photoUrl: cleanPhoto,
+          otherUserId: cleanUser,
+        );
+      });
+      unawaited(_loadAuxiliaryChatState());
+      return;
+    }
+
+    final titleParam = Uri.encodeComponent(title);
+    final photoParam =
+        cleanPhoto != null ? '&photo=${Uri.encodeComponent(cleanPhoto)}' : '';
+    final userParam =
+        cleanUser != null ? '&userId=${Uri.encodeComponent(cleanUser)}' : '';
+    context
+        .push(
+          '/chats/view/$chatId?type=${Uri.encodeComponent(chatType)}'
+          '&title=$titleParam$photoParam$userParam',
+        )
+        .then((_) => unawaited(_loadAuxiliaryChatState()));
+  }
+
+  Future<void> _restoreChatListPaneWidth() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getDouble(_kChatListWidthPrefKey);
+      if (stored == null || !mounted) {
+        return;
+      }
+      setState(() {
+        _chatListPaneWidth =
+            stored.clamp(_kMinChatListWidth, _kMaxChatListWidth);
+      });
+    } catch (_) {
+      // Persisted layout is a nicety — a prefs read failure is non-fatal.
+    }
+  }
+
+  Future<void> _persistChatListPaneWidth() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_kChatListWidthPrefKey, _chatListPaneWidth);
+    } catch (_) {
+      // Ignore — width stays applied for the session regardless.
+    }
+  }
+
+  // Lives on the State (not the _ChatsListScreenSections extension) because
+  // setState is protected to State subclasses; the resizer calls this.
+  void _resizeChatListPane(double deltaDx) {
+    setState(() {
+      _chatListPaneWidth = (_chatListPaneWidth + deltaDx)
+          .clamp(_kMinChatListWidth, _kMaxChatListWidth);
+    });
   }
 
   void _loadChats() {
@@ -604,11 +717,10 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         throw StateError('Не удалось создать чат');
       }
 
-      final encodedTitle = Uri.encodeComponent(title);
       if (!mounted) {
         return;
       }
-      context.push('/chats/view/$chatId?type=$chatType&title=$encodedTitle');
+      _openChatTarget(chatId: chatId, chatType: chatType, title: title);
     } catch (error) {
       _appStatusService.reportError(
         error,
@@ -705,10 +817,13 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           ? _buildErrorState()
           : Center(
               child: ConstrainedBox(
-                // 760 caps narrow viewports at a phone-shaped column;
-                // 1180 lets the side "Связь" panel breathe on desktop.
+                // 760 caps narrow viewports at a phone-shaped column; on a
+                // wide desktop the master-detail split wants room — 1480 when
+                // a chat pane is open, 1180 for the list-only «Связь» view.
                 constraints: BoxConstraints(
-                  maxWidth: _isWideLayout(context) ? 1180 : 760,
+                  maxWidth: _isWideLayout(context)
+                      ? (_selectedChat != null ? 1480 : 1180)
+                      : 760,
                 ),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
@@ -757,40 +872,40 @@ class _ChatsListScreenState extends State<ChatsListScreen>
             // Q3: 6pt vertical (was 8) so the 48pt touch targets fit.
             padding: const EdgeInsets.fromLTRB(18, 6, 12, 6),
             child: Row(
-          children: [
-            Text(
-              'Чаты',
-              style: AppTheme.serif(
-                color: tokens.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.22,
-              ),
+              children: [
+                Text(
+                  'Чаты',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.22,
+                  ),
+                ),
+                const Spacer(),
+                _buildTopbarPillButton(
+                  tokens: tokens,
+                  tooltip: 'Поиск',
+                  onTap: _focusSearch,
+                  child: Icon(
+                    Icons.search_rounded,
+                    size: 19,
+                    color: tokens.ink,
+                  ),
+                ),
+                // Q3: no SizedBox — the 48pt targets carry their own spacing.
+                _buildTopbarPillButton(
+                  tokens: tokens,
+                  tooltip: 'Новый чат',
+                  onTap: _openChatComposer,
+                  child: Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: tokens.accent,
+                  ),
+                ),
+              ],
             ),
-            const Spacer(),
-            _buildTopbarPillButton(
-              tokens: tokens,
-              tooltip: 'Поиск',
-              onTap: _focusSearch,
-              child: Icon(
-                Icons.search_rounded,
-                size: 19,
-                color: tokens.ink,
-              ),
-            ),
-            // Q3: no SizedBox — the 48pt targets carry their own spacing.
-            _buildTopbarPillButton(
-              tokens: tokens,
-              tooltip: 'Новый чат',
-              onTap: _openChatComposer,
-              child: Icon(
-                Icons.edit_outlined,
-                size: 18,
-                color: tokens.accent,
-              ),
-            ),
-          ],
-        ),
           ),
         ),
       ),
@@ -938,7 +1053,8 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     final isFriendsTree =
         context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(16, 16, 16, AppTheme.bottomNavInset(context)),
+      padding:
+          EdgeInsets.fromLTRB(16, 16, 16, AppTheme.bottomNavInset(context)),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 360),
@@ -1214,57 +1330,59 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         await Future<void>.delayed(const Duration(milliseconds: 600));
       },
       child: ListView.builder(
-      padding: EdgeInsets.fromLTRB(10, 2, 10, AppTheme.bottomNavInset(context)),
-      itemCount: totalCount,
-      // Each tile gets its own RepaintBoundary so repaints triggered by
-      // unread-count animation, timestamp ticking, or selection state on
-      // one row don't drag siblings into the GPU pass with them. Chat
-      // lists can have realtime presence dots updating frequently — this
-      // costs ~1 layer per tile but eliminates O(N) repaints.
-      itemBuilder: (context, index) {
-        if (showArchiveSummary && index == 0) {
-          return RepaintBoundary(
-            child: KeyedSubtree(
-              key: const ValueKey<String>('chats-archive-summary'),
-              child: _buildArchiveSummaryCard(theme),
-            ),
-          );
-        }
-
-        final chatIndex = index - (showArchiveSummary ? 1 : 0);
-        if (chatIndex < filteredChats.length) {
-          return RepaintBoundary(
-            child: _buildChatTile(
-              theme,
-              filteredChats[chatIndex],
-              currentUserId,
-            ),
-          );
-        }
-
-        if (showRelatives) {
-          final relativeIndex = chatIndex - filteredChats.length;
-          if (relativeIndex == 0) {
-            return Padding(
-              key: const ValueKey<String>('chats-relative-suggestions-header'),
-              padding: const EdgeInsets.fromLTRB(8, 14, 8, 8),
-              child: Text(
-                context.read<TreeProvider>().selectedTreeKind ==
-                        TreeKind.friends
-                    ? 'Люди круга'
-                    : 'Люди',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.w700,
-                ),
+        padding:
+            EdgeInsets.fromLTRB(10, 2, 10, AppTheme.bottomNavInset(context)),
+        itemCount: totalCount,
+        // Each tile gets its own RepaintBoundary so repaints triggered by
+        // unread-count animation, timestamp ticking, or selection state on
+        // one row don't drag siblings into the GPU pass with them. Chat
+        // lists can have realtime presence dots updating frequently — this
+        // costs ~1 layer per tile but eliminates O(N) repaints.
+        itemBuilder: (context, index) {
+          if (showArchiveSummary && index == 0) {
+            return RepaintBoundary(
+              child: KeyedSubtree(
+                key: const ValueKey<String>('chats-archive-summary'),
+                child: _buildArchiveSummaryCard(theme),
               ),
             );
           }
-          final participant = filteredRelatives[relativeIndex - 1];
-          return _buildRelativeSuggestionTile(theme, participant);
-        }
-        return const SizedBox.shrink();
-      },
+
+          final chatIndex = index - (showArchiveSummary ? 1 : 0);
+          if (chatIndex < filteredChats.length) {
+            return RepaintBoundary(
+              child: _buildChatTile(
+                theme,
+                filteredChats[chatIndex],
+                currentUserId,
+              ),
+            );
+          }
+
+          if (showRelatives) {
+            final relativeIndex = chatIndex - filteredChats.length;
+            if (relativeIndex == 0) {
+              return Padding(
+                key:
+                    const ValueKey<String>('chats-relative-suggestions-header'),
+                padding: const EdgeInsets.fromLTRB(8, 14, 8, 8),
+                child: Text(
+                  context.read<TreeProvider>().selectedTreeKind ==
+                          TreeKind.friends
+                      ? 'Люди круга'
+                      : 'Люди',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              );
+            }
+            final participant = filteredRelatives[relativeIndex - 1];
+            return _buildRelativeSuggestionTile(theme, participant);
+          }
+          return const SizedBox.shrink();
+        },
       ),
     );
   }
@@ -1337,10 +1455,12 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     try {
       final chatId = await _chatService.getOrCreateChat(participant.userId);
       if (chatId != null && mounted) {
-        context.push(
-          '/chats/view/$chatId?type=direct&title=${Uri.encodeComponent(participant.name)}'
-          '${participant.photoUrl != null ? '&photo=${Uri.encodeComponent(participant.photoUrl!)}' : ''}'
-          '&userId=${participant.userId}',
+        _openChatTarget(
+          chatId: chatId,
+          chatType: 'direct',
+          title: participant.name,
+          photoUrl: participant.photoUrl,
+          otherUserId: participant.userId,
         );
       }
     } catch (error) {
@@ -1432,33 +1552,28 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
+    // Desktop master-detail: tint the row whose chat fills the right pane.
+    final bool isOpenInPane =
+        _selectedChat?.chatId == chat.chatId && _isWideLayout(context);
     return Padding(
       key: ValueKey<String>('chat-tile-${chat.chatId}'),
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
       child: Material(
-        color: Colors.transparent,
+        color: isOpenInPane
+            ? tokens.accent.withValues(alpha: 0.12)
+            : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: () {
-            final titleParam = Uri.encodeComponent(chat.displayName);
-            final photoParam =
-                chat.displayPhotoUrl != null && chat.displayPhotoUrl!.isNotEmpty
-                    ? '&photo=${Uri.encodeComponent(chat.displayPhotoUrl!)}'
-                    : '';
-            final userParam = !chat.isGroup && chat.otherUserId.isNotEmpty
-                ? '&userId=${Uri.encodeComponent(chat.otherUserId)}'
-                : '';
-            context
-                .push(
-              '/chats/view/${chat.chatId}?type=${Uri.encodeComponent(chat.type)}&title=$titleParam$photoParam$userParam',
-            )
-                .then((_) {
-              unawaited(_loadAuxiliaryChatState());
-            });
-          },
+          onTap: () => _openChatTarget(
+            chatId: chat.chatId,
+            chatType: chat.type,
+            title: chat.displayName,
+            photoUrl: chat.displayPhotoUrl,
+            otherUserId: chat.isGroup ? null : chat.otherUserId,
+          ),
           onLongPress: () => _openChatActions(chat),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),

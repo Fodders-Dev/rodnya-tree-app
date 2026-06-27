@@ -43,104 +43,177 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
       );
     }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          flex: 3,
-          child: SizedBox(height: double.infinity, child: listPanel),
-        ),
-        const SizedBox(width: 16),
-        SizedBox(
-          width: 320,
-          child: GlassPanel(
-            padding: const EdgeInsets.all(18),
-            borderRadius: BorderRadius.circular(30),
-            color: theme.colorScheme.surface.withValues(alpha: 0.76),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Связь',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _buildContextPill(
-                  theme,
-                  isFriendsTree: isFriendsTree,
-                  label: selectedTreeName ??
-                      (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'),
-                ),
-                const SizedBox(height: 16),
-                // Quick actions. Live deploy showed the previous
-                // FilledButton.icon + FilledButton.tonalIcon mix
-                // rendering as three indistinguishable green
-                // rectangles — the warm sage palette fuses primary
-                // and secondaryContainer at low contrast against
-                // the panel's tinted glass backdrop. One filled
-                // accent CTA + two outlined buttons gives a clear
-                // visual hierarchy and readable labels on both
-                // light and dark themes.
-                FilledButton.icon(
-                  onPressed: _openChatComposer,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(40),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                  ),
-                  icon: const Icon(Icons.add_comment_outlined, size: 18),
-                  label: const Text('Создать чат'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: () => context.go('/relatives'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(40),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                  ),
-                  icon: const Icon(Icons.people_outline, size: 18),
-                  label: Text(
-                    isFriendsTree ? 'Открыть связи' : 'Открыть родных',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: () => context.go('/tree'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(40),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                  ),
-                  icon: const Icon(Icons.account_tree_outlined, size: 18),
-                  label: const Text('Открыть дерево'),
-                ),
-                const SizedBox(height: 18),
-                _buildDesktopHint(
-                  theme,
-                  icon: Icons.search,
-                  title: 'Поиск',
-                  subtitle:
-                      isFriendsTree ? 'Чаты и люди круга' : 'Чаты и родные',
-                ),
-                const SizedBox(height: 12),
-                _buildDesktopHint(
-                  theme,
-                  icon: Icons.group_add_outlined,
-                  title: 'Новый чат',
-                  subtitle: 'Личный, групповой или чат ветки',
-                ),
-                const SizedBox(height: 12),
-                _buildDesktopHint(
-                  theme,
-                  icon: Icons.mark_chat_read_outlined,
-                  title: 'Поток',
-                  subtitle: 'Новые, архив и быстрые действия',
-                ),
-              ],
+    // Desktop master-detail (Telegram-style): the chat list is a resizable
+    // left column; opening a chat fills the right pane instead of pushing a
+    // full-screen route over the shell. No chat open → «Связь» placeholder.
+    final Widget rightPane = _selectedChat == null
+        ? _buildConnectPane(
+            theme,
+            isFriendsTree: isFriendsTree,
+            selectedTreeName: selectedTreeName,
+          )
+        : _buildChatDetailPane(theme);
+
+    return SizedBox(
+      height: double.infinity,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(width: _chatListPaneWidth, child: listPanel),
+          _buildPaneResizer(theme),
+          Expanded(child: rightPane),
+        ],
+      ),
+    );
+  }
+
+  /// Draggable divider between the list and the detail pane. Clamps the
+  /// list width to a sane range and persists it across sessions.
+  Widget _buildPaneResizer(ThemeData theme) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (details) =>
+            _resizeChatListPane(details.delta.dx),
+        onHorizontalDragEnd: (_) => unawaited(_persistChatListPaneWidth()),
+        child: SizedBox(
+          width: 16,
+          child: Center(
+            child: Container(
+              width: 4,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(999),
+              ),
             ),
           ),
         ),
-      ],
+      ),
+    );
+  }
+
+  /// Right pane hosting the selected chat as an embedded ChatScreen — no
+  /// «назад» leading; switching chats swaps the pane via its ValueKey.
+  Widget _buildChatDetailPane(ThemeData theme) {
+    final selected = _selectedChat!;
+    return GlassPanel(
+      padding: EdgeInsets.zero,
+      borderRadius: BorderRadius.circular(22),
+      color: theme.colorScheme.surface.withValues(alpha: 0.82),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: ChatScreen(
+          key: ValueKey<String>('embedded-chat-${selected.chatId}'),
+          chatId: selected.chatId,
+          chatType: selected.chatType,
+          title: selected.title,
+          photoUrl: selected.photoUrl,
+          otherUserId: selected.otherUserId,
+          embedded: true,
+        ),
+      ),
+    );
+  }
+
+  /// «Связь» quick-actions placeholder, shown in the right pane when no chat
+  /// is open. (Previously a permanent 320px side rail.)
+  Widget _buildConnectPane(
+    ThemeData theme, {
+    required bool isFriendsTree,
+    required String? selectedTreeName,
+  }) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: GlassPanel(
+          padding: const EdgeInsets.all(18),
+          borderRadius: BorderRadius.circular(30),
+          color: theme.colorScheme.surface.withValues(alpha: 0.76),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Связь',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildContextPill(
+                theme,
+                isFriendsTree: isFriendsTree,
+                label: selectedTreeName ??
+                    (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'),
+              ),
+              const SizedBox(height: 16),
+              // Quick actions. Live deploy showed the previous
+              // FilledButton.icon + FilledButton.tonalIcon mix
+              // rendering as three indistinguishable green
+              // rectangles — the warm sage palette fuses primary
+              // and secondaryContainer at low contrast against
+              // the panel's tinted glass backdrop. One filled
+              // accent CTA + two outlined buttons gives a clear
+              // visual hierarchy and readable labels on both
+              // light and dark themes.
+              FilledButton.icon(
+                onPressed: _openChatComposer,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(40),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                ),
+                icon: const Icon(Icons.add_comment_outlined, size: 18),
+                label: const Text('Создать чат'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => context.go('/relatives'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(40),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                ),
+                icon: const Icon(Icons.people_outline, size: 18),
+                label: Text(
+                  isFriendsTree ? 'Открыть связи' : 'Открыть родных',
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => context.go('/tree'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(40),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                ),
+                icon: const Icon(Icons.account_tree_outlined, size: 18),
+                label: const Text('Открыть дерево'),
+              ),
+              const SizedBox(height: 18),
+              _buildDesktopHint(
+                theme,
+                icon: Icons.search,
+                title: 'Поиск',
+                subtitle: isFriendsTree ? 'Чаты и люди круга' : 'Чаты и родные',
+              ),
+              const SizedBox(height: 12),
+              _buildDesktopHint(
+                theme,
+                icon: Icons.group_add_outlined,
+                title: 'Новый чат',
+                subtitle: 'Личный, групповой или чат ветки',
+              ),
+              const SizedBox(height: 12),
+              _buildDesktopHint(
+                theme,
+                icon: Icons.mark_chat_read_outlined,
+                title: 'Поток',
+                subtitle: 'Новые, архив и быстрые действия',
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
