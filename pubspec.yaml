@@ -155,6 +155,11 @@ dependencies:
 
   collection: any
   livekit_client: ^2.7.0
+  # Direct dep for Helper.setAndroidAudioConfiguration (manageAudioFocus:
+  # false) — already pulled transitively by livekit_client, pinned to the
+  # resolved version. Lets the native call-audio bridge own the Android
+  # route instead of flutter-webrtc grabbing it on connect.
+  flutter_webrtc: ^1.4.0
 
 dev_dependencies:
   flutter_test:

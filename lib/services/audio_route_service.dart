@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:livekit_client/livekit_client.dart';
 
 import 'native_call_audio.dart';
@@ -124,6 +125,8 @@ class AudioRouteService extends ChangeNotifier {
       // FR-E: гасим отложенный тап, чтобы он не применился после stop.
       _pendingSelectRoute = null;
       await _nativeAudio?.stop();
+      // Call over → hand audio-focus management back to webrtc default.
+      await _setWebrtcManageAudioFocus(true);
       _routes = const <AudioRouteOption>[];
       _selectedRouteId = null;
       _errorMessage = null;
@@ -134,6 +137,12 @@ class AudioRouteService extends ChangeNotifier {
     if (native != null) {
       // FR1: режим связи + аудиофокус на старте звонка.
       await native.start();
+      // CA1+: flutter-webrtc grabs Android audio focus/mode/route on connect
+      // (livekit calls setAndroidAudioConfiguration(communication) =
+      // manageAudioFocus:true), which fought the bridge — «Динамик» did
+      // nothing and hardware volume buttons missed STREAM_VOICE_CALL. Tell
+      // webrtc to STOP managing focus so the bridge is the SOLE owner.
+      await _setWebrtcManageAudioFocus(false);
       // FR5: реальные смены аудиоустройств (BT/провод) → пересобрать.
       _nativeDeviceSubscription = native.deviceChanges.listen((_) {
         unawaited(refreshRoutes());
@@ -155,6 +164,23 @@ class AudioRouteService extends ChangeNotifier {
       if (defaultOption != null) {
         await selectRoute(defaultOption);
       }
+    }
+  }
+
+  // CA1+: relinquish (false) / restore (true) flutter-webrtc's Android audio
+  // focus management. Only meaningful on the native-bridge path (Android);
+  // best-effort — a native failure must never break the call. Re-asserted on
+  // every route change because webrtc may re-grab on audio (un)publish.
+  Future<void> _setWebrtcManageAudioFocus(bool manage) async {
+    if (_nativeAudio == null) {
+      return;
+    }
+    try {
+      await rtc.Helper.setAndroidAudioConfiguration(
+        rtc.AndroidAudioConfiguration(manageAudioFocus: manage),
+      );
+    } catch (error) {
+      debugPrint('[call-audio] setAndroidAudioConfiguration failed: $error');
     }
   }
 
@@ -224,6 +250,10 @@ class AudioRouteService extends ChangeNotifier {
         // FR2: маршрутизация нативом (setCommunicationDevice).
         final ok = await native.setRoute(option.id);
         if (ok) {
+          // CA1+: re-assert webrtc-relinquish — livekit may have re-grabbed
+          // audio focus on a track (un)publish since connect, which would
+          // otherwise yank the route back from the bridge.
+          await _setWebrtcManageAudioFocus(false);
           // Android may report the previous communication device for a short
           // moment after setCommunicationDevice(). Show the user's accepted
           // choice immediately, then reconcile with the OS a bit later.
