@@ -46,15 +46,33 @@ class LiveKitService {
 
   async ensureRoom(roomName, {maxParticipants = 2} = {}) {
     this.ensureConfigured();
-    const normalizedMaxParticipants = Number.isFinite(Number(maxParticipants))
+    const requested = Number.isFinite(Number(maxParticipants))
       ? Math.max(2, Math.floor(Number(maxParticipants)))
       : 2;
+
+    // Never SHRINK an existing room's cap (a late joiner must always fit), and
+    // grow it to hold the full participant set. Read the current cap first so
+    // a smaller `requested` from a later call can't lower the ceiling.
+    let existingMaxParticipants = 0;
+    try {
+      const rooms = await this.roomServiceClient.listRooms([roomName]);
+      const room = Array.isArray(rooms)
+        ? rooms.find((entry) => String(entry?.name || "") === roomName)
+        : null;
+      const current = Number(room?.maxParticipants);
+      existingMaxParticipants = Number.isFinite(current) && current > 0 ? current : 0;
+    } catch (_) {
+      // listRooms is best-effort — fall back to the requested cap.
+      existingMaxParticipants = 0;
+    }
+
+    const targetMaxParticipants = Math.max(requested, existingMaxParticipants, 2);
     try {
       await this.roomServiceClient.createRoom({
         name: roomName,
         emptyTimeout: 60,
         departureTimeout: 15,
-        maxParticipants: normalizedMaxParticipants,
+        maxParticipants: targetMaxParticipants,
       });
     } catch (error) {
       const message = String(error?.message || "").toLowerCase();

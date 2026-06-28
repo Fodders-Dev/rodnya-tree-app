@@ -1089,6 +1089,261 @@ test("group call starts from group chat and creates LiveKit sessions for every p
   }
 });
 
+// ── Group late-join («залететь в идущий звонок») ──────────────────────────
+function instrumentedGroupCallLiveKit() {
+  const ensuredRooms = [];
+  const createdSessions = [];
+  const fakeLiveKitService = {
+    isConfigured: true,
+    async ensureRoom(roomName, options = {}) {
+      ensuredRooms.push({roomName, options});
+    },
+    async createSession({roomName, participantIdentity, participantName, metadata}) {
+      createdSessions.push({roomName, participantIdentity, participantName, metadata});
+      return {
+        roomName,
+        url: "wss://livekit.test",
+        token: `token-${participantIdentity}`,
+        participantIdentity,
+        participantName,
+        createdAt: new Date().toISOString(),
+      };
+    },
+    async receiveWebhook(body) {
+      return JSON.parse(body);
+    },
+  };
+  return {fakeLiveKitService, ensuredRooms, createdSessions};
+}
+
+async function startGroupCallFixture(emailPrefix) {
+  const {fakeLiveKitService, ensuredRooms, createdSessions} =
+    instrumentedGroupCallLiveKit();
+  const ctx = await startConfiguredTestServer({liveKitService: fakeLiveKitService});
+  const caller = await registerTestUser(ctx, `${emailPrefix}-caller@rodnya.app`, "Caller");
+  const bob = await registerTestUser(ctx, `${emailPrefix}-bob@rodnya.app`, "Bob");
+  const carol = await registerTestUser(ctx, `${emailPrefix}-carol@rodnya.app`, "Carol");
+  const groupRes = await fetch(`${ctx.baseUrl}/v1/chats/groups`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${caller.accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({title: "Созвон", participantIds: [bob.user.id, carol.user.id]}),
+  });
+  assert.equal(groupRes.status, 201);
+  const group = await groupRes.json();
+  const startRes = await fetch(`${ctx.baseUrl}/v1/calls`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${caller.accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({chatId: group.chat.id, mediaMode: "audio"}),
+  });
+  assert.equal(startRes.status, 201);
+  const startedCall = (await startRes.json()).call;
+  return {ctx, caller, bob, carol, group, startedCall, ensuredRooms, createdSessions};
+}
+
+async function callAction(ctx, callId, action, user) {
+  return fetch(`${ctx.baseUrl}/v1/calls/${callId}/${action}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${user.accessToken}`,
+      "content-type": "application/json",
+    },
+    body: "{}",
+  });
+}
+
+test("group call: 3-way accept ordering — first accepter sets scalars, second late-joins with its own session", async () => {
+  const g = await startGroupCallFixture("threeway");
+  try {
+    const acceptBob = await callAction(g.ctx, g.startedCall.id, "accept", g.bob);
+    assert.equal(acceptBob.status, 200);
+    const bobCall = (await acceptBob.json()).call;
+    assert.equal(bobCall.state, "active");
+    assert.ok(bobCall.session.participantIdentity.startsWith(`${g.bob.user.id}#`));
+
+    // Carol accepts WHILE the call is already active → she must get her OWN
+    // session (the old code returned session:null here).
+    const acceptCarol = await callAction(g.ctx, g.startedCall.id, "accept", g.carol);
+    assert.equal(acceptCarol.status, 200);
+    const carolCall = (await acceptCarol.json()).call;
+    assert.equal(carolCall.state, "active");
+    assert.ok(carolCall.session, "carol must get a session on accept-when-active");
+    assert.ok(carolCall.session.token);
+    assert.ok(carolCall.session.participantIdentity.startsWith(`${g.carol.user.id}#`));
+
+    // Scalars stay with the FIRST joiner (bob); the N-way map has both.
+    const stored = await g.ctx.store.findCall(g.startedCall.id);
+    assert.equal(stored.acceptedByUserId, g.bob.user.id);
+    assert.deepEqual(
+      Object.keys(stored.joinedSessionByUserId).sort(),
+      [g.bob.user.id, g.carol.user.id].sort(),
+    );
+  } finally {
+    await stopTestServer(g.ctx);
+  }
+});
+
+test("group call: POST /join after active mints a fresh token and GET active returns it", async () => {
+  const g = await startGroupCallFixture("joinactive");
+  try {
+    await callAction(g.ctx, g.startedCall.id, "accept", g.bob); // → active
+
+    const beforeRes = await fetch(
+      `${g.ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(g.group.chat.id)}`,
+      {headers: {authorization: `Bearer ${g.carol.accessToken}`}},
+    );
+    assert.equal((await beforeRes.json()).call.session, null);
+
+    const joinRes = await callAction(g.ctx, g.startedCall.id, "join", g.carol);
+    assert.equal(joinRes.status, 200);
+    const joined = (await joinRes.json()).call;
+    assert.ok(joined.session, "join must return a session");
+    assert.ok(joined.session.token, "join session must carry a token");
+    assert.ok(joined.session.participantIdentity.startsWith(`${g.carol.user.id}#`));
+
+    // GET /v1/calls/active must now hand carol her real session.
+    const afterRes = await fetch(
+      `${g.ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(g.group.chat.id)}`,
+      {headers: {authorization: `Bearer ${g.carol.accessToken}`}},
+    );
+    const after = (await afterRes.json()).call;
+    assert.ok(after.session, "GET active must return carol's session after join");
+    assert.equal(after.session.token, joined.session.token);
+  } finally {
+    await stopTestServer(g.ctx);
+  }
+});
+
+test("group call: per-participant hangup keeps the call alive until the last leaves", async () => {
+  const g = await startGroupCallFixture("groupleave");
+  try {
+    await callAction(g.ctx, g.startedCall.id, "accept", g.bob);
+    await callAction(g.ctx, g.startedCall.id, "join", g.carol);
+    // Connected: caller (initiator) + bob + carol.
+
+    const bobHangup = await callAction(g.ctx, g.startedCall.id, "hangup", g.bob);
+    assert.equal(bobHangup.status, 200);
+    assert.equal(
+      (await bobHangup.json()).call.state,
+      "active",
+      "group stays active after one participant leaves",
+    );
+
+    const carolHangup = await callAction(g.ctx, g.startedCall.id, "hangup", g.carol);
+    assert.equal(carolHangup.status, 200);
+    assert.equal(
+      (await carolHangup.json()).call.state,
+      "active",
+      "still active while the initiator is present",
+    );
+
+    const callerHangup = await callAction(g.ctx, g.startedCall.id, "hangup", g.caller);
+    assert.equal(callerHangup.status, 200);
+    assert.equal(
+      (await callerHangup.json()).call.state,
+      "ended",
+      "ends when the last participant leaves",
+    );
+  } finally {
+    await stopTestServer(g.ctx);
+  }
+});
+
+test("addCallParticipantSession is idempotent for the first joiner and never re-flips scalars", async () => {
+  const g = await startGroupCallFixture("idem");
+  try {
+    const fakeSession = (uid) => ({
+      roomName: `call_${g.startedCall.id}`,
+      url: "wss://livekit.test",
+      token: `tok-${uid}`,
+      participantIdentity: `${uid}#sess-${uid}`,
+      participantName: uid,
+      createdAt: new Date().toISOString(),
+    });
+
+    // First join flips ringing → active and sets the scalar back-compat field.
+    const first = await g.ctx.store.addCallParticipantSession({
+      callId: g.startedCall.id,
+      userId: g.bob.user.id,
+      sessionId: "sess-bob",
+      session: fakeSession(g.bob.user.id),
+    });
+    assert.equal(first.state, "active");
+    assert.equal(first.acceptedByUserId, g.bob.user.id);
+
+    // Re-adding the SAME (user, session) is idempotent — no duplication, no
+    // state churn (mirrors a race where the first join lands twice).
+    const dup = await g.ctx.store.addCallParticipantSession({
+      callId: g.startedCall.id,
+      userId: g.bob.user.id,
+      sessionId: "sess-bob",
+      session: fakeSession(g.bob.user.id),
+    });
+    assert.equal(dup.state, "active");
+    assert.equal(dup.acceptedByUserId, g.bob.user.id);
+    assert.deepEqual(Object.keys(dup.joinedSessionByUserId), [g.bob.user.id]);
+
+    // A different, later joiner does NOT steal the first joiner's scalar.
+    const second = await g.ctx.store.addCallParticipantSession({
+      callId: g.startedCall.id,
+      userId: g.carol.user.id,
+      sessionId: "sess-carol",
+      session: fakeSession(g.carol.user.id),
+    });
+    assert.equal(
+      second.acceptedByUserId,
+      g.bob.user.id,
+      "scalar stays with the first joiner",
+    );
+    assert.deepEqual(
+      Object.keys(second.joinedSessionByUserId).sort(),
+      [g.bob.user.id, g.carol.user.id].sort(),
+    );
+  } finally {
+    await stopTestServer(g.ctx);
+  }
+});
+
+test("LiveKitService.ensureRoom grows the room cap and never shrinks it", async () => {
+  const {LiveKitService} = require("../src/livekit-service");
+  const createRoomCaps = [];
+  let trackedRoom = null;
+  const service = new LiveKitService({
+    liveKitUrl: "wss://livekit.test",
+    liveKitApiKey: "key",
+    liveKitApiSecret: "secret",
+  });
+  assert.equal(service.isConfigured, true);
+  service.roomServiceClient = {
+    async listRooms(names) {
+      if (!trackedRoom) return [];
+      if (names && !names.includes(trackedRoom.name)) return [];
+      return [trackedRoom];
+    },
+    async createRoom({name, maxParticipants}) {
+      createRoomCaps.push(maxParticipants);
+      trackedRoom = {name, maxParticipants};
+      return trackedRoom;
+    },
+  };
+
+  await service.ensureRoom("room-1", {maxParticipants: 2});
+  await service.ensureRoom("room-1", {maxParticipants: 5}); // grow
+  await service.ensureRoom("room-1", {maxParticipants: 3}); // must NOT shrink
+
+  assert.deepEqual(
+    createRoomCaps,
+    [2, 5, 5],
+    "ensureRoom passes max(requested, current) — grows to 5, never back down to 3",
+  );
+  assert.equal(trackedRoom.maxParticipants, 5);
+});
+
 test("ringing calls automatically expire to missed after timeout", async () => {
   const fakeLiveKitService = {
     isConfigured: true,

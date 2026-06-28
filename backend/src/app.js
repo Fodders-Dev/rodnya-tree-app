@@ -1780,9 +1780,23 @@ function createApp({
     if (!call || !viewerUserId) {
       return "";
     }
+    // N-way: any joined participant's device session (group late-join).
+    const joinedSessionByUserId =
+      call.joinedSessionByUserId && typeof call.joinedSessionByUserId === "object"
+        ? call.joinedSessionByUserId
+        : {};
+    const joinedSessionId = String(
+      joinedSessionByUserId[viewerUserId] || "",
+    ).trim();
+    if (joinedSessionId) {
+      return joinedSessionId;
+    }
+    // The initiator never "joins" via accept — their owning device is the one
+    // that originated the call.
     if (call.initiatorId === viewerUserId) {
       return String(call.originatedBySessionId || "").trim();
     }
+    // Back-compat: scalar accepter for in-flight records / old clients.
     if (call.acceptedByUserId === viewerUserId) {
       return String(call.acceptedBySessionId || "").trim();
     }
@@ -2148,6 +2162,65 @@ function createApp({
     return Object.fromEntries(
       sessionEntries.filter(([, session]) => session != null),
     );
+  }
+
+  // Group late-join: mint a LiveKit session for the CALLER's own device and
+  // merge it into the (already-active) call, so anyone with membership can
+  // "залететь в звонок". Shared by POST /accept on an active call and the
+  // dedicated POST /join. Responds with mapCallRecord carrying the caller's
+  // real session ({url, token, roomName}). Assumes LiveKit is configured
+  // (callers check) and the call is non-terminal.
+  async function joinActiveCall(req, res, call) {
+    const roomName = call.roomName || `call_${call.id}`;
+    const callParticipantIds = normalizeParticipantIds(call.participantIds || []);
+    const callerId = req.auth.user.id;
+    const callerSessionId = req.auth.sessionPublicId;
+    try {
+      await resolvedLiveKitService.ensureRoom(roomName, {
+        maxParticipants: callParticipantIds.length,
+      });
+      const sessionByUserId = await createCallSessionsForParticipants({
+        call,
+        roomName,
+        participantIds: [callerId],
+        ownerSessionByUserId: {[callerId]: callerSessionId},
+      });
+      const joinedCall = await store.addCallParticipantSession({
+        callId: call.id,
+        userId: callerId,
+        sessionId: callerSessionId,
+        session: sessionByUserId[callerId],
+      });
+      if (!joinedCall) {
+        res.status(409).json({message: "Не удалось подключиться к звонку"});
+        return;
+      }
+      clearCallInviteTimeout(joinedCall.id);
+
+      await publishCallState(joinedCall);
+
+      logCallEvent("join.succeeded", joinedCall, {viewerUserId: callerId});
+
+      res.json({
+        call: mapCallRecord(joinedCall, {
+          viewerUserId: callerId,
+          viewerSessionId: callerSessionId,
+        }),
+      });
+    } catch (error) {
+      const failedCall =
+        typeof store.markCallRoomJoinFailure === "function"
+          ? await store.markCallRoomJoinFailure({
+              callId: call.id,
+              reason: error?.message || "room_prepare_failed",
+            })
+          : call;
+      logCallEvent("join.failed", failedCall || call, {
+        viewerUserId: callerId,
+        error: String(error?.message || error || "room_prepare_failed"),
+      });
+      res.status(502).json({message: "Не удалось подготовить комнату звонка"});
+    }
   }
 
   function resolvePublicAppUrl() {
@@ -3186,12 +3259,10 @@ function createApp({
       return;
     }
     if (call.state === "active") {
-      res.json({
-        call: mapCallRecord(call, {
-          viewerUserId: req.auth.user.id,
-          viewerSessionId: req.auth.sessionPublicId,
-        }),
-      });
+      // Late-join: the call is already running — mint THIS device's session
+      // and merge it in (instead of the old tokenless early-return that left
+      // every late participant with session:null).
+      await joinActiveCall(req, res, call);
       return;
     }
     if (call.state !== "ringing") {
@@ -3255,6 +3326,29 @@ function createApp({
       });
       res.status(502).json({message: "Не удалось подготовить комнату звонка"});
     }
+  });
+
+  // Group late-join: any member can "залететь" into a live call. Unlike
+  // /accept (invited-recipient only), /join is membership-gated and works for
+  // any participant — including the initiator joining from another device.
+  app.post("/v1/calls/:callId/join", requireAuth, async (req, res) => {
+    if (!resolvedLiveKitService.isConfigured) {
+      res.status(503).json({message: "Звонки пока не настроены на сервере"});
+      return;
+    }
+
+    const call = await requireCallAccess(req, res, req.params.callId);
+    if (!call) {
+      return;
+    }
+    // Joinable while the call is still live (ringing or active); the first
+    // joiner flips ringing -> active inside addCallParticipantSession.
+    if (call.state !== "ringing" && call.state !== "active") {
+      res.status(409).json({message: "Звонок уже недоступен"});
+      return;
+    }
+
+    await joinActiveCall(req, res, call);
   });
 
   app.post("/v1/calls/:callId/reject", requireAuth, async (req, res) => {

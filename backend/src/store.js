@@ -1773,6 +1773,25 @@ function normalizeCallSessionMap(value) {
   }, {});
 }
 
+// Group late-join: who has joined the call and on which device session, as
+// {userId -> sessionPublicId}. Replaces the scalar acceptedBy* (which only
+// ever tracked the FIRST accepter); the scalars are kept filled by the first
+// joiner for back-compat with in-flight records and old clients.
+function normalizeJoinedSessionMap(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [userId, sessionId]) => {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedSessionId = normalizeNullableString(sessionId);
+    if (normalizedUserId && normalizedSessionId) {
+      accumulator[normalizedUserId] = normalizedSessionId;
+    }
+    return accumulator;
+  }, {});
+}
+
 function normalizeNonNegativeInteger(value, fallback = 0) {
   const normalizedFallback =
     Number.isFinite(Number(fallback)) && Number(fallback) >= 0
@@ -1837,6 +1856,7 @@ function createCallRecord({
     state: "ringing",
     roomName: null,
     sessionByUserId: {},
+    joinedSessionByUserId: {},
     originatedBySessionId: normalizeNullableString(originatedBySessionId),
     acceptedByUserId: null,
     acceptedBySessionId: null,
@@ -1873,6 +1893,7 @@ function normalizeStoredCall(call) {
     state: normalizeCallState(call.state),
     roomName: normalizeNullableString(call.roomName),
     sessionByUserId: normalizeCallSessionMap(call.sessionByUserId),
+    joinedSessionByUserId: normalizeJoinedSessionMap(call.joinedSessionByUserId),
     originatedBySessionId: normalizeNullableString(call.originatedBySessionId),
     acceptedByUserId: normalizeNullableString(call.acceptedByUserId),
     acceptedBySessionId: normalizeNullableString(call.acceptedBySessionId),
@@ -19279,6 +19300,11 @@ class FileStore {
     storedCall.state = "active";
     storedCall.roomName = normalizeNullableString(roomName);
     storedCall.sessionByUserId = normalizeCallSessionMap(sessionByUserId);
+    // First joiner populates the N-way map; the scalars stay filled too for
+    // back-compat (in-flight records + old clients that read acceptedBy*).
+    storedCall.joinedSessionByUserId = normalizeJoinedSessionMap({
+      [userId]: acceptedBySessionId,
+    });
     storedCall.acceptedByUserId = userId;
     storedCall.acceptedBySessionId = normalizeNullableString(acceptedBySessionId);
     storedCall.acceptedAt = timestamp;
@@ -19291,6 +19317,73 @@ class FileStore {
     );
     storedCall.metrics.connectedParticipantIds = [];
     storedCall.metrics.lastWebhookEvent = null;
+    await this._write(db);
+    return structuredClone(normalizeStoredCall(storedCall));
+  }
+
+  // Group late-join: merge a participant's freshly-minted session into the
+  // call (sessionByUserId + joinedSessionByUserId). Works on an ACTIVE call
+  // (does NOT require state==='ringing'), and on the FIRST joiner flips
+  // ringing -> active (filling the scalar back-compat fields). Idempotent per
+  // (user, session): re-adding the same pair just re-writes the same values.
+  async addCallParticipantSession({callId, userId, sessionId, session}) {
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId || !call.participantIds.includes(normalizedUserId)) {
+      return false;
+    }
+    if (isCallTerminalState(call.state)) {
+      return undefined;
+    }
+
+    const timestamp = nowIso();
+    const normalizedSessionId = normalizeNullableString(sessionId);
+    const normalizedSession = normalizeCallSession(session);
+
+    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+    storedCall.sessionByUserId = normalizeCallSessionMap(storedCall.sessionByUserId);
+    storedCall.joinedSessionByUserId = normalizeJoinedSessionMap(
+      storedCall.joinedSessionByUserId,
+    );
+
+    if (normalizedSession) {
+      storedCall.sessionByUserId[normalizedUserId] = normalizedSession;
+      if (!normalizeNullableString(storedCall.roomName)) {
+        storedCall.roomName = normalizedSession.roomName;
+      }
+    }
+    if (normalizedSessionId) {
+      storedCall.joinedSessionByUserId[normalizedUserId] = normalizedSessionId;
+    }
+
+    if (call.state === "ringing") {
+      // First joiner makes the call active. Scalars are set once (the first
+      // joiner wins) so old clients still resolve the owning session.
+      storedCall.state = "active";
+      storedCall.acceptedAt = storedCall.acceptedAt || timestamp;
+      storedCall.endedAt = null;
+      storedCall.endedReason = null;
+      if (!normalizeNullableString(storedCall.acceptedByUserId)) {
+        storedCall.acceptedByUserId = normalizedUserId;
+        storedCall.acceptedBySessionId = normalizedSessionId;
+      }
+      if (
+        storedCall.metrics.acceptLatencyMs === null ||
+        storedCall.metrics.acceptLatencyMs === undefined
+      ) {
+        storedCall.metrics.acceptLatencyMs = Math.max(
+          0,
+          new Date(timestamp).getTime() - new Date(call.createdAt).getTime(),
+        );
+      }
+    }
+
+    storedCall.updatedAt = timestamp;
     await this._write(db);
     return structuredClone(normalizeStoredCall(storedCall));
   }
@@ -19392,6 +19485,41 @@ class FileStore {
     }
 
     const timestamp = nowIso();
+    const normalizedUserId = String(userId || "").trim();
+    storedCall.sessionByUserId = normalizeCallSessionMap(storedCall.sessionByUserId);
+    storedCall.joinedSessionByUserId = normalizeJoinedSessionMap(
+      storedCall.joinedSessionByUserId,
+    );
+
+    // Group call: one participant leaving is NOT the end — drop their session
+    // and keep the call active while anyone else is still connected. Mirrors
+    // the webhook participant_left path. The 1:1 case (≤2 participants) ends
+    // the call as before. ended only when the LAST participant leaves.
+    if (call.participantIds.length > 2) {
+      delete storedCall.joinedSessionByUserId[normalizedUserId];
+      delete storedCall.sessionByUserId[normalizedUserId];
+      // Hand the scalar back-compat fields off to a remaining joiner so old
+      // clients still resolve an owning session (or clear them if none left).
+      if (normalizeNullableString(storedCall.acceptedByUserId) === normalizedUserId) {
+        const remainingJoiner = Object.keys(storedCall.joinedSessionByUserId)[0];
+        if (remainingJoiner) {
+          storedCall.acceptedByUserId = remainingJoiner;
+          storedCall.acceptedBySessionId =
+            storedCall.joinedSessionByUserId[remainingJoiner];
+        } else {
+          storedCall.acceptedByUserId = null;
+          storedCall.acceptedBySessionId = null;
+        }
+      }
+      const someoneStillConnected =
+        Object.keys(storedCall.sessionByUserId).length > 0;
+      if (someoneStillConnected) {
+        storedCall.updatedAt = timestamp;
+        await this._write(db);
+        return structuredClone(normalizeStoredCall(storedCall));
+      }
+    }
+
     storedCall.state = "ended";
     storedCall.updatedAt = timestamp;
     storedCall.endedAt = timestamp;
