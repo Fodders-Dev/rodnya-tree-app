@@ -354,11 +354,12 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
     if (preview == null) {
       return _CallPresentation(title: baseTitle);
     }
-    final cachedTitle = preview.title?.trim();
+    // Use the preview's resolved display name (otherUserName for a 1:1 chat,
+    // title for a group) — NOT preview.title, which is null for direct chats
+    // and would leave the caller staring at a nameless «Звонок».
+    final cachedName = preview.displayName.trim();
     return _CallPresentation(
-      title: (cachedTitle != null && cachedTitle.isNotEmpty)
-          ? cachedTitle
-          : baseTitle,
+      title: cachedName.isNotEmpty ? cachedName : baseTitle,
       photoUrl: preview.displayPhotoUrl,
     );
   }
