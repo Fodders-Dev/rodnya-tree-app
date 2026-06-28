@@ -190,6 +190,8 @@ class AppUpdateService extends ChangeNotifier {
     Future<void> Function(String path)? installerOpener,
     bool isWeb = kIsWeb,
     TargetPlatform? platform,
+    Duration minimumCheckInterval = const Duration(seconds: 45),
+    DateTime Function()? clock,
   })  : _apiBaseUrl = apiBaseUrl,
         _httpClient = httpClient ?? http.Client(),
         // Закрываем клиент в dispose только если создали его сами —
@@ -202,7 +204,9 @@ class AppUpdateService extends ChangeNotifier {
             downloadDirectoryProvider ?? getTemporaryDirectory,
         _installerOpener = installerOpener ?? _defaultOpenInstaller,
         _isWeb = isWeb,
-        _platform = platform ?? defaultTargetPlatform {
+        _platform = platform ?? defaultTargetPlatform,
+        _minimumCheckInterval = minimumCheckInterval,
+        _clock = clock ?? DateTime.now {
     _updateInstaller = updateInstaller ?? _defaultUpdateInstaller;
   }
 
@@ -219,6 +223,10 @@ class AppUpdateService extends ChangeNotifier {
   late final AppUpdateInstaller _updateInstaller;
   final bool _isWeb;
   final TargetPlatform _platform;
+  final Duration _minimumCheckInterval;
+  final DateTime Function() _clock;
+  Future<void>? _checkInFlight;
+  DateTime? _lastCheckStartedAt;
 
   AppUpdateState _state = AppUpdateState.none;
   AppUpdateState get state => _state;
@@ -227,19 +235,29 @@ class AppUpdateService extends ChangeNotifier {
   AppUpdateDownloadProgress get downloadProgress => _download;
 
   /// Сессионный дисмисс необязательного обновления («Позже»). Static
-  /// переживает пересоздание виджетов в рамках сессии, сбрасывается
-  /// перезапуском приложения. Обязательное обновление не дисмиссится.
-  static bool _optionalDismissedThisSession = false;
-  bool get isOptionalDismissed => _optionalDismissedThisSession;
+  /// переживает пересоздание виджетов в рамках сессии, но привязан к
+  /// конкретному versionCode: если во время этой же сессии выйдет ещё
+  /// более свежая версия, баннер снова появится.
+  /// Обязательное обновление не дисмиссится.
+  static int? _optionalDismissedVersionCodeThisSession;
+  bool get isOptionalDismissed {
+    final latest = _state.latest;
+    return latest != null &&
+        _optionalDismissedVersionCodeThisSession == latest.versionCode;
+  }
 
   @visibleForTesting
   static void debugResetSessionDismissal() {
-    _optionalDismissedThisSession = false;
+    _optionalDismissedVersionCodeThisSession = null;
   }
 
   void dismissOptionalForSession() {
-    if (_optionalDismissedThisSession) return;
-    _optionalDismissedThisSession = true;
+    final latest = _state.latest;
+    if (latest == null ||
+        _optionalDismissedVersionCodeThisSession == latest.versionCode) {
+      return;
+    }
+    _optionalDismissedVersionCodeThisSession = latest.versionCode;
     _safeNotify();
   }
 
@@ -251,8 +269,37 @@ class AppUpdateService extends ChangeNotifier {
   }
 
   /// Главная проверка — вызывается в featureLazy-фазе warmup'а
-  /// (graceful, в try/catch). Никогда не бросает.
-  Future<void> checkForUpdate() async {
+  /// (graceful, в try/catch), при возврате приложения на передний план
+  /// и по foreground polling. Никогда не бросает.
+  Future<void> checkForUpdate({bool force = false}) {
+    if (_disposed) {
+      return Future<void>.value();
+    }
+
+    final inFlight = _checkInFlight;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    final lastCheckStartedAt = _lastCheckStartedAt;
+    if (!force &&
+        lastCheckStartedAt != null &&
+        _clock().difference(lastCheckStartedAt) < _minimumCheckInterval) {
+      return Future<void>.value();
+    }
+
+    late final Future<void> check;
+    check = _runCheckForUpdate().whenComplete(() {
+      if (identical(_checkInFlight, check)) {
+        _checkInFlight = null;
+      }
+    });
+    _checkInFlight = check;
+    return check;
+  }
+
+  Future<void> _runCheckForUpdate() async {
+    _lastCheckStartedAt = _clock();
     try {
       _state = await _resolveState();
     } catch (_) {

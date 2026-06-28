@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 
@@ -10,6 +12,84 @@ import '../theme/app_theme.dart';
 ///   • [AppUpdateGate] — оборачивает приложение и при несовместимой
 ///     старой версии (mandatory) показывает блокирующий экран.
 /// Крупно/контрастно/≥44dp — аудитория 50+.
+
+class AppUpdateMonitor extends StatefulWidget {
+  const AppUpdateMonitor({
+    super.key,
+    required this.child,
+    this.pollInterval = const Duration(minutes: 1),
+  });
+
+  final Widget child;
+  final Duration pollInterval;
+
+  @override
+  State<AppUpdateMonitor> createState() => _AppUpdateMonitorState();
+}
+
+class _AppUpdateMonitorState extends State<AppUpdateMonitor>
+    with WidgetsBindingObserver {
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _checkForUpdate();
+    });
+    _restartTimer();
+  }
+
+  @override
+  void didUpdateWidget(AppUpdateMonitor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pollInterval != widget.pollInterval) {
+      _restartTimer();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkForUpdate(force: true);
+      _restartTimer();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    super.dispose();
+  }
+
+  void _restartTimer() {
+    _pollTimer?.cancel();
+    final interval = widget.pollInterval;
+    if (interval <= Duration.zero) {
+      _pollTimer = null;
+      return;
+    }
+    _pollTimer = Timer.periodic(interval, (_) => _checkForUpdate());
+  }
+
+  void _checkForUpdate({bool force = false}) {
+    if (!GetIt.I.isRegistered<AppUpdateService>()) {
+      return;
+    }
+    unawaited(GetIt.I<AppUpdateService>().checkForUpdate(force: force));
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 
 RodnyaDesignTokens _tokensOf(BuildContext context) {
   final theme = Theme.of(context);

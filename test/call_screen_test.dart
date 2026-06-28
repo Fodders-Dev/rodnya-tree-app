@@ -686,7 +686,6 @@ class _FakeCallCoordinator extends CallCoordinatorService {
     notifyListeners();
   }
 
-  @override
   Future<CallInvite> joinCall(String callId) => acceptCall(callId);
 
   @override

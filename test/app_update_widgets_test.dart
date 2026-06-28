@@ -30,13 +30,15 @@ http.Client _client(Map<String, dynamic>? latestJson) {
 
 Future<AppUpdateService> _registerService({
   Map<String, dynamic>? latestJson,
+  http.Client? httpClient,
   int currentVersionCode = 40,
   String? installer,
   AppUpdateInstaller? updateInstaller,
+  Duration minimumCheckInterval = Duration.zero,
 }) async {
   final service = AppUpdateService(
     apiBaseUrl: 'https://api.example.test',
-    httpClient: _client(latestJson),
+    httpClient: httpClient ?? _client(latestJson),
     buildSnapshotProvider: () async => AppBuildSnapshot(
       versionCode: currentVersionCode,
       packageName: 'com.ahjkuio.rodnya_family_app',
@@ -45,6 +47,7 @@ Future<AppUpdateService> _registerService({
     isWeb: false,
     platform: TargetPlatform.android,
     updateInstaller: updateInstaller ?? (latest, onProgress) async {},
+    minimumCheckInterval: minimumCheckInterval,
   );
   await service.checkForUpdate();
   GetIt.I.registerSingleton<AppUpdateService>(service);
@@ -86,6 +89,16 @@ Widget _hostGate() => MaterialApp(
       ),
     );
 
+Widget _hostMonitor(Duration pollInterval) => MaterialApp(
+      theme: AppTheme.lightTheme,
+      home: Scaffold(
+        body: AppUpdateMonitor(
+          pollInterval: pollInterval,
+          child: const AppUpdateBanner(),
+        ),
+      ),
+    );
+
 void main() {
   setUp(() async {
     await GetIt.I.reset();
@@ -97,7 +110,8 @@ void main() {
     AppUpdateService.debugResetSessionDismissal();
   });
 
-  testWidgets('баннер показывается при optional + notes + кнопки', (tester) async {
+  testWidgets('баннер показывается при optional + notes + кнопки',
+      (tester) async {
     await _registerService(
       latestJson: _payload(versionCode: 42),
       currentVersionCode: 40,
@@ -127,7 +141,8 @@ void main() {
     expect(find.byKey(const Key('app-update-banner')), findsOneWidget);
     // Верх баннера должен быть НИЖЕ инсета статус-бара (раньше был ~8 —
     // налезал на статус-бар).
-    final top = tester.getTopLeft(find.byKey(const Key('app-update-banner'))).dy;
+    final top =
+        tester.getTopLeft(find.byKey(const Key('app-update-banner'))).dy;
     expect(top, greaterThanOrEqualTo(topInset));
   });
 
@@ -233,6 +248,37 @@ void main() {
       find.byKey(const Key('app-update-mandatory-screen')),
       findsNothing,
     );
+  });
+
+  testWidgets('foreground monitor показывает обновление без перезапуска',
+      (tester) async {
+    Map<String, dynamic>? latest = _payload(versionCode: 40);
+    final client = MockClient((request) async {
+      if (request.url.path != '/v1/app/latest') {
+        return http.Response('not found', 404);
+      }
+      return http.Response(
+        jsonEncode(latest),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    await _registerService(
+      httpClient: client,
+      currentVersionCode: 40,
+      minimumCheckInterval: Duration.zero,
+    );
+
+    await tester.pumpWidget(_hostMonitor(const Duration(milliseconds: 20)));
+    await tester.pump();
+    expect(find.byKey(const Key('app-update-banner')), findsNothing);
+
+    latest = _payload(versionCode: 42);
+    await tester.pump(const Duration(milliseconds: 25));
+    await tester.pump();
+
+    expect(find.byKey(const Key('app-update-banner')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('сервис не зарегистрирован → виджеты молчат', (tester) async {

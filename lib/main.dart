@@ -665,10 +665,13 @@ class _MyAppState extends State<MyApp> {
         if (GetIt.I.isRegistered<CallCoordinatorService>()) {
           wrapped = CallRuntimeHost(child: wrapped);
         }
-        // U2: блокирующий экран «Нужно обновить» при несовместимой старой
-        // версии sideload-сборки. Оборачивает всё приложение (как
-        // CallRuntimeHost) — не трогает go_router-роуты.
-        wrapped = AppUpdateGate(child: wrapped);
+        // U2: foreground-монитор sideload OTA + блокирующий экран
+        // «Нужно обновить» при несовместимой старой версии. Монитор живёт
+        // у корня, поэтому открытое приложение замечает новый APK без
+        // перезапуска.
+        wrapped = AppUpdateMonitor(
+          child: AppUpdateGate(child: wrapped),
+        );
         // Cap runaway OS font scaling — the dominant cause of an oversized,
         // cramped UI (esp. chat) on phones with an enlarged system font —
         // while still allowing mild accessibility scaling. Never below 1.0.

@@ -36,6 +36,7 @@ http.Client _latestClient(Map<String, dynamic>? latestJson) {
 
 AppUpdateService _buildService({
   Map<String, dynamic>? latestJson,
+  http.Client? httpClient,
   int currentVersionCode = 40,
   String packageName = 'com.ahjkuio.rodnya_family_app',
   String? installer,
@@ -43,10 +44,12 @@ AppUpdateService _buildService({
   bool isWeb = false,
   TargetPlatform platform = TargetPlatform.android,
   AppUpdateInstaller? updateInstaller,
+  Duration minimumCheckInterval = Duration.zero,
+  DateTime Function()? clock,
 }) {
   return AppUpdateService(
     apiBaseUrl: 'https://api.example.test',
-    httpClient: _latestClient(latestJson),
+    httpClient: httpClient ?? _latestClient(latestJson),
     buildSnapshotProvider: () async => AppBuildSnapshot(
       versionCode: currentVersionCode,
       packageName: packageName,
@@ -58,6 +61,8 @@ AppUpdateService _buildService({
     isWeb: isWeb,
     platform: platform,
     updateInstaller: updateInstaller,
+    minimumCheckInterval: minimumCheckInterval,
+    clock: clock,
   );
 }
 
@@ -87,7 +92,8 @@ void main() {
       expect(parsed, isNotNull);
       expect(parsed!.versionCode, 42);
       expect(parsed.versionName, '1.0.3');
-      expect(parsed.apkUrl, 'https://s3.ru-msk.example/rodnya/rodnya-1.0.3.apk');
+      expect(
+          parsed.apkUrl, 'https://s3.ru-msk.example/rodnya/rodnya-1.0.3.apk');
       expect(parsed.notes, 'Чинят чаты');
     });
 
@@ -155,7 +161,8 @@ void main() {
       service.dispose();
     });
 
-    test('current >= minVersionCode но newer → optional, не mandatory', () async {
+    test('current >= minVersionCode но newer → optional, не mandatory',
+        () async {
       final service = _buildService(
         latestJson: _payload(versionCode: 42, minVersionCode: 40),
         currentVersionCode: 41,
@@ -227,7 +234,8 @@ void main() {
       service.dispose();
     });
 
-    test('магазинный инсталлер регистронезависим (RU.VK.STORE) → none', () async {
+    test('магазинный инсталлер регистронезависим (RU.VK.STORE) → none',
+        () async {
       final service = _buildService(
         latestJson: _payload(versionCode: 99),
         installer: 'RU.VK.STORE',
@@ -257,7 +265,8 @@ void main() {
       service.dispose();
     });
 
-    test('ошибка определения источника → fail-closed (none), не sideload', () async {
+    test('ошибка определения источника → fail-closed (none), не sideload',
+        () async {
       // Хардинг: если источник установки определить нельзя (канал
       // упал), НЕ самообновляемся — иначе можно активироваться внутри
       // магазинной сборки при сломанном гейте.
@@ -270,7 +279,8 @@ void main() {
       service.dispose();
     });
 
-    test('RuStore-семейство по префиксу (ru.rustore.installer) → none', () async {
+    test('RuStore-семейство по префиксу (ru.rustore.installer) → none',
+        () async {
       final service = _buildService(
         latestJson: _payload(versionCode: 99),
         installer: 'ru.rustore.installer',
@@ -325,6 +335,101 @@ void main() {
       expect(notified, 1);
       service.dispose();
     });
+
+    test('dismiss привязан к versionCode, новая версия снова видна', () async {
+      Map<String, dynamic>? latest = _payload(versionCode: 42);
+      final client = MockClient((request) async {
+        if (request.url.path != '/v1/app/latest') {
+          return http.Response('not found', 404);
+        }
+        return http.Response(
+          jsonEncode(latest),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final service = _buildService(
+        httpClient: client,
+        currentVersionCode: 40,
+      );
+
+      await service.checkForUpdate();
+      service.dismissOptionalForSession();
+      expect(service.isOptionalDismissed, isTrue);
+
+      latest = _payload(versionCode: 43);
+      await service.checkForUpdate(force: true);
+
+      expect(service.state.availability, AppUpdateAvailability.optional);
+      expect(service.state.latest?.versionCode, 43);
+      expect(service.isOptionalDismissed, isFalse);
+      service.dispose();
+    });
+  });
+
+  group('foreground-проверки', () {
+    test('повторная проверка видит свежий APK без перезапуска сервиса',
+        () async {
+      Map<String, dynamic>? latest = _payload(versionCode: 40);
+      final client = MockClient((request) async {
+        if (request.url.path != '/v1/app/latest') {
+          return http.Response('not found', 404);
+        }
+        return http.Response(
+          jsonEncode(latest),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final service = _buildService(
+        httpClient: client,
+        currentVersionCode: 40,
+      );
+
+      await service.checkForUpdate();
+      expect(service.state.availability, AppUpdateAvailability.none);
+
+      latest = _payload(versionCode: 42);
+      await service.checkForUpdate();
+
+      expect(service.state.availability, AppUpdateAvailability.optional);
+      expect(service.state.latest?.versionCode, 42);
+      service.dispose();
+    });
+
+    test('троттлит частые проверки, но force обходит интервал', () async {
+      var requests = 0;
+      var now = DateTime(2026, 6, 28, 12);
+      final client = MockClient((request) async {
+        requests++;
+        if (request.url.path != '/v1/app/latest') {
+          return http.Response('not found', 404);
+        }
+        return http.Response(
+          jsonEncode(_payload(versionCode: 42)),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final service = _buildService(
+        httpClient: client,
+        currentVersionCode: 40,
+        minimumCheckInterval: const Duration(minutes: 1),
+        clock: () => now,
+      );
+
+      await service.checkForUpdate();
+      await service.checkForUpdate();
+      expect(requests, 1);
+
+      now = now.add(const Duration(minutes: 1));
+      await service.checkForUpdate();
+      expect(requests, 2);
+
+      await service.checkForUpdate(force: true);
+      expect(requests, 3);
+      service.dispose();
+    });
   });
 
   group('downloadAndInstall', () {
@@ -362,7 +467,8 @@ void main() {
   });
 
   group('U6: натив-sentinel fail-closed', () {
-    test('источник = kInstallerSourceUnavailable → none (как при ошибке)', () async {
+    test('источник = kInstallerSourceUnavailable → none (как при ошибке)',
+        () async {
       // Натив на внутренней ошибке возвращает этот маркер вместо null —
       // Dart одинаково fail-close'ит и на ошибке канала, и на ошибке
       // натива.
