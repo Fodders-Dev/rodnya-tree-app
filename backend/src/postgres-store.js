@@ -1337,7 +1337,10 @@ class PostgresStore extends FileStore {
           userId: normalizedUserId,
           type: chat?.type || "direct",
           title: chat?.title || null,
-          photoUrl: null,
+          // Group/branch previews must surface the chat's own avatar — the
+          // dev store.js does this; postgres hard-coded null, which is why the
+          // group avatar only went missing on prod. Mirror store.js:19653.
+          photoUrl: isGroup ? chat?.photoUrl || null : null,
           participantIds: participants,
           otherUserId,
           otherUserName: "Пользователь",

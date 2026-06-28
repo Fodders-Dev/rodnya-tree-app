@@ -39,7 +39,7 @@ class CustomApiStorageService implements StorageServiceInterface {
       path: '${_uuid.v4()}$extension',
       fileBytes: fileBytes,
       fileOptions: FileOptions(
-        contentType: _contentTypeForExtension(extension),
+        contentType: _resolveContentType(imageFile, extension),
       ),
     );
   }
@@ -76,7 +76,7 @@ class CustomApiStorageService implements StorageServiceInterface {
       fileBytes: fileBytes,
       fileOptions: FileOptions(
         upsert: true,
-        contentType: _contentTypeForExtension(extension),
+        contentType: _resolveContentType(imageFile, extension),
       ),
     );
   }
@@ -101,7 +101,7 @@ class CustomApiStorageService implements StorageServiceInterface {
       fileBytes: fileBytes,
       fileOptions: FileOptions(
         upsert: true,
-        contentType: _contentTypeForExtension(extension),
+        contentType: _resolveContentType(imageFile, extension),
       ),
     );
   }
@@ -235,6 +235,19 @@ class CustomApiStorageService implements StorageServiceInterface {
     return fallback;
   }
 
+  /// Resolves the upload Content-Type. The [file]'s own `mimeType` (set by the
+  /// recorder/picker) is AUTHORITATIVE and wins over extension guessing —
+  /// critical for `.webm`, which is ambiguous: a voice note is `audio/webm`,
+  /// a кружок is `video/webm`, same extension. Falls back to extension only
+  /// when the file carries no usable mime type.
+  String _resolveContentType(XFile file, String extension) {
+    final mimeType = file.mimeType;
+    if (mimeType != null && mimeType.isNotEmpty && mimeType.contains('/')) {
+      return mimeType;
+    }
+    return _contentTypeForExtension(extension);
+  }
+
   String _contentTypeForExtension(String extension) {
     switch (extension.toLowerCase()) {
       case '.png':
@@ -249,7 +262,20 @@ class CustomApiStorageService implements StorageServiceInterface {
       case '.mov':
         return 'video/quicktime';
       case '.webm':
+        // Extension-only fallback: .webm defaults to video (кружок). For a
+        // voice note (audio/webm) the file's mimeType wins via
+        // _resolveContentType — extension alone cannot disambiguate.
         return 'video/webm';
+      // Audio (voice notes). Native records .m4a as an MP4 container.
+      case '.m4a':
+      case '.aac':
+        return 'audio/mp4';
+      case '.mp3':
+        return 'audio/mpeg';
+      case '.wav':
+        return 'audio/wav';
+      case '.ogg':
+        return 'audio/ogg';
       case '.pdf':
         return 'application/pdf';
       case '.doc':
