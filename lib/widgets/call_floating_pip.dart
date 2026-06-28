@@ -73,6 +73,14 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
     final isIncomingRinging = isRinging &&
         widget.coordinator.currentUserId != null &&
         widget.call.isIncomingFor(widget.coordinator.currentUserId!);
+    // Late-join: an active group call this user is a member of but hasn't
+    // joined yet (no session). Mirrors CallScreen._canJoinActive.
+    final uid = widget.coordinator.currentUserId;
+    final canJoinActive = uid != null &&
+        widget.call.state == CallState.active &&
+        widget.call.session == null &&
+        !widget.call.isOutgoingFor(uid) &&
+        widget.call.participantIds.contains(uid);
     final connectionQuality = widget.coordinator.displayedConnectionQuality;
     final statusColor = isRinging
         ? const Color(0xFFFFB020)
@@ -201,7 +209,9 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          if (!isRinging) ...[
+                          // Hide mic/camera toggles for a not-yet-joined active
+                          // call — there's no session yet, so they'd be dead.
+                          if (!isRinging && !canJoinActive) ...[
                             _PipActionButton(
                               tooltip: widget.coordinator.microphoneEnabled
                                   ? 'Выключить микрофон'
@@ -235,6 +245,17 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
                               backgroundColor: const Color(0xFF22C55E),
                               onPressed: () => unawaited(
                                 widget.coordinator.acceptCall(widget.call.id),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          if (canJoinActive) ...[
+                            _PipActionButton(
+                              tooltip: 'Войти в звонок',
+                              icon: Icons.call_rounded,
+                              backgroundColor: const Color(0xFF22C55E),
+                              onPressed: () => unawaited(
+                                widget.coordinator.joinActiveCall(widget.call.id),
                               ),
                             ),
                             const SizedBox(width: 8),

@@ -471,6 +471,12 @@ class AudioRouteService extends ChangeNotifier {
     _postSelectRefreshTimer?.cancel();
     unawaited(_deviceChangesSubscription?.cancel());
     unawaited(_nativeDeviceSubscription?.cancel());
+    // Hand audio-focus management back to webrtc's default BEFORE tearing down
+    // the native bridge. A dispose() during an active call skips the
+    // room==null branch (which already restores it), so without this our
+    // relinquish leaks and the global webrtc config stays manageAudioFocus:
+    // false for the next call/session. No-op off the native path.
+    unawaited(_setWebrtcManageAudioFocus(true));
     unawaited(_nativeAudio?.stop());
     _nativeAudio?.dispose();
     super.dispose();
