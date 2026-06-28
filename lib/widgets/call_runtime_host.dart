@@ -139,6 +139,20 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
     return currentUserId != null && call.isIncomingFor(currentUserId);
   }
 
+  // P1: an ACTIVE call this user belongs to but hasn't joined (no session,
+  // not joined on another device, not the initiator) — present it so the
+  // «Войти» button is reachable («залететь в группу»). A dismissal is
+  // already remembered via _suppressedCallId, so this won't nag.
+  bool _canJoinActiveCall(CallInvite call) {
+    final currentUserId = _coordinator.currentUserId;
+    return currentUserId != null &&
+        call.state == CallState.active &&
+        call.session == null &&
+        !call.joinedOnAnotherDevice &&
+        !call.isOutgoingFor(currentUserId) &&
+        call.participantIds.contains(currentUserId);
+  }
+
   bool _shouldShowBackgroundNotification(CallInvite call) {
     return _isIncoming(call) &&
         call.state == CallState.ringing &&
@@ -187,8 +201,10 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
     // started from this exact app session. The same account can be open
     // on another phone/browser; those sessions may observe the call via
     // realtime/resync but must not hijack their UI.
-    return call.state == CallState.ringing &&
-        (_isIncoming(call) || _coordinator.isLocallyStartedCall(call.id));
+    return (call.state == CallState.ringing &&
+            (_isIncoming(call) ||
+                _coordinator.isLocallyStartedCall(call.id))) ||
+        _canJoinActiveCall(call);
   }
 
   Future<void> _openCallScreen(

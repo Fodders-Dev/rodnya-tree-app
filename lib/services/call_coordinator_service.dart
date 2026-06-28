@@ -507,6 +507,19 @@ class CallCoordinatorService extends ChangeNotifier
     return invite;
   }
 
+  /// P1: «залететь в группу» — enter an already-active group call the user
+  /// belongs to but hasn't joined yet. POST /join mints the per-participant
+  /// token, then _applyCall connects to the room exactly like accept.
+  Future<CallInvite> joinActiveCall([String? callId]) async {
+    final resolvedCallId = callId ?? _currentCall?.id;
+    if (resolvedCallId == null || resolvedCallId.isEmpty) {
+      throw StateError('Нет звонка для входа.');
+    }
+    final invite = await _callService.joinCall(resolvedCallId);
+    await _applyCall(invite);
+    return invite;
+  }
+
   Future<CallInvite?> finishCall([String? callId]) async {
     final activeCall = _currentCall;
     final resolvedCallId = callId ?? activeCall?.id;

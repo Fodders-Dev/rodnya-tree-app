@@ -29,6 +29,14 @@ abstract class CallServiceInterface {
 
   Future<CallInvite> acceptCall(String callId);
 
+  /// P1: late-join an already-active (or ringing) call the user is a member
+  /// of — the server (POST /v1/calls/:id/join) mints a fresh per-participant
+  /// LiveKit token, so any chat member can «залететь в группу» after it
+  /// started. Default throws; only the live backend implements it.
+  Future<CallInvite> joinCall(String callId) {
+    throw UnsupportedError('joinCall is not supported');
+  }
+
   Future<CallInvite> rejectCall(String callId);
 
   Future<CallInvite> cancelCall(String callId);

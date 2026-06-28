@@ -163,6 +163,16 @@ class CustomApiCallService implements CallServiceInterface {
   }
 
   @override
+  Future<CallInvite> joinCall(String callId) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/calls/$callId/join',
+      body: const <String, dynamic>{},
+    );
+    return _parseCall(response);
+  }
+
+  @override
   Future<CallInvite> rejectCall(String callId) async {
     final response = await _requestJson(
       method: 'POST',

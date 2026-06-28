@@ -350,6 +350,9 @@ class _HostFakeCallService implements CallServiceInterface {
       );
 
   @override
+  Future<CallInvite> joinCall(String callId) => acceptCall(callId);
+
+  @override
   Future<CallInvite> nudgeCallParticipants(
     String callId, {
     List<String>? participantIds,

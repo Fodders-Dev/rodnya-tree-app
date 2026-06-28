@@ -687,6 +687,9 @@ class _FakeCallCoordinator extends CallCoordinatorService {
   }
 
   @override
+  Future<CallInvite> joinCall(String callId) => acceptCall(callId);
+
+  @override
   Future<CallInvite> nudgeCallParticipants(
     String callId, {
     List<String>? participantIds,
@@ -754,6 +757,9 @@ class _FakeCallService implements CallServiceInterface {
         state: CallState.ringing,
         mediaMode: mediaMode,
       );
+
+  @override
+  Future<CallInvite> joinCall(String callId) => acceptCall(callId);
 
   @override
   Future<CallInvite> nudgeCallParticipants(

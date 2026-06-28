@@ -100,6 +100,18 @@ class _CallScreenState extends State<CallScreen> {
   CallInvite get _resolvedCall => _call ?? widget.initialCall;
   bool get _isIncoming =>
       _currentUserId != null && _resolvedCall.isIncomingFor(_currentUserId!);
+  // P1: I belong to an ACTIVE call but have no session yet → I haven't
+  // joined. Show «Войти» so a late member can «залететь в группу» (the
+  // button was previously gated on state==ringing, so this never appeared).
+  bool get _canJoinActive {
+    final uid = _currentUserId;
+    return uid != null &&
+        _resolvedCall.state == CallState.active &&
+        _resolvedCall.session == null &&
+        !_resolvedCall.isOutgoingFor(uid) &&
+        _resolvedCall.participantIds.contains(uid);
+  }
+
   bool get _isVideoCall => _resolvedCall.mediaMode == CallMediaMode.video;
   AudioRouteService get _audioRouteService =>
       widget.coordinator.audioRouteService;
@@ -396,6 +408,26 @@ class _CallScreenState extends State<CallScreen> {
       }
       setState(() {
         _call = acceptedCall;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    }
+  }
+
+  Future<void> _joinActiveCall() async {
+    try {
+      final joinedCall =
+          await widget.coordinator.joinActiveCall(_resolvedCall.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _call = joinedCall;
       });
     } catch (error) {
       if (!mounted) {
@@ -786,6 +818,11 @@ class _CallScreenState extends State<CallScreen> {
   bool get _showReconnectBanner =>
       _resolvedCall.state == CallState.active &&
       !widget.coordinator.hasMediaPermissionIssue &&
+      // P1: before joining, the active call has no session and the
+      // coordinator surfaces «Сеанс звонка ещё готовится» — that's not an
+      // error here, the «Войти» button is the affordance. Suppress the
+      // banner until the user has actually joined.
+      !_canJoinActive &&
       (widget.coordinator.isReconnectingRoom ||
           widget.coordinator.showReconnectRestoredBanner ||
           widget.coordinator.connectionError != null);
@@ -1176,17 +1213,24 @@ class _CallScreenState extends State<CallScreen> {
                           icon: Icons.call_end_rounded,
                           tooltip: 'Завершить звонок',
                         ),
-                        if (_resolvedCall.state == CallState.ringing &&
-                            _isIncoming)
+                        if ((_resolvedCall.state == CallState.ringing &&
+                                _isIncoming) ||
+                            _canJoinActive)
                           _CallActionButton(
-                            onPressed: _acceptIncomingCall,
+                            // «Принять» a ringing invite, «Войти» an
+                            // already-active call you belong to (late-join).
+                            onPressed: _canJoinActive
+                                ? _joinActiveCall
+                                : _acceptIncomingCall,
                             backgroundColor: const Color(0xFF2F9E44),
                             icon: _isVideoCall
                                 ? Icons.videocam_rounded
                                 : Icons.call_rounded,
-                            tooltip: _isVideoCall
-                                ? 'Принять видеозвонок'
-                                : 'Принять аудиозвонок',
+                            tooltip: _canJoinActive
+                                ? 'Войти в звонок'
+                                : (_isVideoCall
+                                    ? 'Принять видеозвонок'
+                                    : 'Принять аудиозвонок'),
                             // Ringing → pulsing halos around accept so the
                             // primary CTA grabs attention without needing
                             // a separate "🟢 ВХОДЯЩИЙ" banner.
