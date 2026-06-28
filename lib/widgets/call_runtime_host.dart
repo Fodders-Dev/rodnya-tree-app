@@ -2,14 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:hive/hive.dart';
 
 import '../backend/interfaces/chat_service_interface.dart';
 import '../models/call_invite.dart';
 import '../models/call_state.dart';
 import '../models/chat_details.dart';
+import '../models/chat_preview.dart';
 import '../navigation/app_router_shared.dart';
 import '../screens/call_screen.dart';
 import '../services/call_coordinator_service.dart';
+import '../services/chat_preview_cache.dart';
 import '../services/custom_api_notification_service.dart';
 import 'call_floating_pip.dart';
 
@@ -38,6 +41,10 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
           : null;
   final Map<String, _CallPresentation> _presentations =
       <String, _CallPresentation>{};
+  // Cold-start-survivable source for the incoming-call plaque name/photo when
+  // getChatDetails is slow or times out. Read-only, best-effort; reads the same
+  // Hive box the chat list uses ('chat_previews_v1').
+  final ChatPreviewCache _chatPreviewCache = HiveChatPreviewCache();
 
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   CallInvite? _floatingCall;
@@ -283,12 +290,10 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       return cached;
     }
 
-    final fallback = _CallPresentation(
-      title: call.mediaMode.isVideo ? 'Видеозвонок' : 'Звонок',
-    );
+    final isGroup = call.isGroupCall;
     final chatService = _chatService;
     if (chatService == null) {
-      return fallback;
+      return _fallbackPresentation(call, isGroup);
     }
 
     try {
@@ -296,6 +301,20 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
           .getChatDetails(call.chatId)
           .timeout(const Duration(seconds: 2));
       final currentUserId = _coordinator.currentUserId;
+      if (isGroup) {
+        // Group call → show the GROUP identity (chat title + group photo),
+        // never one arbitrary member's name/avatar, so the callee can tell
+        // it's a multi-party call before answering.
+        final groupTitle = details.title?.trim();
+        final resolved = _CallPresentation(
+          title: (groupTitle != null && groupTitle.isNotEmpty)
+              ? groupTitle
+              : details.displayTitleFor(currentUserId),
+          photoUrl: details.photoUrl,
+        );
+        _presentations[call.chatId] = resolved;
+        return resolved;
+      }
       final otherParticipant = details.participants.firstWhere(
         (participant) =>
             currentUserId == null || participant.userId != currentUserId,
@@ -315,8 +334,56 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       _presentations[call.chatId] = resolved;
       return resolved;
     } catch (_) {
-      return fallback;
+      return _fallbackPresentation(call, isGroup);
     }
+  }
+
+  // Best-effort presentation when chat details aren't available (no chat
+  // service, slow network, or the 2s getChatDetails timeout): prefer the
+  // cold-start-survivable preview cache (real name + photo) over a bare
+  // «Звонок», and never frame a group call as 1:1. NOT stored in
+  // `_presentations`, so a later getChatDetails success can still upgrade it.
+  Future<_CallPresentation> _fallbackPresentation(
+    CallInvite call,
+    bool isGroup,
+  ) async {
+    final baseTitle = isGroup
+        ? 'Групповой звонок'
+        : (call.mediaMode.isVideo ? 'Видеозвонок' : 'Звонок');
+    final preview = await _cachedChatPreview(call.chatId);
+    if (preview == null) {
+      return _CallPresentation(title: baseTitle);
+    }
+    final cachedTitle = preview.title?.trim();
+    return _CallPresentation(
+      title: (cachedTitle != null && cachedTitle.isNotEmpty)
+          ? cachedTitle
+          : baseTitle,
+      photoUrl: preview.displayPhotoUrl,
+    );
+  }
+
+  // Read-only lookup of a chat's cached preview (title/photo) from the
+  // Hive-backed chat-preview cache. Best-effort — returns null off-cache or on
+  // any error so the caller falls back to a generic label.
+  Future<ChatPreview?> _cachedChatPreview(String chatId) async {
+    // Only touch the cache when its Hive box is already open — populated by the
+    // chat list in the real app. Before Hive init / in tests the box isn't
+    // open; skip rather than trigger Hive's open + destructive delete-retry.
+    if (!Hive.isBoxOpen('chat_previews_v1')) {
+      return null;
+    }
+    try {
+      final previews = await _chatPreviewCache.read();
+      for (final preview in previews) {
+        if (preview.chatId == chatId) {
+          return preview;
+        }
+      }
+    } catch (_) {
+      // best-effort
+    }
+    return null;
   }
 
   Future<void> _showIncomingCallNotification(CallInvite call) async {

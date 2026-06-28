@@ -226,12 +226,8 @@ class CallCoordinatorService extends ChangeNotifier
     if (participants == null) {
       return ConnectionQuality.unknown;
     }
-    for (final participant in participants) {
-      if (participant.connectionQuality != ConnectionQuality.unknown) {
-        return participant.connectionQuality;
-      }
-    }
-    return ConnectionQuality.unknown;
+    // Group calls have N remotes — surface the WORST link, not the first seen.
+    return _worstRemoteQuality(participants.map((p) => p.connectionQuality));
   }
 
   ConnectionQuality get displayedConnectionQuality {
@@ -1273,16 +1269,32 @@ class CallCoordinatorService extends ChangeNotifier
     _devicePickerErrorMessage = null;
   }
 
+  // Worst (lowest-quality) link across remotes, ignoring `unknown` (no data
+  // yet). `ConnectionQuality` is declared worst→best (lost < poor < good <
+  // excellent), so the smallest non-unknown `.index` wins. Group calls must
+  // surface the peer most at risk, not whichever participant was iterated
+  // first. Returns `unknown` only when no remote has reported quality yet.
+  ConnectionQuality _worstRemoteQuality(Iterable<ConnectionQuality> qualities) {
+    var worst = ConnectionQuality.unknown;
+    for (final quality in qualities) {
+      if (quality == ConnectionQuality.unknown) {
+        continue;
+      }
+      if (worst == ConnectionQuality.unknown || quality.index < worst.index) {
+        worst = quality;
+      }
+    }
+    return worst;
+  }
+
   void _syncConnectionQualityFromRoom(Room room) {
     _localConnectionQuality =
         room.localParticipant?.connectionQuality ?? ConnectionQuality.unknown;
-    _remoteConnectionQuality = ConnectionQuality.unknown;
-    for (final participant in room.remoteParticipants.values) {
-      if (participant.connectionQuality != ConnectionQuality.unknown) {
-        _remoteConnectionQuality = participant.connectionQuality;
-        break;
-      }
-    }
+    // Aggregate the WORST remote link so the group-call badge reflects the
+    // peer most at risk rather than whichever participant iterated first.
+    _remoteConnectionQuality = _worstRemoteQuality(
+      room.remoteParticipants.values.map((p) => p.connectionQuality),
+    );
   }
 
   void _applyParticipantConnectionQuality(
@@ -1298,7 +1310,21 @@ class CallCoordinatorService extends ChangeNotifier
       _localConnectionQuality = quality;
       return;
     }
-    _remoteConnectionQuality = quality;
+    // A remote's quality changed — recompute the worst across ALL remotes
+    // (using this fresh value for the updated peer, since the room snapshot may
+    // still lag the event) so one good link can't mask another's degraded one
+    // in a group call.
+    if (room == null) {
+      _remoteConnectionQuality = quality;
+      return;
+    }
+    final qualities = <ConnectionQuality>[quality];
+    for (final other in room.remoteParticipants.values) {
+      if (other.identity != participant.identity) {
+        qualities.add(other.connectionQuality);
+      }
+    }
+    _remoteConnectionQuality = _worstRemoteQuality(qualities);
   }
 
   void _showReconnectRestoredBannerForMoment() {
@@ -1325,16 +1351,36 @@ class CallCoordinatorService extends ChangeNotifier
     _reconnectWatchdogTimer?.cancel();
     _reconnectWatchdogTimer = Timer(const Duration(seconds: 12), () {
       _reconnectWatchdogTimer = null;
+      if (!_isReconnectingRoom) {
+        return;
+      }
       final room = _room;
       final live =
           room != null && room.connectionState == ConnectionState.connected;
-      if (_isReconnectingRoom && live) {
+      if (live) {
+        // Room is actually back but RoomReconnectedEvent never cleared the
+        // overlay — force-clear it (the original 0b254b7 deadlock backstop).
         _isReconnectingRoom = false;
         _connectionError = null;
         _showReconnectRestoredBannerForMoment();
         _syncConnectionQualityFromRoom(room);
         notifyListeners();
+        return;
       }
+      // Residual gap (was: no else branch → «Переподключение» wedged forever
+      // with the timer nulled and nothing re-arming it). Still reconnecting and
+      // NOT live at the deadline. Never lie that we reconnected; instead tie the
+      // overlay to the call's real lifetime: drop it if the call is gone or
+      // terminal, otherwise re-arm a self-perpetuating re-check so the moment
+      // the room comes back (or the call ends) the overlay resolves on the next
+      // tick instead of spinning indefinitely.
+      final activeCall = _currentCall;
+      if (activeCall == null || activeCall.state != CallState.active) {
+        _isReconnectingRoom = false;
+        notifyListeners();
+        return;
+      }
+      _armReconnectWatchdog();
     });
   }
 
@@ -1372,6 +1418,12 @@ class CallCoordinatorService extends ChangeNotifier
     } catch (_) {
       // LiveKit will continue reconnecting if media resume is not ready yet.
     }
+    // CA1+: on reconnect LiveKit re-runs its connect-time audio config
+    // (setAndroidAudioConfiguration(communication) = manageAudioFocus:true),
+    // re-grabbing the route from the native bridge even when no track
+    // (re)publish event fires. Re-assert so the speaker toggle and hardware
+    // volume keep working after «Переподключение» clears.
+    await _audioRouteService.reassertNativeAudioOwnership();
   }
 
   /// Запускает Kotlin foreground service для активного звонка
@@ -1501,6 +1553,12 @@ class CallCoordinatorService extends ChangeNotifier
       notifyListeners();
       unawaited(_updateForegroundService());
     }
+    // CA1+: a local track (un)publish just settled (this runs from the
+    // LocalTrackPublished/Unpublished + mute listeners) — LiveKit re-grabs the
+    // Android audio focus/route on publish, so re-assert the native bridge's
+    // ownership now, or «Динамик» and hardware volume silently stop working
+    // after a mic/camera toggle. No-op off-Android and after the call ends.
+    unawaited(_audioRouteService.reassertNativeAudioOwnership());
   }
 
   /// Try to publish the local microphone. Возвращает true при

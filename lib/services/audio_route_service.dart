@@ -184,6 +184,21 @@ class AudioRouteService extends ChangeNotifier {
     }
   }
 
+  // CA1+: re-assert that flutter-webrtc must NOT manage the Android audio
+  // focus/mode, keeping the native bridge the SOLE route owner. LiveKit
+  // re-grabs focus on every local track (un)publish — mic/camera toggle and
+  // post-reconnect republish — which silently yanks the route back from the
+  // bridge mid-call: «Динамик» stops switching and hardware volume drops off
+  // STREAM_VOICE_CALL. Callers invoke this after any local-media transition.
+  // No-op off the native path and once the call ended (room detached) so we
+  // never re-grab focus for a finished call.
+  Future<void> reassertNativeAudioOwnership() async {
+    if (_nativeAudio == null || _room == null) {
+      return;
+    }
+    await _setWebrtcManageAudioFocus(false);
+  }
+
   Future<void> refreshRoutes() async {
     if (_isRefreshing) {
       // CA1 (ревью E): не теряем событие — перезапустимся после текущего

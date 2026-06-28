@@ -68,6 +68,7 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
     final theme = Theme.of(context);
     final remoteVideoTrack = _remoteVideoTrack(widget.coordinator.room);
     final isVideo = widget.call.mediaMode.isVideo;
+    final isGroup = widget.call.isGroupCall;
     final isRinging = widget.call.state == CallState.ringing;
     final isIncomingRinging = isRinging &&
         widget.coordinator.currentUserId != null &&
@@ -82,7 +83,9 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
     final String statusLabel;
     if (isRinging) {
       statusLabel = isIncomingRinging
-          ? (isVideo ? 'Входящий видеозвонок' : 'Входящий аудиозвонок')
+          ? (isGroup
+              ? 'Входящий групповой звонок'
+              : (isVideo ? 'Входящий видеозвонок' : 'Входящий аудиозвонок'))
           : 'Вызываем...';
     } else if (connectionQuality == ConnectionQuality.unknown &&
         !widget.coordinator.isReconnectingRoom) {
