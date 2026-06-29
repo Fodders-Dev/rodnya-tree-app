@@ -12,6 +12,7 @@ buildscript {
         // in lockstep to 8.11.1 (the minimum AGP 8.9.x supports).
         classpath 'com.android.tools.build:gradle:8.9.1'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'com.google.gms:google-services:4.4.4'
     }
 }
 

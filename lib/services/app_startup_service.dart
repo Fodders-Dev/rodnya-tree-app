@@ -72,6 +72,7 @@ import 'custom_api_realtime_service.dart';
 import 'custom_api_safety_service.dart';
 import 'custom_api_story_service.dart';
 import 'custom_api_storage_service.dart';
+import 'fcm_push_service.dart';
 import 'invitation_service.dart';
 import 'tree_mutation_history.dart';
 import 'invitation_link_service.dart';
@@ -116,6 +117,8 @@ class AppStartupService implements AppStartupServiceInterface {
     );
     final rustoreService = RustoreService();
     _registerOrReplaceSingleton<RustoreService>(rustoreService);
+    final fcmPushService = FcmPushService();
+    _registerOrReplaceSingleton<FcmPushService>(fcmPushService);
     _registerOrReplaceLazySingleton<PhoneContactsService>(
       () => PhoneContactsService(),
     );
@@ -310,6 +313,9 @@ class AppStartupService implements AppStartupServiceInterface {
       runtimeConfig: runtimeConfig,
       realtimeService: customApiRealtimeService,
       rustoreService: rustoreService,
+      remotePushProvider: 'fcm',
+      remotePushTokenProvider: fcmPushService.getFcmPushToken,
+      remotePushTokenUpdates: fcmPushService.pushTokens,
       androidIncomingCallService: _getIt<AndroidIncomingCallService>(),
     );
     _registerOrReplaceSingleton<CustomApiNotificationService>(
@@ -420,6 +426,17 @@ class AppStartupService implements AppStartupServiceInterface {
 
     final startupPipeline = AppStartupPipeline(
       tasks: <StartupPhaseTask>[
+        StartupPhaseTask(
+          phase: StartupPhase.featureLazy,
+          label: 'fcm-foreground',
+          run: (_) async {
+            try {
+              await fcmPushService.startForegroundWarmup();
+            } catch (error, stackTrace) {
+              debugPrint('FCM warmup failed: $error\n$stackTrace');
+            }
+          },
+        ),
         StartupPhaseTask(
           phase: StartupPhase.featureLazy,
           label: 'rustore-foreground',

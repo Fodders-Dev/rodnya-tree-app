@@ -67,6 +67,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     RustoreService? rustoreService,
     http.Client? httpClient,
     Duration? pollInterval,
+    String remotePushProvider = 'rustore',
     RemotePushTokenProvider? remotePushTokenProvider,
     Stream<String>? remotePushTokenUpdates,
     ChatNotificationCallback? onChatNotification,
@@ -83,6 +84,9 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         _rustoreService = rustoreService,
         _httpClient = httpClient ?? http.Client(),
         _pollInterval = pollInterval ?? const Duration(seconds: 20),
+        _remotePushProvider = remotePushProvider.trim().isEmpty
+            ? 'rustore'
+            : remotePushProvider.trim().toLowerCase(),
         _remotePushTokenProvider = remotePushTokenProvider,
         _remotePushTokenUpdates = remotePushTokenUpdates,
         _onChatNotification = onChatNotification,
@@ -117,6 +121,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     RustoreService? rustoreService,
     http.Client? httpClient,
     Duration? pollInterval,
+    String remotePushProvider = 'rustore',
     RemotePushTokenProvider? remotePushTokenProvider,
     Stream<String>? remotePushTokenUpdates,
     ChatNotificationCallback? onChatNotification,
@@ -135,6 +140,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       rustoreService: rustoreService,
       httpClient: httpClient,
       pollInterval: pollInterval,
+      remotePushProvider: remotePushProvider,
       remotePushTokenProvider: remotePushTokenProvider,
       remotePushTokenUpdates: remotePushTokenUpdates,
       onChatNotification: onChatNotification,
@@ -152,6 +158,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final RustoreService? _rustoreService;
   final http.Client _httpClient;
   final Duration _pollInterval;
+  final String _remotePushProvider;
   final RemotePushTokenProvider? _remotePushTokenProvider;
   final Stream<String>? _remotePushTokenUpdates;
   final ChatNotificationCallback? _onChatNotification;
@@ -1279,8 +1286,9 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     final registeredFingerprint = _preferences.getString(
       _registeredPushTokenStorageKey,
     );
+    final provider = _remotePushProvider;
     final nextFingerprint =
-        'rustore::$token::${authService.currentUserId ?? ''}';
+        '$provider::$token::${authService.currentUserId ?? ''}';
     if (registeredFingerprint == nextFingerprint) {
       return;
     }
@@ -1306,7 +1314,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       _buildUri(runtimeConfig, '/v1/push/devices'),
       headers: _headers(accessToken),
       body: jsonEncode({
-        'provider': 'rustore',
+        'provider': provider,
         'token': token,
         'platform': defaultTargetPlatform.name,
       }),
@@ -1330,7 +1338,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         : '${token.substring(0, 4)}...${token.substring(token.length - 4)}';
     debugPrint(
       'Custom API push registration completed: '
-      'provider=rustore, '
+      'provider=$provider, '
       'platform=${defaultTargetPlatform.name}, '
       'userId=${authService.currentUserId ?? ''}, '
       'token=$maskedToken',

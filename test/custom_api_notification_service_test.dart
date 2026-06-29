@@ -642,6 +642,98 @@ void main() {
   );
 
   test(
+    'CustomApiNotificationService registers fcm push token when configured',
+    () async {
+      var registeredDeviceCalls = 0;
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/push/devices' &&
+            request.method == 'POST') {
+          registeredDeviceCalls += 1;
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['provider'], 'fcm');
+          expect(body['token'], 'fcm-token-1');
+
+          return http.Response(
+            jsonEncode({
+              'device': {
+                'id': 'device-fcm-1',
+                'provider': 'fcm',
+                'platform': 'android',
+              },
+            }),
+            201,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        if (request.url.path == '/v1/notifications' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'notifications': const []}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        if (request.url.path == '/v1/notifications/unread-count' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'totalUnread': 0}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final service = await CustomApiNotificationService.create(
+        preferences: prefs,
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+        pollInterval: const Duration(hours: 1),
+        remotePushProvider: 'fcm',
+        remotePushTokenProvider: () async => 'fcm-token-1',
+      );
+
+      await service.startForegroundSync();
+      expect(registeredDeviceCalls, 1);
+
+      await service.startForegroundSync();
+      expect(registeredDeviceCalls, 1);
+
+      await service.dispose();
+    },
+  );
+
+  test(
     'CustomApiNotificationService registers refreshed rustore push token',
     () async {
       final registeredTokens = <String>[];

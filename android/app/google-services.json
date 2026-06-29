@@ -1,0 +1,134 @@
+{
+  "project_info": {
+    "project_number": "294988032102",
+    "project_id": "lineage-5b6e3",
+    "storage_bucket": "lineage-5b6e3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:294988032102:android:940c20ea4c1c83e2e225a7",
+        "android_client_info": {
+          "package_name": "com.ahjkuio.lineage_family_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "294988032102-a5chcfcjq6r3k9ots7ttil0cvji9tthu.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ahjkuio.lineage_family_app",
+            "certificate_hash": "0c0a172aab1dbde46c648aaf956d6f4451d7ffc3"
+          }
+        },
+        {
+          "client_id": "294988032102-am7ch16gqn1q9r263dbse0ivpsg2bsft.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ahjkuio.lineage_family_app",
+            "certificate_hash": "c73df8a671863ca45990d22524f4276cad242054"
+          }
+        },
+        {
+          "client_id": "294988032102-abgid2mbgs84j5qjdrbh3vjo8gsgb2d0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqHmCzMXTI4DGNSNvsdm5DEELxK91FAE4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "294988032102-abgid2mbgs84j5qjdrbh3vjo8gsgb2d0.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "294988032102-sit7uou25odfcv7ogbe2c7j53e4ee1nu.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ahjkuio.lineageFamilyApp"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:294988032102:android:3dbd3675ed2fe46fe225a7",
+        "android_client_info": {
+          "package_name": "com.ahjkuio.rodnya_family_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "294988032102-abgid2mbgs84j5qjdrbh3vjo8gsgb2d0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqHmCzMXTI4DGNSNvsdm5DEELxK91FAE4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "294988032102-abgid2mbgs84j5qjdrbh3vjo8gsgb2d0.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "294988032102-sit7uou25odfcv7ogbe2c7j53e4ee1nu.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ahjkuio.lineageFamilyApp"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:294988032102:android:6c6b068b2767161ce225a7",
+        "android_client_info": {
+          "package_name": "com.ahjkuio.rodnya_family_app.dev"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "294988032102-abgid2mbgs84j5qjdrbh3vjo8gsgb2d0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqHmCzMXTI4DGNSNvsdm5DEELxK91FAE4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "294988032102-abgid2mbgs84j5qjdrbh3vjo8gsgb2d0.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "294988032102-sit7uou25odfcv7ogbe2c7j53e4ee1nu.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ahjkuio.lineageFamilyApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

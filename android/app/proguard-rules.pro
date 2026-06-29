@@ -19,6 +19,13 @@
 -keep class ru.rustore.flutter_rustore_push.** { *; }
 -keep class ru.rustore.flutter_rustore_push.pigeons.** { *; }
 -keep class com.ahjkuio.rodnya_family_app.RodnyaPushService { *; }
+-keep class com.ahjkuio.rodnya_family_app.RodnyaCallNotifier { *; }
+-keep class com.ahjkuio.rodnya_family_app.RodnyaFcmMessagingReceiver { *; }
+-keep class com.ahjkuio.rodnya_family_app.RodnyaFcmMessagingService { *; }
+
+# ── Firebase Cloud Messaging ────────────────────────────────────────
+-keep class com.google.firebase.messaging.** { *; }
+-dontwarn com.google.firebase.messaging.**
 
 # ── RuStore SDK (push, billing, update, review) ──────────────────────
 # The SDK uses kotlin reflection + serialization on its model classes,
