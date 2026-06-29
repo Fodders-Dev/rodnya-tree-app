@@ -6,9 +6,17 @@ import 'package:flutter/foundation.dart';
 
 class FcmPushService {
   FcmPushService({FirebaseMessaging? messaging})
-      : _messaging = messaging ?? FirebaseMessaging.instance;
+      : _injectedMessaging = messaging;
 
-  final FirebaseMessaging _messaging;
+  final FirebaseMessaging? _injectedMessaging;
+  // Resolve FirebaseMessaging.instance LAZILY. Touching it in the constructor
+  // throws a JS TypeError on WEB (Firebase isn't auto-initialized there the way
+  // it is on Android via google-services), which crashed app startup for every
+  // web user and — because startup_failure_policy matches 'typeerror' — was
+  // mis-shown as «Сохранённая сессия больше не подходит». Only the Android-gated
+  // methods ever read this getter, so web never reaches it.
+  FirebaseMessaging get _messaging =>
+      _injectedMessaging ?? FirebaseMessaging.instance;
   final StreamController<String> _pushTokensController =
       StreamController<String>.broadcast();
 
