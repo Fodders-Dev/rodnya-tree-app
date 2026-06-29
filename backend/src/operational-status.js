@@ -114,6 +114,7 @@ function createOperationalStatus({
       publicApiUrl: config.publicApiUrl || null,
       publicAppUrl: config.publicAppUrl || null,
       rustorePushEnabled: config.rustorePushEnabled === true,
+      fcmPushEnabled: config.fcmPushEnabled === true,
       webPushEnabled: config.webPushEnabled === true,
       liveKitEnabled: liveKitService?.isConfigured === true,
       // Ship Q3a (2026-05-26): full provider availability surface.

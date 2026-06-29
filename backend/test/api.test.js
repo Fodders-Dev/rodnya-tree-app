@@ -14167,6 +14167,142 @@ test("rustore push delivery sends notification through RuStore API", async () =>
   }
 });
 
+test("fcm push delivery sends notification through FCM HTTP v1 (lowercase priority + OAuth bearer)", async () => {
+  const observedRequests = [];
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      fcmProjectId: "fcm-project-1",
+    },
+    pushGatewayFactory: ({store, config}) =>
+      new PushGateway({
+        store,
+        config,
+        fcmSender: {
+          isEnabled: true,
+          projectId: "fcm-project-1",
+          sendUrl:
+            "https://fcm.googleapis.com/v1/projects/fcm-project-1/messages:send",
+          getAccessToken: async () => "fake-fcm-access-token",
+        },
+        httpClient: async (url, options) => {
+          observedRequests.push({
+            url,
+            method: options?.method,
+            headers: options?.headers,
+            body: JSON.parse(String(options?.body || "{}")),
+          });
+          return {ok: true, status: 200, text: async () => "{}"};
+        },
+      }),
+  });
+
+  try {
+    const senderResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "fcm-sender@rodnya.app",
+        password: "secret123",
+        displayName: "Fcm Sender",
+      }),
+    });
+    assert.equal(senderResponse.status, 201);
+    const sender = await senderResponse.json();
+
+    const recipientResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "fcm-recipient@rodnya.app",
+        password: "secret123",
+        displayName: "Fcm Recipient",
+      }),
+    });
+    assert.equal(recipientResponse.status, 201);
+    const recipient = await recipientResponse.json();
+
+    const deviceResponse = await fetch(`${ctx.baseUrl}/v1/push/devices`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${recipient.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "fcm",
+        token: "fcm-live-token",
+        platform: "android",
+      }),
+    });
+    assert.equal(deviceResponse.status, 201);
+
+    const chatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${sender.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: recipient.user.id}),
+    });
+    assert.equal(chatResponse.status, 200);
+    const chat = await chatResponse.json();
+
+    const sendMessageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chat.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${sender.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "FCM push check"}),
+      },
+    );
+    assert.equal(sendMessageResponse.status, 201);
+
+    for (let attempt = 0; attempt < 50 && observedRequests.length < 1; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(observedRequests.length, 1);
+    assert.equal(
+      observedRequests[0].url,
+      "https://fcm.googleapis.com/v1/projects/fcm-project-1/messages:send",
+    );
+    assert.equal(observedRequests[0].method, "POST");
+    assert.equal(
+      observedRequests[0].headers.authorization,
+      "Bearer fake-fcm-access-token",
+    );
+    assert.equal(observedRequests[0].body.message.token, "fcm-live-token");
+    // chat = non-call → NORMAL priority, and FCM HTTP v1 demands it LOWERCASE
+    // (the uppercase RuStore casing would 400 INVALID_ARGUMENT).
+    assert.equal(observedRequests[0].body.message.android.priority, "normal");
+    assert.equal(
+      observedRequests[0].body.message.notification.title,
+      "Fcm Sender",
+    );
+    assert.equal(observedRequests[0].body.message.data.type, "chat_message");
+
+    const deliveriesResponse = await fetch(
+      `${ctx.baseUrl}/v1/push/deliveries?limit=10`,
+      {
+        headers: {authorization: `Bearer ${recipient.accessToken}`},
+      },
+    );
+    assert.equal(deliveriesResponse.status, 200);
+    const deliveriesPayload = await deliveriesResponse.json();
+    assert.ok(
+      deliveriesPayload.deliveries.some(
+        (delivery) =>
+          delivery.provider === "fcm" &&
+          delivery.status === "sent" &&
+          delivery.responseCode === 200,
+      ),
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("incoming call push uses high-priority metadata for WebPush and RuStore", async () => {
   const sentWebPush = [];
   const observedRustoreRequests = [];

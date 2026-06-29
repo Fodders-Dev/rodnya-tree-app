@@ -1,4 +1,5 @@
 const webPush = require("web-push");
+const {createFcmSender} = require("./fcm-sender");
 
 class PushGateway {
   constructor({
@@ -7,6 +8,7 @@ class PushGateway {
     config = {},
     webPushClient = webPush,
     httpClient = globalThis.fetch?.bind(globalThis),
+    fcmSender = null,
   }) {
     this.store = store;
     this.logger = logger;
@@ -32,9 +34,22 @@ class PushGateway {
         config.rustorePushEnabled ||
           (config.rustorePushProjectId && config.rustorePushServiceToken),
       ),
+      fcmProjectId: String(config.fcmProjectId || "").trim(),
+      fcmServiceAccount: config.fcmServiceAccount || null,
+      fcmApiBaseUrl: String(config.fcmApiBaseUrl || "").trim(),
     };
     this.webPushClient = webPushClient;
     this.httpClient = httpClient;
+    // FCM HTTP v1 sender. Injected in tests; otherwise built from config and
+    // inert (isEnabled=false) until a project id + service-account JSON land.
+    this.fcmSender =
+      fcmSender ||
+      createFcmSender({
+        fcmProjectId: this.config.fcmProjectId,
+        fcmServiceAccount: this.config.fcmServiceAccount,
+        fcmApiBaseUrl: this.config.fcmApiBaseUrl,
+      });
+    this.config.fcmPushEnabled = Boolean(this.fcmSender && this.fcmSender.isEnabled);
 
     if (this.config.webPushEnabled) {
       this.webPushClient.setVapidDetails(
@@ -98,6 +113,11 @@ class PushGateway {
 
     if (device.provider === "rustore") {
       await this._deliverRustorePush(notification, device, delivery);
+      return;
+    }
+
+    if (device.provider === "fcm") {
+      await this._deliverFcmPush(notification, device, delivery);
       return;
     }
 
@@ -238,50 +258,13 @@ class PushGateway {
     // For everything else (chats, post replies, etc.) we keep the
     // notification field so the OS displays a clean heads-up even
     // when our process is dead.
-    const isIncomingCall = this._isCallSignalNotification(notification);
-    // A VKPNS/Firebase message with a top-level `notification` block is
-    // AUTO-DISPLAYED by the OS (and skips our onMessageReceived). That's
-    // correct for chats/replies, but WRONG for two cases that must stay
-    // data-only:
-    //   1. incoming calls — native code renders its own full-screen UI;
-    //   2. SILENT refresh pings (tree_mutated, etc.) — data-only wakes
-    //      RodnyaPushService, which refetches and shows NOTHING. Without
-    //      this, every tree edit auto-displayed «Дерево обновлено» to all
-    //      members, repeatedly — the spam the user reported.
-    const skipOsDisplay = isIncomingCall || notification.silent === true;
-    const androidConfig = {
-      priority: isIncomingCall ? "HIGH" : "NORMAL",
-      ttl: `${this._notificationTtlSeconds(notification)}s`,
-      // System-display notification block only for non-call, non-silent
-      // pushes (calls + silent pings render nothing / their own UI).
-      ...(skipOsDisplay
-        ? {}
-        : {
-            notification: {
-              title: notification.title || "Родня",
-              body: notification.body || "",
-              channel_id: this._androidChannelId(notification),
-              sound: "default",
-              tag: this._notificationTag(notification),
-            },
-          }),
-    };
+    // RuStore/VKPNS follows Firebase's HTTP v1 casing — android.priority is
+    // UPPERCASE ("HIGH"/"NORMAL"). See _buildPushMessage for the shared
+    // data-only-for-calls/silent envelope logic.
     const requestBody = {
-      message: {
-        token: String(device.token || "").trim(),
-        // Same logic at the message root: data-only for calls + silent
-        // pings, mixed payload for everything else.
-        ...(skipOsDisplay
-          ? {}
-          : {
-              notification: {
-                title: notification.title || "Родня",
-                body: notification.body || "",
-              },
-            }),
-        data: this._buildRustoreDataPayload(notification),
-        android: androidConfig,
-      },
+      message: this._buildPushMessage(notification, device, {
+        lowercasePriority: false,
+      }),
     };
     const requestUrl = `${this.config.rustorePushApiBaseUrl}/v1/projects/${encodeURIComponent(this.config.rustorePushProjectId)}/messages:send`;
 
@@ -323,7 +306,159 @@ class PushGateway {
     }
   }
 
-  _buildRustoreDataPayload(notification) {
+  // Shared FCM-HTTP-v1 / VKPNS message envelope. The ONLY provider difference
+  // is android.priority casing: FCM v1 wants lowercase "high"/"normal";
+  // RuStore/VKPNS wants uppercase — pass lowercasePriority accordingly.
+  //
+  // A message with a top-level `notification` block is AUTO-DISPLAYED by the OS
+  // and SKIPS our onMessageReceived when the app is killed. Correct for
+  // chats/replies, but WRONG for two cases that MUST stay data-only:
+  //   1. incoming calls — native code renders its own full-screen call UI;
+  //   2. silent refresh pings (tree_mutated) — data-only wakes the service,
+  //      which refetches and shows nothing (no «Дерево обновлено» spam).
+  _buildPushMessage(notification, device, {lowercasePriority = false} = {}) {
+    const isIncomingCall = this._isCallSignalNotification(notification);
+    const skipOsDisplay = isIncomingCall || notification.silent === true;
+    const highPriority = lowercasePriority ? "high" : "HIGH";
+    const normalPriority = lowercasePriority ? "normal" : "NORMAL";
+    return {
+      token: String(device.token || "").trim(),
+      ...(skipOsDisplay
+        ? {}
+        : {
+            notification: {
+              title: notification.title || "Родня",
+              body: notification.body || "",
+            },
+          }),
+      data: this._buildPushDataPayload(notification),
+      android: {
+        priority: isIncomingCall ? highPriority : normalPriority,
+        ttl: `${this._notificationTtlSeconds(notification)}s`,
+        ...(skipOsDisplay
+          ? {}
+          : {
+              notification: {
+                title: notification.title || "Родня",
+                body: notification.body || "",
+                channel_id: this._androidChannelId(notification),
+                sound: "default",
+                tag: this._notificationTag(notification),
+              },
+            }),
+      },
+    };
+  }
+
+  async _deliverFcmPush(notification, device, delivery) {
+    if (!this.config.fcmPushEnabled || !(this.fcmSender && this.fcmSender.isEnabled)) {
+      await this.store.updatePushDelivery(delivery.id, {
+        status: "queued",
+        lastError: "fcm_not_configured",
+      });
+      return;
+    }
+
+    if (typeof this.httpClient !== "function") {
+      await this.store.updatePushDelivery(delivery.id, {
+        status: "failed",
+        lastError: "fcm_http_client_unavailable",
+      });
+      return;
+    }
+
+    let accessToken;
+    try {
+      accessToken = await this.fcmSender.getAccessToken();
+    } catch (error) {
+      await this.store.updatePushDelivery(delivery.id, {
+        status: "failed",
+        lastError: `fcm_auth_failed:${error?.message || String(error)}`,
+      });
+      return;
+    }
+
+    // FCM HTTP v1 demands LOWERCASE android.priority ("high"/"normal") — the
+    // uppercase RuStore casing returns 400 INVALID_ARGUMENT.
+    const requestBody = {
+      message: this._buildPushMessage(notification, device, {
+        lowercasePriority: true,
+      }),
+    };
+
+    try {
+      const response = await this.httpClient(this.fcmSender.sendUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+        // Mirror the RuStore 8s AbortSignal — a dead token must fail fast and
+        // not block the parallel fan-out.
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (response.ok) {
+        await this.store.updatePushDelivery(delivery.id, {
+          status: "sent",
+          deliveredAt: new Date().toISOString(),
+          responseCode: Number(response.status || 200),
+          lastError: null,
+        });
+        return;
+      }
+
+      const responseText = await this._safeReadResponse(response);
+      const status = Number(response.status || 0);
+      // 404 NOT_FOUND / UNREGISTERED = the token is dead (app uninstalled or
+      // token rotated). Prune the device row so we stop burning the timeout on
+      // it every push.
+      if (this._isFcmStaleTokenResponse(status, responseText)) {
+        await this._pruneStaleDevice(device, notification.userId);
+      }
+      await this.store.updatePushDelivery(delivery.id, {
+        status: "failed",
+        lastError: responseText || `fcm_http_${status || 0}`,
+        responseCode: status || null,
+      });
+    } catch (error) {
+      await this.store.updatePushDelivery(delivery.id, {
+        status: "failed",
+        lastError: error?.message || String(error),
+      });
+    }
+  }
+
+  _isFcmStaleTokenResponse(status, responseText) {
+    if (status === 404) {
+      return true;
+    }
+    const text = String(responseText || "").toUpperCase();
+    return (
+      text.includes("UNREGISTERED") ||
+      text.includes("NOT_FOUND") ||
+      text.includes("INVALID_REGISTRATION")
+    );
+  }
+
+  async _pruneStaleDevice(device, userId) {
+    if (!device || !device.id || typeof this.store.deletePushDevice !== "function") {
+      return;
+    }
+    try {
+      await this.store.deletePushDevice(device.id, userId ?? device.userId);
+      this.logger.info?.(
+        `[rodnya-backend] pruned stale push device ${device.id} (${device.provider})`,
+      );
+    } catch (error) {
+      this.logger.warn?.(
+        `[rodnya-backend] failed to prune stale device ${device.id}: ${error?.message || error}`,
+      );
+    }
+  }
+
+  _buildPushDataPayload(notification) {
     const isIncomingCall = this._isCallSignalNotification(notification);
     const payload = {
       notificationId: notification.id,

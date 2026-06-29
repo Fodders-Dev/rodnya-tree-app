@@ -71,6 +71,33 @@ function createConfig() {
     readEnvAlias("RODNYA_RUSTORE_PUSH_API_BASE_URL") ||
       "https://vkpns.rustore.ru",
   ).trim();
+  // FCM HTTP v1 (Firebase Cloud Messaging) — the global push channel. Service
+  // account creds come as raw JSON (RODNYA_FCM_SERVICE_ACCOUNT) or a file path
+  // (RODNYA_FCM_SERVICE_ACCOUNT_PATH). Malformed/absent → FCM stays disabled.
+  const fcmProjectId = readEnvAlias("RODNYA_FCM_PROJECT_ID");
+  const fcmApiBaseUrl = String(
+    readEnvAlias("RODNYA_FCM_API_BASE_URL") || "https://fcm.googleapis.com",
+  ).trim();
+  let fcmServiceAccount = null;
+  {
+    const rawServiceAccount = String(
+      readEnvAlias("RODNYA_FCM_SERVICE_ACCOUNT") || "",
+    ).trim();
+    const serviceAccountPath = String(
+      readEnvAlias("RODNYA_FCM_SERVICE_ACCOUNT_PATH") || "",
+    ).trim();
+    try {
+      if (rawServiceAccount) {
+        fcmServiceAccount = JSON.parse(rawServiceAccount);
+      } else if (serviceAccountPath) {
+        fcmServiceAccount = JSON.parse(
+          require("fs").readFileSync(serviceAccountPath, "utf8"),
+        );
+      }
+    } catch (_error) {
+      fcmServiceAccount = null;
+    }
+  }
   const adminEmails = String(
     readEnvAlias("RODNYA_BACKEND_ADMIN_EMAILS") || "",
   )
@@ -343,6 +370,15 @@ function createConfig() {
     rustorePushApiBaseUrl,
     rustorePushEnabled: Boolean(
       rustorePushProjectId && rustorePushServiceToken,
+    ),
+    fcmProjectId,
+    fcmServiceAccount,
+    fcmApiBaseUrl,
+    fcmPushEnabled: Boolean(
+      fcmProjectId &&
+        fcmServiceAccount &&
+        fcmServiceAccount.client_email &&
+        fcmServiceAccount.private_key,
     ),
     adminEmails,
     rateLimitWindowMs,
