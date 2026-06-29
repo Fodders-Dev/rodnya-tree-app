@@ -233,4 +233,58 @@ void main() {
     expect(controller.preview, isNull);
     expect(controller.durationSeconds, 0);
   });
+
+  test(
+      'stopToPreview: слишком короткое нажатие → failed + подсказка, '
+      'temp удалён (не теряем молча)', () async {
+    final recorder = _FakeRecorder(createFile: true);
+    final controller = ChatRecordingController(
+      recorder: recorder,
+      permissionRequester: () async => true,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.start();
+    final recordedPath = recorder.lastPath;
+    expect(File(recordedPath!).existsSync(), isTrue);
+
+    // Стоп почти мгновенно после старта — wall-clock < порога (500мс).
+    await controller.stopToPreview();
+
+    expect(controller.state, ChatRecordingState.failed);
+    expect(controller.errorText, 'Запись слишком короткая');
+    expect(controller.preview, isNull);
+    expect(File(recordedPath).existsSync(), isFalse,
+        reason: 'слишком короткую запись не копим — temp удалён');
+  });
+
+  test(
+      'stopToPreview: запись ≥ порога → preview с ненулевой длительностью '
+      'и именем voice_note_<sec>s_', () async {
+    final recorder = _FakeRecorder(createFile: true);
+    final controller = ChatRecordingController(
+      recorder: recorder,
+      permissionRequester: () async => true,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.start();
+    // Держим запись чуть дольше порога — wall-clock даёт ненулевую длину
+    // даже для суб-секунды (посекундный тикер тут ещё читал бы 0).
+    await Future<void>.delayed(const Duration(milliseconds: 560));
+    await controller.stopToPreview();
+
+    expect(controller.state, ChatRecordingState.preview);
+    final preview = controller.preview;
+    expect(preview, isNotNull);
+    expect(preview!.durationSeconds, greaterThanOrEqualTo(1),
+        reason: 'суб-секунда теперь ненулевая по wall-clock');
+    expect(
+      RegExp(r'_\d+s_').hasMatch(preview.fileName),
+      isTrue,
+      reason: 'имя несёт _<sec>s_ для парсера длительности',
+    );
+
+    await controller.cancelCurrent();
+  });
 }

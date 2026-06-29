@@ -66,7 +66,16 @@ class ChatRecordingController extends ChangeNotifier {
   // (record.cancel() не везде надёжно подчищает, плюс старт может упасть
   // уже после создания пути).
   String? _activeRecordingPath;
+  // Wall-clock anchor for the active recording — see [stopToPreview]. The
+  // per-second [_ticker] can't measure a sub-second press; this can.
+  DateTime? _recordingStartedAt;
   final List<double> _amplitudeSamples = <double>[];
+
+  /// A press shorter than this is treated as an accidental tap: the temp file
+  /// is dropped and the composer shows a «слишком короткая» hint — instead of
+  /// the old behaviour that silently deleted EVERY sub-second recording
+  /// (the per-second ticker read 0). Genuine short notes (≥0.5s) are kept.
+  static const Duration _minMeaningfulRecording = Duration(milliseconds: 500);
 
   ChatRecordingState get state => _state;
   int get durationSeconds => _durationSeconds;
@@ -137,6 +146,9 @@ class ChatRecordingController extends ChangeNotifier {
       _setState(ChatRecordingState.idle);
       return;
     }
+    // Anchor wall-clock right after the recorder actually starts so a
+    // sub-second press still measures a non-zero elapsed on stop.
+    _recordingStartedAt = DateTime.now();
     _amplitudeSub?.cancel();
     _amplitudeSub = _recorder
         .onAmplitudeChanged(const Duration(milliseconds: 120))
@@ -175,17 +187,38 @@ class ChatRecordingController extends ChangeNotifier {
     _ticker?.cancel();
     await _amplitudeSub?.cancel();
     _amplitudeSub = null;
+    final startedAt = _recordingStartedAt;
+    _recordingStartedAt = null;
     final recordedPath = await _recorder.stop();
-    final recordedDuration = _durationSeconds;
+    // Measure by wall-clock: the per-second ticker reads 0 for any sub-second
+    // press, which silently deleted real short recordings. Fall back to the
+    // ticker only if the anchor is somehow missing.
+    final elapsed = startedAt != null
+        ? DateTime.now().difference(startedAt)
+        : Duration(seconds: _durationSeconds);
     _durationSeconds = 0;
-    if (recordedPath == null || recordedPath.isEmpty || recordedDuration <= 0) {
-      // C1: пустая/нулевая запись — удаляем огрызок temp-файла, не копим.
+    final tooShort = elapsed < _minMeaningfulRecording;
+    if (recordedPath == null || recordedPath.isEmpty || tooShort) {
+      // C1: пустая/слишком короткая запись — удаляем огрызок temp-файла.
       await _deleteRecordingFile(recordedPath ?? _activeRecordingPath);
       _activeRecordingPath = null;
       _preview = null;
-      _setState(ChatRecordingState.idle);
+      if (recordedPath != null && recordedPath.isNotEmpty && tooShort) {
+        // We DID capture a file, the press was just too brief — tell the user
+        // instead of dropping it without a word. The composer renders this via
+        // the failed-state notice (errorText as subtitle).
+        _errorText = 'Запись слишком короткая';
+        _setState(ChatRecordingState.failed);
+      } else {
+        _setState(ChatRecordingState.idle);
+      }
       return;
     }
+
+    // Whole-second length for the filename/label, floored at 1s so a kept
+    // sub-second note shows «1с» (and the chat tile can parse `_<sec>s_`).
+    final recordedDuration =
+        math.max(1, (elapsed.inMilliseconds / 1000).round());
 
     var waveform = downsampleVoiceWaveform(_amplitudeSamples);
     if (waveform.isEmpty) {

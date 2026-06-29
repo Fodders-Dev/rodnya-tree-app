@@ -1703,7 +1703,11 @@ class _ChatsListScreenState extends State<ChatsListScreen>
                                 borderRadius: BorderRadius.circular(999),
                               ),
                               child: Text(
-                                chat.unreadCount.toString(),
+                                // Cap so a large count doesn't overflow the
+                                // pill (Telegram-style 99+).
+                                chat.unreadCount > 99
+                                    ? '99+'
+                                    : chat.unreadCount.toString(),
                                 style: theme.textTheme.labelSmall?.copyWith(
                                   color: theme.colorScheme.onPrimary,
                                   fontWeight: FontWeight.w800,

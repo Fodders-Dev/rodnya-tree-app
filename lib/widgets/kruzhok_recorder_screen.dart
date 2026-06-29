@@ -236,6 +236,10 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
 
   Future<XFile> _renameToVideoNote(XFile raw) async {
     final prefix = widget.filenamePrefix;
+    // Embed the recorded length as `_<sec>s_` so the chat tile can surface the
+    // duration (same convention voice notes use; parsed by the chat service's
+    // _durationFromAttachmentName). Without it the кружок showed no duration.
+    final elapsedSeconds = _elapsed.inSeconds;
     // Web: no dart:io / path_provider. camera_web hands back a `blob:`
     // XFile (video/webm) — just re-wrap it under a `video_note_*` name so
     // the chat recognises it as a кружок; the blob path stays valid.
@@ -246,7 +250,7 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
               ? '.webm'
               : '.mp4');
       final webName =
-          '${prefix}_${DateTime.now().millisecondsSinceEpoch}$extension';
+          '${prefix}_${elapsedSeconds}s_${DateTime.now().millisecondsSinceEpoch}$extension';
       return XFile(raw.path, name: webName, mimeType: raw.mimeType);
     }
     try {
@@ -254,7 +258,7 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
       final extension =
           p.extension(raw.path).isNotEmpty ? p.extension(raw.path) : '.mp4';
       final newName =
-          '${prefix}_${DateTime.now().millisecondsSinceEpoch}$extension';
+          '${prefix}_${elapsedSeconds}s_${DateTime.now().millisecondsSinceEpoch}$extension';
       final newPath = p.join(dir.path, newName);
       final newFile = await File(raw.path).rename(newPath);
       return XFile(newFile.path, name: newName, mimeType: raw.mimeType);
@@ -262,7 +266,8 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
       // Rename can fail across volumes (e.g. cache vs tmp) — fall back
       // to wrapping the original path under a prefixed name. The
       // chat / story side check the filename string, not the path.
-      final fallbackName = '${prefix}_${DateTime.now().millisecondsSinceEpoch}'
+      final fallbackName =
+          '${prefix}_${elapsedSeconds}s_${DateTime.now().millisecondsSinceEpoch}'
           '${p.extension(raw.path).isEmpty ? '.mp4' : p.extension(raw.path)}';
       return XFile(raw.path, name: fallbackName, mimeType: raw.mimeType);
     }
