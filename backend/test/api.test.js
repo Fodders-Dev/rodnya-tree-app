@@ -14273,9 +14273,10 @@ test("fcm push delivery sends notification through FCM HTTP v1 (lowercase priori
       "Bearer fake-fcm-access-token",
     );
     assert.equal(observedRequests[0].body.message.token, "fcm-live-token");
-    // chat = non-call → NORMAL priority, and FCM HTTP v1 demands it LOWERCASE
-    // (the uppercase RuStore casing would 400 INVALID_ARGUMENT).
-    assert.equal(observedRequests[0].body.message.android.priority, "normal");
+    // chat messages are time-sensitive → HIGH priority (so FCM doesn't batch
+    // them under Doze), and FCM HTTP v1 demands it LOWERCASE ("high", not the
+    // uppercase RuStore "HIGH" which would 400 INVALID_ARGUMENT).
+    assert.equal(observedRequests[0].body.message.android.priority, "high");
     assert.equal(
       observedRequests[0].body.message.notification.title,
       "Fcm Sender",

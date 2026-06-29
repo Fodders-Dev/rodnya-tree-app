@@ -318,6 +318,7 @@ class PushGateway {
   //      which refetches and shows nothing (no «Дерево обновлено» spam).
   _buildPushMessage(notification, device, {lowercasePriority = false} = {}) {
     const isIncomingCall = this._isCallSignalNotification(notification);
+    const isHighPriority = this._isHighPriorityNotification(notification);
     const skipOsDisplay = isIncomingCall || notification.silent === true;
     const highPriority = lowercasePriority ? "high" : "HIGH";
     const normalPriority = lowercasePriority ? "normal" : "NORMAL";
@@ -333,7 +334,7 @@ class PushGateway {
           }),
       data: this._buildPushDataPayload(notification),
       android: {
-        priority: isIncomingCall ? highPriority : normalPriority,
+        priority: isHighPriority ? highPriority : normalPriority,
         ttl: `${this._notificationTtlSeconds(notification)}s`,
         ...(skipOsDisplay
           ? {}
@@ -522,6 +523,28 @@ class PushGateway {
   // that dismiss the ringing notification / post a missed-call entry.
   _isCallSignalNotification(notification) {
     return this._callEventName(notification) != null;
+  }
+
+  // Time-sensitive notifications must go out at FCM `high` priority so they
+  // wake the device immediately. FCM holds/batches `normal`-priority pushes
+  // under Doze (delays of minutes) — that's why chat notifications felt slow.
+  // Calls (already), chat messages, mentions and replies are user-facing and
+  // expected instantly (Telegram-level). Silent refresh pings (tree_mutated)
+  // and non-urgent types stay `normal`.
+  _isHighPriorityNotification(notification) {
+    if (this._isCallSignalNotification(notification)) {
+      return true;
+    }
+    if (notification.silent === true) {
+      return false;
+    }
+    const type = String(notification.type || "").toLowerCase();
+    return (
+      type === "chat_message" ||
+      type === "chat" ||
+      type === "mention" ||
+      type === "reply"
+    );
   }
 
   // Maps a call notification type to the client-facing push `event`.
