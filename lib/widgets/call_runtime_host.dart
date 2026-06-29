@@ -351,6 +351,20 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
         ? 'Групповой звонок'
         : (call.mediaMode.isVideo ? 'Видеозвонок' : 'Звонок');
     final preview = await _cachedChatPreview(call.chatId);
+    // For a 1:1 incoming call the FCM push carries the caller's name (the
+    // native notification already shows it) — the most reliable title when
+    // getChatDetails is slow or the chat isn't cached. Prefer it over «Звонок»
+    // (this is exactly the "в уведах вижу кто звонит, а в приложении Звонок"
+    // gap — the screen ignored the push name the notification used).
+    if (!isGroup) {
+      final pushName = _coordinator.pushCallerNameFor(call.id);
+      if (pushName != null && pushName.isNotEmpty) {
+        return _CallPresentation(
+          title: pushName,
+          photoUrl: preview?.displayPhotoUrl,
+        );
+      }
+    }
     if (preview == null) {
       return _CallPresentation(title: baseTitle);
     }

@@ -1086,6 +1086,18 @@ class CallCoordinatorService extends ChangeNotifier
           _syncMediaStateFromLiveKit(room);
         }
       })
+      ..on<TrackSubscribedEvent>((_) {
+        // A REMOTE track (esp. the peer's audio) just subscribed. LiveKit
+        // reconfigures Android audio on subscribe and re-grabs the route from
+        // the native bridge — which silently kills the «Динамик» toggle and
+        // drops hardware volume off the call stream the instant the other
+        // person's audio connects. This was the uncovered re-grab point that
+        // made the speaker fix flaky («раз работает, раз нет»). Re-assert.
+        unawaited(_audioRouteService.reassertNativeAudioOwnership());
+      })
+      ..on<TrackUnsubscribedEvent>((_) {
+        unawaited(_audioRouteService.reassertNativeAudioOwnership());
+      })
       ..on<ParticipantEvent>((_) {
         notifyListeners();
       })
@@ -1505,6 +1517,16 @@ class CallCoordinatorService extends ChangeNotifier
       return pushName;
     }
     return null;
+  }
+
+  /// Public read of the push-payload caller name for a call. The incoming-call
+  /// FCM push carries the caller's name (the native notification already shows
+  /// it); the in-app call screen uses this so it shows WHO is calling instead
+  /// of a bare «Звонок» when getChatDetails is slow / the chat isn't cached.
+  /// Empty/absent → null.
+  String? pushCallerNameFor(String callId) {
+    final name = _pushCallerNames[callId.trim()]?.trim();
+    return (name != null && name.isNotEmpty) ? name : null;
   }
 
   /// Fix C (2026-05-22): pull local track state from LiveKit
