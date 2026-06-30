@@ -172,7 +172,8 @@ jobs:
           npm ci --ignore-scripts
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: npx playwright install chromium
 
       - name: Route smoke
         env:

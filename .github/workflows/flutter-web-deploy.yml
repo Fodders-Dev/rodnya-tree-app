@@ -167,7 +167,8 @@ jobs:
         run: node tool/backend_runtime_watch.mjs --fail-on-warnings
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: npx playwright install chromium
 
       - name: Route smoke after deploy
         env:
