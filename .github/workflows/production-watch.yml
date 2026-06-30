@@ -169,8 +169,7 @@ jobs:
 
       - name: Install smoke tooling
         run: |
-          npm ci
-          npm install --no-save playwright
+          npm ci --ignore-scripts
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
