@@ -173,7 +173,7 @@ jobs:
 
       - name: Install Playwright browser
         timeout-minutes: 10
-        run: npx playwright install chromium
+        run: npm exec --no -- playwright install --only-shell chromium
 
       - name: Route smoke
         env:
