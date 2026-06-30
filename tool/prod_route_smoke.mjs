@@ -35,6 +35,9 @@ function parseArgs(argv) {
     outputJson:
       process.env.RODNYA_SMOKE_OUTPUT_JSON ||
       path.join(process.cwd(), "output", "playwright", "prod-route-smoke.json"),
+    chromiumExecutablePath:
+      process.env.RODNYA_SMOKE_CHROMIUM_EXECUTABLE_PATH || "",
+    chromiumChannel: process.env.RODNYA_SMOKE_CHROMIUM_CHANNEL || "",
     headed: false,
   };
 
@@ -92,6 +95,15 @@ function parseArgs(argv) {
         break;
       case "--suite":
         options.suite = nextValue || options.suite;
+        index += 1;
+        break;
+      case "--chromium-executable-path":
+        options.chromiumExecutablePath =
+          nextValue || options.chromiumExecutablePath;
+        index += 1;
+        break;
+      case "--chromium-channel":
+        options.chromiumChannel = nextValue || options.chromiumChannel;
         index += 1;
         break;
       case "--auto-register":
@@ -994,9 +1006,16 @@ async function main() {
   const outputDir = path.dirname(config.outputJson);
   await fs.mkdir(outputDir, {recursive: true});
 
-  const browser = await chromium.launch({
+  const launchOptions = {
     headless: !config.headed,
-  });
+  };
+  if (config.chromiumExecutablePath) {
+    launchOptions.executablePath = config.chromiumExecutablePath;
+  } else if (config.chromiumChannel) {
+    launchOptions.channel = config.chromiumChannel;
+  }
+
+  const browser = await chromium.launch(launchOptions);
   let {context, page} = await createBrowserPage(browser);
 
   const results = {

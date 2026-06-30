@@ -171,9 +171,18 @@ jobs:
         run: |
           npm ci --ignore-scripts
 
-      - name: Install Playwright browser
-        timeout-minutes: 10
-        run: npm exec --no -- playwright install --only-shell chromium
+      - name: Select smoke browser
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          chrome_path="$(
+            command -v google-chrome ||
+            command -v google-chrome-stable ||
+            command -v chromium-browser ||
+            command -v chromium
+          )"
+          "$chrome_path" --version
+          echo "RODNYA_SMOKE_CHROMIUM_EXECUTABLE_PATH=$chrome_path" >> "$GITHUB_ENV"
 
       - name: Route smoke
         env:
