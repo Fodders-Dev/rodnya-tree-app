@@ -19,11 +19,26 @@ void main() {
       navigatorKey: rootNavigatorKey,
       initialLocation: '/family',
       routes: <RouteBase>[
-        shell.build(),
         ...shell.buildLegacyFamilyRedirectRoutes(),
+        shell.build(),
       ],
     );
     addTearDown(router.dispose);
+
+    final routes = router.configuration.routes;
+    final legacyRelativesIndex = routes
+        .indexWhere((route) => route is GoRoute && route.path == '/relatives');
+    final shellIndex =
+        routes.indexWhere((route) => route is StatefulShellRoute);
+
+    expect(legacyRelativesIndex, isNonNegative);
+    expect(shellIndex, isNonNegative);
+    expect(
+      legacyRelativesIndex,
+      lessThan(shellIndex),
+      reason:
+          'legacy /relatives must redirect before the shell can retain the previous branch',
+    );
 
     final topLevelPaths = router.configuration.routes
         .whereType<GoRoute>()
@@ -53,7 +68,8 @@ void main() {
     // tree id isn't lost.
     expect(
       AppRouter.resolveTreeRootRedirect(
-        uri: Uri.parse('/tree/view/tree-2?name=%D0%92%D1%82%D0%BE%D1%80%D0%BE%D0%B5'),
+        uri: Uri.parse(
+            '/tree/view/tree-2?name=%D0%92%D1%82%D0%BE%D1%80%D0%BE%D0%B5'),
       ),
       isNull,
     );
@@ -66,7 +82,7 @@ void main() {
         treeName: 'Второе дерево',
       ),
       '/family?view=tree&tree=tree-2'
-          '&name=${Uri.encodeQueryComponent('Второе дерево')}',
+      '&name=${Uri.encodeQueryComponent('Второе дерево')}',
     );
   });
 
