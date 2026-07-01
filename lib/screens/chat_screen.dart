@@ -45,6 +45,7 @@ import '../services/active_chat_tracker.dart';
 import '../services/app_status_service.dart';
 import '../services/call_coordinator_service.dart';
 import '../services/chat_auto_delete_store.dart';
+import '../services/chat_clipboard_image_paste.dart';
 import '../services/chat_details_cache.dart';
 import '../services/chat_draft_suppression.dart';
 import '../services/chat_draft_store.dart';
@@ -95,6 +96,7 @@ class ChatScreen extends StatefulWidget {
     this.recordingController,
     this.embedded = false,
     this.onOpenDirectChat,
+    this.clipboardImages,
   }) : assert(
           (chatId != null && chatId != '') ||
               (otherUserId != null && otherUserId != ''),
@@ -129,6 +131,10 @@ class ChatScreen extends StatefulWidget {
   /// Desktop master-detail hook: lets the parent chat list swap the right pane
   /// to a direct chat opened from a group message/member row.
   final OpenDirectChatCallback? onOpenDirectChat;
+
+  /// Test hook for web clipboard-image paste. Production uses the browser
+  /// paste listener from [ChatClipboardImagePasteService].
+  final Stream<ChatClipboardImage>? clipboardImages;
 
   bool get isGroup => chatType == 'group' || chatType == 'branch';
 
@@ -180,6 +186,8 @@ class _ChatScreenState extends State<ChatScreen> {
   late String _resolvedTitle;
   final ChatAttachmentsController _attachmentsController =
       ChatAttachmentsController(maxAttachments: _maxAttachments);
+  ChatClipboardImagePasteService? _clipboardImagePasteService;
+  StreamSubscription<ChatClipboardImage>? _clipboardImagePasteSubscription;
   late final ChatSendQueue _sendQueue;
   bool _ownsSendQueue = false;
   // S1: открытие чата до первого кадра с сообщениями.
@@ -336,6 +344,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _messagesScrollController.addListener(_handleMessagesScroll);
     _recordingController.addListener(_handleRecordingControllerChanged);
     _configureBrowserContextMenu();
+    _bindClipboardImagePaste();
     // Defer the chat bootstrap until AFTER the first frame paints.
     // The bootstrap awaits getOrCreateChat / SharedPreferences /
     // notification-settings store reads, all of which compete with
@@ -388,6 +397,10 @@ class _ChatScreenState extends State<ChatScreen> {
       unawaited(realtimeSubscription.cancel());
     }
     _restoreBrowserContextMenu();
+    unawaited(_clipboardImagePasteSubscription?.cancel());
+    _clipboardImagePasteSubscription = null;
+    _clipboardImagePasteService?.dispose();
+    _clipboardImagePasteService = null;
     _sendQueue.removeListener(_handleSendQueueChanged);
     _attachmentsController.removeListener(_handleAttachmentsChanged);
     _attachmentsController.dispose();
@@ -415,6 +428,87 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  void _bindClipboardImagePaste() {
+    final injectedStream = widget.clipboardImages;
+    if (injectedStream != null) {
+      _clipboardImagePasteSubscription =
+          injectedStream.listen(_handleClipboardImagePaste);
+      return;
+    }
+
+    if (!kIsWeb) {
+      return;
+    }
+
+    final service = ChatClipboardImagePasteService();
+    _clipboardImagePasteService = service;
+    _clipboardImagePasteSubscription = service.images.listen(
+      _handleClipboardImagePaste,
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint(
+          'ChatScreen: не удалось прочитать изображение из буфера: '
+          '$error\n$stackTrace',
+        );
+      },
+    );
+  }
+
+  void _handleClipboardImagePaste(ChatClipboardImage image) {
+    if (!mounted || image.bytes.isEmpty) {
+      return;
+    }
+    if (_selectedAttachments.length >= _maxAttachments) {
+      showAppSnackBar(
+        context,
+        'Можно прикрепить не более 6 вложений.',
+        isError: true,
+      );
+      return;
+    }
+
+    if (_selectedEdit != null) {
+      setState(() {
+        _selectedEdit = null;
+      });
+    }
+
+    final hasAudio = _selectedAttachments.any(
+      (file) => _attachmentKindFromXFile(file) == _ChatAttachmentKind.audio,
+    );
+    if (hasAudio) {
+      _attachmentsController.clear();
+    }
+
+    final hasHeavyMedia = _selectedAttachments.any((file) {
+      final kind = _attachmentKindFromXFile(file);
+      return kind == _ChatAttachmentKind.video ||
+          kind == _ChatAttachmentKind.audio;
+    });
+    if (hasHeavyMedia) {
+      _attachmentsController.clear();
+    }
+
+    final addedCount = _attachmentsController.addAll(
+      <XFile>[
+        XFile.fromData(
+          image.bytes,
+          name: image.name,
+          mimeType: image.mimeType,
+        ),
+      ],
+    );
+    if (addedCount == 0) {
+      showAppSnackBar(
+        context,
+        'Не удалось прикрепить изображение из буфера.',
+        isError: true,
+      );
+      return;
+    }
+
+    _messageFocusNode.requestFocus();
   }
 
   List<_OutgoingMessage> get _optimisticMessages {
@@ -1762,6 +1856,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _suppressSentDraftEcho(chatId: chatId, text: messageText);
     _messageController.clear();
+    unawaited(
+      _clearActiveDraft().catchError(
+        (e) => debugPrint('[chat] draft-clear error: $e'),
+      ),
+    );
 
     setState(() {
       _selectedEdit = null;
@@ -1785,11 +1884,6 @@ class _ChatScreenState extends State<ChatScreen> {
         (e) => debugPrint('[chat] typing-clear error: $e'),
       ),
     );
-    unawaited(
-      _clearActiveDraft().catchError(
-        (e) => debugPrint('[chat] draft-clear error: $e'),
-      ),
-    );
   }
 
   Future<void> _sendForwardBatch(
@@ -1809,6 +1903,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final comment = commentText.trim();
     _suppressSentDraftEcho(chatId: _chatId, text: comment);
     _messageController.clear();
+    unawaited(
+      _clearActiveDraft().catchError(
+        (e) => debugPrint('[chat] draft-clear error: $e'),
+      ),
+    );
     setState(() {
       _selectedEdit = null;
       _selectedReply = null;
@@ -1819,11 +1918,6 @@ class _ChatScreenState extends State<ChatScreen> {
     unawaited(
       _setTypingActive(false, force: true).catchError(
         (e) => debugPrint('[chat] typing-clear error: $e'),
-      ),
-    );
-    unawaited(
-      _clearActiveDraft().catchError(
-        (e) => debugPrint('[chat] draft-clear error: $e'),
       ),
     );
 
@@ -2722,6 +2816,18 @@ class _ChatScreenState extends State<ChatScreen> {
             ? draftStore.clearLocalDraft(draftKey)
             : draftStore.clearDraft(draftKey),
       );
+      final currentText = _messageController.text;
+      if (currentText.trim().isEmpty ||
+          ChatDraftSuppression.instance.shouldSuppressDraft(
+            chatId: event.chatId ?? _chatId ?? '',
+            text: currentText,
+          )) {
+        _isApplyingDraft = true;
+        _messageController.clear();
+        _isApplyingDraft = false;
+      }
+      _lastPersistedDraftKey = draftKey;
+      return;
     } else {
       unawaited(
         draftStore is HybridChatDraftStore

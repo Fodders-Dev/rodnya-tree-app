@@ -33,6 +33,7 @@ import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/chat_screen.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
 import 'package:rodnya/services/chat_auto_delete_store.dart';
+import 'package:rodnya/services/chat_clipboard_image_paste.dart';
 import 'package:rodnya/services/chat_draft_suppression.dart';
 import 'package:rodnya/services/chat_draft_store.dart';
 import 'package:rodnya/services/chat_notification_settings_store.dart';
@@ -41,6 +42,76 @@ import 'package:rodnya/services/app_status_service.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+const List<int> _onePixelPng = <int>[
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1F,
+  0x15,
+  0xC4,
+  0x89,
+  0x00,
+  0x00,
+  0x00,
+  0x0A,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x78,
+  0x9C,
+  0x63,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x05,
+  0x00,
+  0x01,
+  0x0D,
+  0x0A,
+  0x2D,
+  0xB4,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
+];
 
 class _MemoryChatDraftStore implements ChatDraftStore {
   final Map<String, ChatDraftSnapshot> _drafts = <String, ChatDraftSnapshot>{};
@@ -796,6 +867,95 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  test(
+      'ChatDraftSuppression ignores sent-draft variants until the next local edit',
+      () {
+    final suppression = ChatDraftSuppression.instance;
+    suppression.resetForTesting();
+
+    suppression.suppressSentDraft(
+      chatId: 'chat-1',
+      text: 'Тебе можете писать друг другу!',
+      now: DateTime(2026, 7, 1, 13),
+    );
+
+    expect(
+      suppression.shouldSuppressDraft(
+        chatId: 'chat-1',
+        text: 'Тебе можете писать друг другу',
+        now: DateTime(2026, 7, 1, 13, 1),
+      ),
+      isTrue,
+    );
+
+    suppression.recordLocalDraftEdit(
+      key: SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      text: 'Новый черновик',
+      now: DateTime(2026, 7, 1, 13, 2),
+    );
+
+    expect(
+      suppression.shouldSuppressDraft(
+        chatId: 'chat-1',
+        text: 'Новый черновик',
+        now: DateTime(2026, 7, 1, 13, 2),
+      ),
+      isFalse,
+    );
+  });
+
+  testWidgets('ChatScreen attaches a pasted clipboard image', (tester) async {
+    final chatService = _FakeChatService();
+    final clipboardImages = StreamController<ChatClipboardImage>.broadcast();
+    addTearDown(clipboardImages.close);
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+          pinStore: _MemoryChatPinStore(),
+          clipboardImages: clipboardImages.stream,
+        ),
+      ),
+    );
+
+    chatService._messagesController.add(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    clipboardImages.add(
+      ChatClipboardImage(
+        bytes: Uint8List.fromList(_onePixelPng),
+        mimeType: 'image/png',
+        name: 'clipboard-shot.png',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Фото перед отправкой'), findsOneWidget);
+    expect(find.text('1 фото'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'Скрин из буфера');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+
+    expect(chatService.sentRequests, hasLength(1));
+    expect(chatService.sentRequests.single.text, 'Скрин из буфера');
+    expect(chatService.sentRequests.single.attachments, hasLength(1));
+    expect(
+      chatService.sentRequests.single.attachments.single.mimeType,
+      'image/png',
+    );
+    expect(
+      await chatService.sentRequests.single.attachments.single.readAsBytes(),
+      _onePixelPng,
+    );
+
+    chatService.sendCompleter.complete();
   });
 
   testWidgets('ChatScreen shows sent, delivered and read receipts',

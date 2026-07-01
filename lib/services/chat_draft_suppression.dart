@@ -38,6 +38,7 @@ class ChatDraftSuppression {
     _suppressedByChatId[normalizedChatId] = _SuppressedDraft(
       normalizedText: normalizedText,
       expiresAt: timestamp.add(_defaultTtl),
+      suppressAnyUntilLocalEdit: true,
     );
     _events.add(
       ChatDraftSuppressionEvent(
@@ -60,7 +61,9 @@ class ChatDraftSuppression {
 
     _pruneExpired(now ?? DateTime.now());
     final suppressed = _suppressedByChatId[normalizedChatId];
-    return suppressed != null && suppressed.normalizedText == normalizedText;
+    return suppressed != null &&
+        (suppressed.suppressAnyUntilLocalEdit ||
+            suppressed.normalizedText == normalizedText);
   }
 
   bool shouldSuppressDraftKey({
@@ -134,8 +137,10 @@ class _SuppressedDraft {
   const _SuppressedDraft({
     required this.normalizedText,
     required this.expiresAt,
+    required this.suppressAnyUntilLocalEdit,
   });
 
   final String normalizedText;
   final DateTime expiresAt;
+  final bool suppressAnyUntilLocalEdit;
 }

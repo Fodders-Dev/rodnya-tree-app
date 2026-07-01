@@ -76,10 +76,16 @@ void main() async {
   // backend always sees the stable id rather than a transient uuid.
   await ClientInstanceId.ensureInitialized();
 
-  // Preload bundled Manrope + Lora before first paint so headlines pick the
-  // serif/sans treatment immediately, instead of flashing the system fallback
-  // for one frame while Flutter lazily fetches the .ttf assets.
-  await _preloadBrandFonts();
+  // On web these fonts are network assets and blocking runApp on them extends
+  // the blank startup window. Let the app paint with system fonts first; the
+  // preloader swaps the brand fonts in as soon as they arrive. Native keeps the
+  // old blocking preload because assets are local and first-frame stability is
+  // more valuable there.
+  if (kIsWeb) {
+    unawaited(_preloadBrandFonts());
+  } else {
+    await _preloadBrandFonts();
+  }
 
   await _bootstrapAndRunApp();
 }

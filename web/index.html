@@ -43,14 +43,89 @@
 
   <style>
     html, body {
+      margin: 0;
+      min-height: 100%;
       font-family: "Segoe UI Variable Text", "Segoe UI", "Noto Sans",
         "Roboto", "Arial", "Segoe UI Emoji", "Apple Color Emoji",
         "Noto Color Emoji", sans-serif;
       text-rendering: optimizeLegibility;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      background: #f5efdf;
+      color: #263226;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    #rodnya-startup {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #f5efdf;
+    }
+
+    .rodnya-startup__panel {
+      display: grid;
+      justify-items: center;
+      gap: 14px;
+      text-align: center;
+    }
+
+    .rodnya-startup__mark {
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      background: #2f7d46;
+      color: white;
+      box-shadow: 0 18px 48px rgba(47, 125, 70, 0.22);
+      font-size: 28px;
+      font-weight: 800;
+    }
+
+    .rodnya-startup__title {
+      font-size: 28px;
+      line-height: 1.1;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .rodnya-startup__subtitle {
+      font-size: 15px;
+      color: rgba(38, 50, 38, 0.68);
+    }
+
+    .rodnya-startup__spinner {
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      border: 3px solid rgba(47, 125, 70, 0.16);
+      border-top-color: #2f7d46;
+      animation: rodnya-spin 900ms linear infinite;
+    }
+
+    @keyframes rodnya-spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
   </style>
+
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var startup = document.getElementById('rodnya-startup');
+      if (startup) {
+        startup.remove();
+      }
+      document.body.style.overflow = '';
+    });
+  </script>
 
   <!--
     Legacy invite link redirect.
@@ -95,6 +170,14 @@
 
 </head>
 <body>
+  <div id="rodnya-startup" role="status" aria-live="polite">
+    <div class="rodnya-startup__panel">
+      <div class="rodnya-startup__mark" aria-hidden="true">Р</div>
+      <div class="rodnya-startup__title">Родня</div>
+      <div class="rodnya-startup__subtitle">Загружаем семейный чат</div>
+      <div class="rodnya-startup__spinner" aria-hidden="true"></div>
+    </div>
+  </div>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
