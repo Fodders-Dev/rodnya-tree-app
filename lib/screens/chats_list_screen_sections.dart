@@ -112,6 +112,19 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
           photoUrl: selected.photoUrl,
           otherUserId: selected.otherUserId,
           embedded: true,
+          onOpenDirectChat: ({
+            required chatId,
+            required title,
+            photoUrl,
+            otherUserId,
+          }) =>
+              _openChatTarget(
+            chatId: chatId,
+            chatType: 'direct',
+            title: title,
+            photoUrl: photoUrl,
+            otherUserId: otherUserId,
+          ),
         ),
       ),
     );

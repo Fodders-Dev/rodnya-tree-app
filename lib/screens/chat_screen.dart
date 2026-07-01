@@ -46,6 +46,7 @@ import '../services/app_status_service.dart';
 import '../services/call_coordinator_service.dart';
 import '../services/chat_auto_delete_store.dart';
 import '../services/chat_details_cache.dart';
+import '../services/chat_draft_suppression.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
 import '../services/chat_pin_store.dart';
@@ -68,6 +69,13 @@ part 'chat_screen_state_models.dart';
 part 'chat_screen_sections.dart';
 part 'chat_screen_supporting_widgets.dart';
 
+typedef OpenDirectChatCallback = void Function({
+  required String chatId,
+  required String title,
+  String? photoUrl,
+  String? otherUserId,
+});
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
@@ -86,6 +94,7 @@ class ChatScreen extends StatefulWidget {
     this.initialChatDetails,
     this.recordingController,
     this.embedded = false,
+    this.onOpenDirectChat,
   }) : assert(
           (chatId != null && chatId != '') ||
               (otherUserId != null && otherUserId != ''),
@@ -116,6 +125,10 @@ class ChatScreen extends StatefulWidget {
   /// «назад» leading that would pop the whole shell route. The chat list
   /// stays visible to the left; switching chats just swaps this pane.
   final bool embedded;
+
+  /// Desktop master-detail hook: lets the parent chat list swap the right pane
+  /// to a direct chat opened from a group message/member row.
+  final OpenDirectChatCallback? onOpenDirectChat;
 
   bool get isGroup => chatType == 'group' || chatType == 'branch';
 
@@ -181,11 +194,6 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isApplyingDraft = false;
   int _draftPersistenceVersion = 0;
   String? _lastPersistedDraftKey;
-  // Self-echo suppression: on send, the debounced draft PUT for the last
-  // keystroke can echo back over the websocket and re-type the sent text into
-  // the composer. We record the just-sent text + a short window to drop it.
-  String? _lastSentDraftEcho;
-  DateTime? _draftEchoSuppressUntil;
   final ScrollController _messagesScrollController = ScrollController();
   final GlobalKey _unreadDividerKey = GlobalKey();
   bool _showJumpToLatestButton = false;
@@ -1752,11 +1760,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (attachments.any(_isRecordedVoiceAttachment)) {
       _recordingController.markSending();
     }
+    _suppressSentDraftEcho(chatId: chatId, text: messageText);
     _messageController.clear();
-    // Drop the echo of this just-sent draft if the debounced PUT lands back
-    // over the websocket right after this clear (see _handleRemoteDraftUpdate).
-    _lastSentDraftEcho = messageText;
-    _draftEchoSuppressUntil = DateTime.now().add(const Duration(seconds: 4));
 
     setState(() {
       _selectedEdit = null;
@@ -1802,6 +1807,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final comment = commentText.trim();
+    _suppressSentDraftEcho(chatId: _chatId, text: comment);
     _messageController.clear();
     setState(() {
       _selectedEdit = null;
@@ -1884,6 +1890,7 @@ class _ChatScreenState extends State<ChatScreen> {
         messageId: edit.messageId,
         text: nextText,
       );
+      _suppressSentDraftEcho(chatId: chatId, text: nextText);
       _messageController.clear();
       unawaited(
         _clearActiveDraft().catchError(
@@ -1972,6 +1979,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (snapshot == null) {
         continue;
       }
+      if (ChatDraftSuppression.instance.shouldSuppressDraftKey(
+        key: key,
+        text: snapshot.text,
+      )) {
+        unawaited(_clearDraftKey(key));
+        continue;
+      }
       if (bestDraft == null ||
           snapshot.updatedAt.isAfter(bestDraft.updatedAt)) {
         bestDraft = snapshot;
@@ -2030,6 +2044,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.trim().isEmpty) {
       await _draftStore.clearDraft(draftKey);
     } else {
+      ChatDraftSuppression.instance.recordLocalDraftEdit(
+        key: draftKey,
+        text: text,
+      );
       await _draftStore.saveDraft(draftKey, text);
     }
     if (version != _draftPersistenceVersion) {
@@ -2052,6 +2070,21 @@ class _ChatScreenState extends State<ChatScreen> {
       await _draftStore.clearDraft(key);
     }
     _lastPersistedDraftKey = _primaryDraftKey();
+  }
+
+  void _suppressSentDraftEcho({required String? chatId, required String text}) {
+    final normalizedChatId = chatId?.trim();
+    if (normalizedChatId == null || normalizedChatId.isEmpty) {
+      return;
+    }
+    ChatDraftSuppression.instance.suppressSentDraft(
+      chatId: normalizedChatId,
+      text: text,
+    );
+  }
+
+  Future<void> _clearDraftKey(String key) async {
+    await _draftStore.clearDraft(key);
   }
 
   List<String> _notificationSettingsCandidateKeys() {
@@ -2669,15 +2702,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final draft =
         rawDraft == null ? null : ChatDraftSnapshot.fromJson(rawDraft);
     final nextText = draft?.text ?? '';
-    // Suppress the echo of our OWN just-sent draft: a debounced PUT for the
-    // last keystroke can arrive right after send cleared the field, re-typing
-    // the sent text. If it matches what we just sent (within the window), drop
-    // it entirely — neither persist locally nor inject into the composer.
-    final suppressUntil = _draftEchoSuppressUntil;
-    if (suppressUntil != null &&
-        DateTime.now().isBefore(suppressUntil) &&
-        nextText.trim().isNotEmpty &&
-        nextText.trim() == (_lastSentDraftEcho ?? '').trim()) {
+    if (nextText.trim().isNotEmpty &&
+        ChatDraftSuppression.instance.shouldSuppressDraft(
+          chatId: event.chatId ?? _chatId ?? '',
+          text: nextText,
+        )) {
+      unawaited(_clearDraftKey(draftKey));
+      if (_messageController.text.trim() == nextText.trim()) {
+        _isApplyingDraft = true;
+        _messageController.clear();
+        _isApplyingDraft = false;
+      }
       return;
     }
     final draftStore = _draftStore;
@@ -3234,6 +3269,10 @@ class _ChatScreenState extends State<ChatScreen> {
           });
           return updatedDetails;
         },
+        onOpenDirectChat: (participant) {
+          Navigator.of(context).pop();
+          unawaited(_openDirectChatForParticipant(participant));
+        },
         onLeaveGroup: () async {
           // G2: выходим из группы. После выхода чат недоступен — закрываем
           // шит и уходим к списку чатов; realtime-событие уберёт его из
@@ -3431,15 +3470,27 @@ class _ChatScreenState extends State<ChatScreen> {
     return participantIds.toList();
   }
 
-  String _participantLabelForUserId(String userId) {
+  ChatParticipantSummary? _participantForUserId(String userId) {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      return null;
+    }
     final details = _chatDetails;
-    if (details != null) {
-      for (final participant in details.participants) {
-        if (participant.userId == userId &&
-            participant.displayName.trim().isNotEmpty) {
-          return participant.displayName;
-        }
+    if (details == null) {
+      return null;
+    }
+    for (final participant in details.participants) {
+      if (participant.userId == normalizedUserId) {
+        return participant;
       }
+    }
+    return null;
+  }
+
+  String _participantLabelForUserId(String userId) {
+    final participant = _participantForUserId(userId);
+    if (participant != null && participant.displayName.trim().isNotEmpty) {
+      return participant.displayName;
     }
 
     for (final message in _latestRemoteMessages) {
@@ -3450,6 +3501,90 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return 'Участник';
+  }
+
+  Future<void> _openDirectChatForParticipant(
+    ChatParticipantSummary participant,
+  ) {
+    return _openDirectChatForUser(
+      userId: participant.userId,
+      title: participant.displayName,
+      photoUrl: participant.photoUrl,
+    );
+  }
+
+  Future<void> _openDirectChatForMessage(ChatMessage message) {
+    final participant = _participantForUserId(message.senderId);
+    return _openDirectChatForUser(
+      userId: message.senderId,
+      title: participant?.displayName ?? message.senderName ?? 'Участник',
+      photoUrl: participant?.photoUrl,
+    );
+  }
+
+  Future<void> _openDirectChatForUser({
+    required String userId,
+    required String title,
+    String? photoUrl,
+  }) async {
+    final normalizedUserId = userId.trim();
+    final currentUserId = _currentUserId?.trim();
+    if (normalizedUserId.isEmpty ||
+        currentUserId == null ||
+        normalizedUserId == currentUserId) {
+      return;
+    }
+
+    try {
+      final chatId = await _chatService.getOrCreateChat(normalizedUserId);
+      if (!mounted) {
+        return;
+      }
+      if (chatId == null || chatId.trim().isEmpty) {
+        showAppSnackBar(
+          context,
+          'Не удалось открыть личный чат.',
+          isError: true,
+        );
+        return;
+      }
+
+      final resolvedTitle = title.trim().isNotEmpty
+          ? title.trim()
+          : _participantLabelForUserId(normalizedUserId);
+      final resolvedPhoto = photoUrl != null && photoUrl.trim().isNotEmpty
+          ? photoUrl.trim()
+          : null;
+      final openInParent = widget.onOpenDirectChat;
+      if (openInParent != null) {
+        openInParent(
+          chatId: chatId.trim(),
+          title: resolvedTitle,
+          photoUrl: resolvedPhoto,
+          otherUserId: normalizedUserId,
+        );
+        return;
+      }
+
+      final titleParam = Uri.encodeComponent(resolvedTitle);
+      final userParam = Uri.encodeComponent(normalizedUserId);
+      final photoParam = resolvedPhoto == null
+          ? ''
+          : '&photo=${Uri.encodeComponent(resolvedPhoto)}';
+      await context.push(
+        '/chats/view/${Uri.encodeComponent(chatId.trim())}'
+        '?type=direct&title=$titleParam&userId=$userParam$photoParam',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      showAppSnackBar(
+        context,
+        'Не удалось открыть личный чат.',
+        isError: true,
+      );
+    }
   }
 
   String _chatSubtitle() {
@@ -5153,6 +5288,9 @@ class _ChatScreenState extends State<ChatScreen> {
             senderLabel: widget.isGroup && !isMe && !isGroupedWithAbove
                 ? _groupSenderLabel(message.senderName, message.senderId)
                 : null,
+            onSenderTap: widget.isGroup && !isMe
+                ? () => unawaited(_openDirectChatForMessage(message))
+                : null,
             text: message.text,
             highlightQuery: _searchController.query,
             timeLabel: DateFormat.Hm('ru')
@@ -6218,6 +6356,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final isOwnMessage = message.senderId == _currentUserId;
     final isPinned = _pinnedMessage?.messageId == message.id;
     final supportsSafetyActions = _safetyService != null;
+    final canOpenDirectChat =
+        widget.isGroup && !isOwnMessage && message.senderId.trim().isNotEmpty;
     final canReport = supportsSafetyActions && !isOwnMessage;
     final canBlock = canReport &&
         _isCurrentDirectChat &&
@@ -6250,6 +6390,12 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: Icons.checklist_rounded,
             value: _MessageSheetSelection(action: _MessageAction.select),
           ),
+          if (canOpenDirectChat)
+            const _ContextMenuActionItem<_MessageSheetSelection>(
+              label: 'Написать в личку',
+              icon: Icons.chat_bubble_outline_rounded,
+              value: _MessageSheetSelection(action: _MessageAction.openDirect),
+            ),
           _ContextMenuActionItem<_MessageSheetSelection>(
             label: isPinned ? 'Открепить' : 'Закрепить',
             icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
@@ -6359,6 +6505,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
+              if (canOpenDirectChat)
+                ListTile(
+                  leading: const Icon(Icons.chat_bubble_outline_rounded),
+                  title: const Text('Написать в личку'),
+                  onTap: () => Navigator.of(context).pop(
+                    const _MessageSheetSelection(
+                      action: _MessageAction.openDirect,
+                    ),
+                  ),
+                ),
               ListTile(
                 leading: Icon(
                   isPinned ? Icons.push_pin : Icons.push_pin_outlined,
@@ -6440,6 +6596,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (selection.action == _MessageAction.select) {
       _selectRemoteMessage(message);
+      return;
+    }
+    if (selection.action == _MessageAction.openDirect) {
+      await _openDirectChatForMessage(message);
       return;
     }
     if (selection.action == _MessageAction.pin) {
@@ -6586,6 +6746,8 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       case _MessageAction.copy:
         await _copyMessageText(message.text);
+        return;
+      case _MessageAction.openDirect:
         return;
       case _MessageAction.report:
         return;
@@ -7365,6 +7527,7 @@ class _ChatInfoSheet extends StatefulWidget {
     required this.onUpdatePhoto,
     required this.onAddParticipants,
     required this.onRemoveParticipant,
+    required this.onOpenDirectChat,
     required this.onLeaveGroup,
     required this.onOpenSearch,
     required this.onNotificationLevelChanged,
@@ -7386,6 +7549,7 @@ class _ChatInfoSheet extends StatefulWidget {
   final Future<ChatDetails> Function(List<String> participantIds)
       onAddParticipants;
   final Future<ChatDetails> Function(String participantId) onRemoveParticipant;
+  final void Function(ChatParticipantSummary participant) onOpenDirectChat;
   final Future<void> Function() onLeaveGroup;
   final VoidCallback onOpenSearch;
   final Future<void> Function(ChatNotificationLevel level)
@@ -7779,17 +7943,34 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                           ),
                           title: Text(participant.displayName),
                           subtitle: Text(isCurrentUser ? 'Вы' : 'Участник'),
-                          trailing: _details.isEditableGroup && !isCurrentUser
-                              ? IconButton(
-                                  onPressed: _isSaving
-                                      ? null
-                                      : () => _removeParticipant(participant),
-                                  tooltip: 'Убрать из чата',
-                                  icon: const Icon(
-                                    Icons.person_remove_outlined,
-                                  ),
-                                )
-                              : null,
+                          trailing: isCurrentUser || !_details.isGroup
+                              ? null
+                              : Wrap(
+                                  spacing: 2,
+                                  children: [
+                                    IconButton(
+                                      onPressed: _isSaving
+                                          ? null
+                                          : () => widget
+                                              .onOpenDirectChat(participant),
+                                      tooltip: 'Написать в личку',
+                                      icon: const Icon(
+                                        Icons.chat_bubble_outline_rounded,
+                                      ),
+                                    ),
+                                    if (_details.isEditableGroup)
+                                      IconButton(
+                                        onPressed: _isSaving
+                                            ? null
+                                            : () =>
+                                                _removeParticipant(participant),
+                                        tooltip: 'Убрать из чата',
+                                        icon: const Icon(
+                                          Icons.person_remove_outlined,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                         ),
                       ],
                     );
@@ -8671,6 +8852,7 @@ class _ChatBubble extends StatelessWidget {
     required this.isHighlighted,
     this.highlightQuery = '',
     this.senderLabel,
+    this.onSenderTap,
     this.groupedWithPrev = false,
     this.remoteAttachments = const <ChatAttachment>[],
     this.localAttachments = const <XFile>[],
@@ -8694,6 +8876,7 @@ class _ChatBubble extends StatelessWidget {
   final bool isHighlighted;
   final String highlightQuery;
   final String? senderLabel;
+  final VoidCallback? onSenderTap;
   final bool groupedWithPrev;
   final List<ChatAttachment> remoteAttachments;
   final List<XFile> localAttachments;
@@ -8970,15 +9153,12 @@ class _ChatBubble extends StatelessWidget {
                         : CrossAxisAlignment.start,
                     children: [
                       if (senderLabel != null && senderLabel!.isNotEmpty) ...[
-                        Text(
-                          senderLabel!,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: isMe
-                                ? scheme.onPrimary.withValues(alpha: 0.92)
-                                : scheme.primary,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.1,
-                          ),
+                        _ChatSenderLabel(
+                          label: senderLabel!,
+                          color: isMe
+                              ? scheme.onPrimary.withValues(alpha: 0.92)
+                              : scheme.primary,
+                          onTap: onSenderTap,
                         ),
                         const SizedBox(height: 4),
                       ],
@@ -9228,6 +9408,61 @@ class _ChatBubble extends StatelessWidget {
   }
 }
 
+class _ChatSenderLabel extends StatelessWidget {
+  const _ChatSenderLabel({
+    required this.label,
+    required this.color,
+    this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final text = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.labelMedium?.copyWith(
+        color: color,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+    if (onTap == null) {
+      return text;
+    }
+
+    return Tooltip(
+      message: 'Написать в личку',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(child: text),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  size: 12,
+                  color: color.withValues(alpha: 0.86),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ReplyQuoteCard extends StatelessWidget {
   const _ReplyQuoteCard({
     required this.reply,
@@ -9249,9 +9484,15 @@ class _ReplyQuoteCard extends StatelessWidget {
         : scheme.onSurfaceVariant;
     final accentColor = isMe ? scheme.onPrimary : scheme.primary;
     final borderRadius = BorderRadius.circular(12);
+    final maxPreviewWidth = math.min(
+      360.0,
+      math.max(220.0, MediaQuery.sizeOf(context).width * 0.58),
+    );
+    final maxTextWidth = math.max(140.0, maxPreviewWidth - 34);
 
     final content = Container(
-      width: double.infinity,
+      key: const ValueKey<String>('chat-reply-quote-card'),
+      constraints: BoxConstraints(maxWidth: maxPreviewWidth),
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: isMe
@@ -9260,6 +9501,7 @@ class _ReplyQuoteCard extends StatelessWidget {
         borderRadius: borderRadius,
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
@@ -9271,7 +9513,8 @@ class _ReplyQuoteCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Expanded(
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxTextWidth),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,

@@ -13873,11 +13873,15 @@ test("chat drafts sync through REST and realtime for the current user", async ()
     const bobDraft = await bobDraftResponse.json();
     assert.equal(bobDraft.draft, null);
 
-    const clearResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/draft`, {
-      method: "DELETE",
-      headers: aliceHeaders,
+    const messageResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({text: "Отправлено вместо черновика"}),
     });
-    assert.equal(clearResponse.status, 200);
+    assert.equal(messageResponse.status, 201);
     await waitFor(() =>
       aliceEvents.find(
         (item) =>
@@ -13885,6 +13889,45 @@ test("chat drafts sync through REST and realtime for the current user", async ()
           item.chatId === chatId &&
           item.draft === null,
       ),
+    );
+    const listAfterSendResponse = await fetch(`${ctx.baseUrl}/v1/chats/drafts`, {
+      headers: aliceHeaders,
+    });
+    assert.equal(listAfterSendResponse.status, 200);
+    const listAfterSendPayload = await listAfterSendResponse.json();
+    assert.equal(listAfterSendPayload.drafts.length, 0);
+
+    const saveForClearResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatId}/draft`,
+      {
+        method: "PUT",
+        headers: {
+          ...aliceHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "Черновик перед очисткой"}),
+      },
+    );
+    assert.equal(saveForClearResponse.status, 200);
+    const nullEventsBeforeDelete = aliceEvents.filter(
+      (item) =>
+        item.type === "chat.draft.updated" &&
+        item.chatId === chatId &&
+        item.draft === null,
+    ).length;
+
+    const clearResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/draft`, {
+      method: "DELETE",
+      headers: aliceHeaders,
+    });
+    assert.equal(clearResponse.status, 200);
+    await waitFor(() =>
+      aliceEvents.filter(
+        (item) =>
+          item.type === "chat.draft.updated" &&
+          item.chatId === chatId &&
+          item.draft === null,
+      ).length > nullEventsBeforeDelete,
     );
 
     aliceSocket.close();

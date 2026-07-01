@@ -869,6 +869,25 @@ function registerChatRoutes(
       return;
     }
 
+    if (typeof store.clearChatDraft === "function") {
+      try {
+        await store.clearChatDraft({
+          userId: req.auth.user.id,
+          chatId: message.chatId,
+        });
+        publishDraftUpdated({
+          userId: req.auth.user.id,
+          chatId: message.chatId,
+          draft: null,
+        });
+      } catch (error) {
+        console.warn(
+          "[backend] clearChatDraft after message send failed",
+          error?.message || error,
+        );
+      }
+    }
+
     const mappedMessage = mapChatMessage(message);
     const isDeduplicated = message._deduplicated === true;
     const recipientIds = (chat.participantIds || []).filter(

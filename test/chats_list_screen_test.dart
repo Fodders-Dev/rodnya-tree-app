@@ -21,6 +21,7 @@ import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/chats_list_screen.dart';
 import 'package:rodnya/services/app_status_service.dart';
 import 'package:rodnya/services/chat_archive_store.dart';
+import 'package:rodnya/services/chat_draft_suppression.dart';
 import 'package:rodnya/services/chat_draft_store.dart';
 import 'package:rodnya/services/chat_notification_settings_store.dart';
 import 'package:rodnya/services/local_storage_service.dart';
@@ -436,6 +437,7 @@ void main() {
 
   setUp(() async {
     await getIt.reset();
+    ChatDraftSuppression.instance.resetForTesting();
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
     getIt.registerSingleton<FamilyTreeServiceInterface>(
@@ -740,6 +742,92 @@ void main() {
     expect(
       find.text('Черновик: Нужно обсудить встречу в воскресенье'),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('ChatsListScreen clears visible draft on local send suppression',
+      (tester) async {
+    final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+    chatService.chatPreviews = [
+      ChatPreview(
+        id: 'preview-1',
+        chatId: 'chat-1',
+        userId: 'user-1',
+        otherUserId: 'user-root-1',
+        otherUserName: 'Иван Кузнецов',
+        lastMessage: 'Старое сообщение',
+        lastMessageTime: DateTime(2026, 4, 10, 18, 0),
+        unreadCount: 0,
+        lastMessageSenderId: 'user-root-1',
+      ),
+    ];
+    final draftStore = _MemoryChatDraftStore();
+    await draftStore.saveDraft(
+      SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      'Только что отправленный текст',
+    );
+
+    await tester.pumpWidget(buildApp(draftStore: draftStore));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Черновик: Только что отправленный текст'),
+      findsOneWidget,
+    );
+
+    ChatDraftSuppression.instance.suppressSentDraft(
+      chatId: 'chat-1',
+      text: 'Только что отправленный текст',
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Черновик: Только что отправленный текст'),
+      findsNothing,
+    );
+    expect(
+      await draftStore.getDraft(
+        SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      ),
+      isNull,
+    );
+  });
+
+  testWidgets('ChatsListScreen hides stale draft echo after message send',
+      (tester) async {
+    final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+    chatService.chatPreviews = [
+      ChatPreview(
+        id: 'preview-1',
+        chatId: 'chat-1',
+        userId: 'user-1',
+        otherUserId: 'user-root-1',
+        otherUserName: 'Иван Кузнецов',
+        lastMessage: 'Уже отправленный текст',
+        lastMessageTime: DateTime(2026, 4, 10, 18, 0),
+        unreadCount: 0,
+        lastMessageSenderId: 'user-1',
+      ),
+    ];
+    final draftStore = _MemoryChatDraftStore();
+    await draftStore.saveDraft(
+      SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      'Уже отправленный текст',
+    );
+    ChatDraftSuppression.instance.suppressSentDraft(
+      chatId: 'chat-1',
+      text: 'Уже отправленный текст',
+    );
+
+    await tester.pumpWidget(buildApp(draftStore: draftStore));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Черновик: Уже отправленный текст'), findsNothing);
+    expect(find.text('Уже отправленный текст'), findsOneWidget);
+    expect(
+      await draftStore.getDraft(
+        SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      ),
+      isNull,
     );
   });
 

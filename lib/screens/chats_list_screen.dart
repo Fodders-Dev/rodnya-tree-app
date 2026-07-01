@@ -21,6 +21,7 @@ import '../models/family_relation.dart';
 import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/chat_archive_store.dart';
+import '../services/chat_draft_suppression.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
 import '../services/custom_api_chat_service.dart';
@@ -114,6 +115,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
 
   StreamSubscription<List<ChatPreview>>? _chatsSubscription;
   StreamSubscription<CustomApiRealtimeEvent>? _draftsRealtimeSubscription;
+  StreamSubscription<ChatDraftSuppressionEvent>? _draftSuppressionSubscription;
   List<ChatPreview> _chatPreviews = [];
   List<_GroupChatParticipant> _relatives = [];
   Map<String, ChatArchiveSnapshot> _archivedChats =
@@ -146,6 +148,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     WidgetsBinding.instance.addObserver(this);
     _loadChats();
     _bindDraftRealtimeUpdates();
+    _bindLocalDraftSuppressionUpdates();
     _loadRelatives();
     unawaited(_restoreChatListPaneWidth());
     unawaited(_loadAuxiliaryChatState());
@@ -163,6 +166,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   void dispose() {
     _chatsSubscription?.cancel();
     _draftsRealtimeSubscription?.cancel();
+    _draftSuppressionSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _treeProvider?.removeListener(_handleTreeSelectionChanged);
     _searchController.dispose();
@@ -180,6 +184,28 @@ class _ChatsListScreenState extends State<ChatsListScreen>
       _handlePresenceRealtimeEvent(event);
       _handleDraftRealtimeEvent(event);
     });
+  }
+
+  void _bindLocalDraftSuppressionUpdates() {
+    _draftSuppressionSubscription =
+        ChatDraftSuppression.instance.events.listen((event) {
+      _handleLocalDraftSuppressionEvent(event);
+    });
+  }
+
+  void _handleLocalDraftSuppressionEvent(ChatDraftSuppressionEvent event) {
+    if (!mounted || event.chatId.isEmpty) {
+      return;
+    }
+    final key = SharedPreferencesChatDraftStore.chatKey(event.chatId);
+    if (!_drafts.containsKey(key)) {
+      unawaited(_clearDraftKey(key));
+      return;
+    }
+    setState(() {
+      _drafts.remove(key);
+    });
+    unawaited(_clearDraftKey(key));
   }
 
   void _handlePresenceRealtimeEvent(CustomApiRealtimeEvent event) {
@@ -226,6 +252,18 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     final rawDraft = event.draft;
     final nextDraft =
         rawDraft == null ? null : ChatDraftSnapshot.fromJson(rawDraft);
+    if (nextDraft != null &&
+        nextDraft.text.trim().isNotEmpty &&
+        ChatDraftSuppression.instance.shouldSuppressDraft(
+          chatId: chatId,
+          text: nextDraft.text,
+        )) {
+      setState(() {
+        _drafts.remove(key);
+      });
+      unawaited(_clearDraftKey(key));
+      return;
+    }
     final draftStore = _draftStore;
     setState(() {
       if (nextDraft == null || nextDraft.text.trim().isEmpty) {
@@ -415,12 +453,27 @@ class _ChatsListScreenState extends State<ChatsListScreen>
 
   Future<void> _loadDrafts() async {
     final drafts = await _draftStore.getAllDrafts();
+    final visibleDrafts = Map<String, ChatDraftSnapshot>.from(drafts);
+    visibleDrafts.removeWhere((key, draft) {
+      final suppress = ChatDraftSuppression.instance.shouldSuppressDraftKey(
+        key: key,
+        text: draft.text,
+      );
+      if (suppress) {
+        unawaited(_clearDraftKey(key));
+      }
+      return suppress;
+    });
     if (!mounted) {
       return;
     }
     setState(() {
-      _drafts = drafts;
+      _drafts = visibleDrafts;
     });
+  }
+
+  Future<void> _clearDraftKey(String key) async {
+    await _draftStore.clearDraft(key);
   }
 
   Future<void> _loadArchivedChats() async {

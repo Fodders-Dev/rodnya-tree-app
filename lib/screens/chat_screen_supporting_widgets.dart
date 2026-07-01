@@ -1704,6 +1704,7 @@ enum _MessageAction {
   pin,
   edit,
   copy,
+  openDirect,
   report,
   block,
   retry,

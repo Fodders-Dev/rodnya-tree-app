@@ -33,6 +33,7 @@ import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/chat_screen.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
 import 'package:rodnya/services/chat_auto_delete_store.dart';
+import 'package:rodnya/services/chat_draft_suppression.dart';
 import 'package:rodnya/services/chat_draft_store.dart';
 import 'package:rodnya/services/chat_notification_settings_store.dart';
 import 'package:rodnya/services/chat_pin_store.dart';
@@ -221,6 +222,7 @@ class _FakeChatService implements ChatServiceInterface {
   String? lastEditedText;
   String? lastDeletedMessageId;
   final List<String> deletedMessageIds = <String>[];
+  final List<String> getOrCreateChatCalls = <String>[];
   String? lastReactionMessageId;
   String? lastReactionEmoji;
   String? lastClientMessageId;
@@ -322,7 +324,10 @@ class _FakeChatService implements ChatServiceInterface {
   Future<void> markChatAsRead(String chatId, String userId) async {}
 
   @override
-  Future<String?> getOrCreateChat(String otherUserId) async => 'chat-1';
+  Future<String?> getOrCreateChat(String otherUserId) async {
+    getOrCreateChatCalls.add(otherUserId);
+    return 'chat-1';
+  }
 
   @override
   Future<String?> createGroupChat({
@@ -680,6 +685,7 @@ void main() {
   setUp(() async {
     await getIt.reset();
     SharedPreferences.setMockInitialValues({});
+    ChatDraftSuppression.instance.resetForTesting();
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
     getIt.registerSingleton<AppStatusService>(AppStatusService());
     final callService = _FakeCallService();
@@ -732,6 +738,62 @@ void main() {
     expect(
       await draftStore
           .getDraft(SharedPreferencesChatDraftStore.chatKey('chat-1')),
+      isNull,
+    );
+  });
+
+  testWidgets('ChatScreen does not restore a stale draft echo after send',
+      (tester) async {
+    final chatService = _FakeChatService();
+    final draftStore = _MemoryChatDraftStore();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: draftStore,
+          pinStore: _MemoryChatPinStore(),
+        ),
+      ),
+    );
+
+    chatService._messagesController.add(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'Уже отправленный текст');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+    chatService.sendCompleter.complete();
+    await tester.pump();
+
+    await draftStore.saveDraft(
+      SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      'Уже отправленный текст',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: draftStore,
+          pinStore: _MemoryChatPinStore(),
+        ),
+      ),
+    );
+    chatService._messagesController.add(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller?.text, isEmpty);
+    expect(
+      await draftStore.getDraft(
+        SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      ),
       isNull,
     );
   });
@@ -1572,6 +1634,105 @@ void main() {
     // S4: завершаем отправку — иначе send-timeout остаётся pending Timer.
     chatService.sendCompleter.complete();
     await tester.pump();
+  });
+
+  testWidgets('ChatScreen keeps reply quote card compact', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-reply',
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Готово',
+        timestamp: DateTime(2026, 4, 11, 12),
+        isRead: true,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Dev User',
+        replyTo: const ChatReplyReference(
+          messageId: 'm-origin',
+          senderId: 'other-user',
+          senderName: 'Собеседник',
+          text: 'Да',
+        ),
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    final quoteSize = tester.getSize(
+      find.byKey(const ValueKey<String>('chat-reply-quote-card')),
+    );
+
+    expect(quoteSize.width, lessThanOrEqualTo(370));
+  });
+
+  testWidgets('ChatScreen opens direct chat from group message actions',
+      (tester) async {
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+    String? openedChatId;
+    String? openedTitle;
+    String? openedOtherUserId;
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-group-1',
+          chatType: 'group',
+          title: 'Группа',
+          draftStore: _MemoryChatDraftStore(),
+          onOpenDirectChat: ({
+            required chatId,
+            required title,
+            photoUrl,
+            otherUserId,
+          }) {
+            openedChatId = chatId;
+            openedTitle = title;
+            openedOtherUserId = otherUserId;
+          },
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-group',
+        chatId: 'chat-group-1',
+        senderId: 'user-2',
+        text: 'Привет в группе',
+        timestamp: DateTime(2026, 4, 11, 12),
+        isRead: false,
+        participants: const ['user-1', 'user-2', 'user-3'],
+        senderName: 'Андрей',
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('Привет в группе'));
+    await tester.pumpAndSettle();
+    expect(find.text('Написать в личку'), findsOneWidget);
+
+    await tester.tap(find.text('Написать в личку'));
+    await tester.pumpAndSettle();
+
+    expect(chatService.getOrCreateChatCalls, ['user-2']);
+    expect(openedChatId, 'chat-1');
+    expect(openedTitle, 'Андрей');
+    expect(openedOtherUserId, 'user-2');
   });
 
   testWidgets('ChatScreen forwards message attachments through composer',
