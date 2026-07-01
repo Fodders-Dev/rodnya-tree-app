@@ -35,6 +35,10 @@
 
   <title>Родня</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://api.rodnya-tree.ru" crossorigin>
+  <link rel="dns-prefetch" href="//api.rodnya-tree.ru">
+  <link rel="preload" href="main.dart.js" as="script" fetchpriority="high">
+  <link rel="preload" href="icons/Icon-192.png" as="image" fetchpriority="high">
 
   <!-- For CORS policy -->
   <meta http-equiv="Access-Control-Allow-Origin" content="*">
@@ -79,14 +83,9 @@
     .rodnya-startup__mark {
       width: 58px;
       height: 58px;
-      border-radius: 18px;
-      display: grid;
-      place-items: center;
-      background: #2f7d46;
-      color: white;
+      border-radius: 16px;
       box-shadow: 0 18px 48px rgba(47, 125, 70, 0.22);
-      font-size: 28px;
-      font-weight: 800;
+      object-fit: cover;
     }
 
     .rodnya-startup__title {
@@ -172,12 +171,21 @@
 <body>
   <div id="rodnya-startup" role="status" aria-live="polite">
     <div class="rodnya-startup__panel">
-      <div class="rodnya-startup__mark" aria-hidden="true">Р</div>
+      <img
+        class="rodnya-startup__mark"
+        src="icons/Icon-192.png"
+        width="58"
+        height="58"
+        alt=""
+        aria-hidden="true"
+        decoding="async"
+        fetchpriority="high"
+      >
       <div class="rodnya-startup__title">Родня</div>
       <div class="rodnya-startup__subtitle">Загружаем семейный чат</div>
       <div class="rodnya-startup__spinner" aria-hidden="true"></div>
     </div>
   </div>
-  <script src="flutter_bootstrap.js" async></script>
+  <script src="flutter_bootstrap.js" async fetchpriority="high"></script>
 </body>
 </html>
