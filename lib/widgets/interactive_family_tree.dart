@@ -401,6 +401,11 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   Offset? _lassoCurrentCanvas;
   Set<String> _lassoPreviewIds = const <String>{};
 
+  // Double-tap зум: позиция второго тапа (onDoubleTapDown приходит до
+  // onDoubleTap). Живёт здесь — sections.dart это extension, полей
+  // объявлять не может.
+  Offset? _doubleTapLocalPosition;
+
   /// Public toggle for the control-dock state, callable from the
   /// extension methods in interactive_family_tree_sections.dart.
   /// Direct `setState` from extensions trips the protected-member
@@ -2960,6 +2965,33 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       return 1.16;
     }
     return 1.0;
+  }
+
+  // UX-аудит P1: double-tap раньше делал «вписать всё» — ломал мышечную
+  // память карт/Figma. Теперь: зум ×1.5 к точке тапа; на большом
+  // приближении (>2.2) второй double-tap возвращает обзор (fit).
+  // Явный fit остаётся на кнопке дока и клавише 0.
+  static const double _doubleTapZoomFactor = 1.5;
+  static const double _doubleTapFitFallbackScale = 2.2;
+
+  void _handleCanvasDoubleTap() {
+    final tapPoint = _doubleTapLocalPosition;
+    _doubleTapLocalPosition = null;
+    final currentMatrix = _transformationController.value.clone();
+    final currentScale = currentMatrix.getMaxScaleOnAxis();
+    if (tapPoint == null || currentScale > _doubleTapFitFallbackScale) {
+      _fitTreeToViewport();
+      return;
+    }
+    final targetScale = (currentScale * _doubleTapZoomFactor).clamp(0.08, 3.5);
+    final appliedMultiplier = targetScale / currentScale;
+    // translate-scale-untranslate вокруг scene-точки — точка тапа
+    // остаётся под пальцем (та же математика, что в _zoomBy).
+    final sceneFocalPoint = _transformationController.toScene(tapPoint);
+    _transformationController.value = currentMatrix
+      ..translateByDouble(sceneFocalPoint.dx, sceneFocalPoint.dy, 0, 1)
+      ..scaleByDouble(appliedMultiplier, appliedMultiplier, 1, 1)
+      ..translateByDouble(-sceneFocalPoint.dx, -sceneFocalPoint.dy, 0, 1);
   }
 
   void _zoomBy(double multiplier) {

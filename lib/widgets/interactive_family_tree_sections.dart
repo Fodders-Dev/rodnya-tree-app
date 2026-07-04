@@ -106,8 +106,7 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
         // ESC cancels an in-progress connect drag on desktop. The
         // binding is always installed but is a no-op when not in
         // connect mode — _cancelConnecting short-circuits.
-        const SingleActivator(LogicalKeyboardKey.escape):
-            _cancelConnecting,
+        const SingleActivator(LogicalKeyboardKey.escape): _cancelConnecting,
       },
       child: Focus(
         autofocus: true,
@@ -117,7 +116,12 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
           // Cards have their own onTap that runs first, so tapping
           // a card during connect doesn't reach this handler.
           onTap: _isConnecting ? _cancelConnecting : null,
-          onDoubleTap: _fitTreeToViewport,
+          // UX-аудит P1: double-tap = зум к точке (карты/Figma), а не
+          // «вписать всё» — fit остаётся на кнопке дока и клавише 0.
+          // Позиция приходит в onDoubleTapDown (второй тап, down).
+          onDoubleTapDown: (details) =>
+              _doubleTapLocalPosition = details.localPosition,
+          onDoubleTap: _handleCanvasDoubleTap,
           // Lasso (selection-mode only). Drag-on-empty paints a
           // rectangle that gathers every overlapping card into the
           // host's selection set on release. When NOT in selection
@@ -126,8 +130,7 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
           onPanStart: _isSelectionLassoEnabled ? _handleLassoStart : null,
           onPanUpdate: _isSelectionLassoEnabled ? _handleLassoUpdate : null,
           onPanEnd: _isSelectionLassoEnabled ? _handleLassoEnd : null,
-          onPanCancel:
-              _isSelectionLassoEnabled ? _handleLassoCancel : null,
+          onPanCancel: _isSelectionLassoEnabled ? _handleLassoCancel : null,
           child: InteractiveViewer(
             transformationController: _transformationController,
             constrained: false,
@@ -464,8 +467,7 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
               const SizedBox(height: 4),
               _buildDockButton(
                 icon: Icons.alt_route_outlined,
-                tooltip:
-                    widget.showGenerationGuides ? 'К ветке' : 'К кругу',
+                tooltip: widget.showGenerationGuides ? 'К ветке' : 'К кругу',
                 onPressed: () => _focusOnPerson(branchRootPersonId),
               ),
               if (widget.onBranchFocusCleared != null) ...[
