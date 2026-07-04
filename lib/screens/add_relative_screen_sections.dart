@@ -1447,6 +1447,12 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
         return 'супруга или партнёра';
       case RelationType.sibling:
         return 'брата или сестру';
+      // Винительный падеж для одушевлённых — default отдаёт именительный
+      // («Добавить друг», смоук 2026-07-04).
+      case RelationType.friend:
+        return 'друга';
+      case RelationType.colleague:
+        return 'коллегу';
       default:
         return FamilyRelation.getGenericRelationTypeStringRu(type)
             .toLowerCase();

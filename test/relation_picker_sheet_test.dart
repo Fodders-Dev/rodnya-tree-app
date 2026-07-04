@@ -21,7 +21,11 @@ import 'package:rodnya/widgets/relation_picker_sheet.dart';
 /// context.push на top — tested indirectly through wire-up sites.
 RelationPickerResult? capturedResult;
 
-Future<void> _openSheet(WidgetTester tester, {String? anchorName}) async {
+Future<void> _openSheet(
+  WidgetTester tester, {
+  String? anchorName,
+  bool isFriendsCircle = false,
+}) async {
   capturedResult = null;
   await tester.pumpWidget(
     MaterialApp(
@@ -30,8 +34,11 @@ Future<void> _openSheet(WidgetTester tester, {String? anchorName}) async {
           builder: (ctx) => Center(
             child: ElevatedButton(
               onPressed: () async {
-                capturedResult =
-                    await showRelationPickerSheet(ctx, anchorName: anchorName);
+                capturedResult = await showRelationPickerSheet(
+                  ctx,
+                  anchorName: anchorName,
+                  isFriendsCircle: isFriendsCircle,
+                );
               },
               child: const Text('open'),
             ),
@@ -133,8 +140,7 @@ void main() {
     expect(capturedResult?.gender, Gender.female);
   });
 
-  testWidgets('«Другое родство — заполню сам» → null relation',
-      (tester) async {
+  testWidgets('«Другое родство — заполню сам» → null relation', (tester) async {
     await _openSheet(tester);
     await tester.tap(find.byKey(const Key('relation-picker-other-expand')));
     await tester.pumpAndSettle();
@@ -253,5 +259,31 @@ void main() {
     expect(capturedExtra!['relationType'], RelationType.spouse);
     // Старый (битый) мёртвый ключ не должен возвращаться.
     expect(capturedExtra!.containsKey('predefinedRelation'), isFalse);
+  });
+
+  testWidgets(
+      'Круг друзей: friends-first пикер вместо семейных примитивов '
+      '(смоук 2026-07-04 — «Друг» отсутствовал вовсе)', (tester) async {
+    await _openSheet(tester, isFriendsCircle: true);
+    expect(find.text('Друг'), findsOneWidget);
+    expect(find.text('Коллега'), findsOneWidget);
+    expect(find.text('Другая связь — заполню сам'), findsOneWidget);
+    // Семейные примитивы в круге не показываем.
+    expect(find.text('Мама'), findsNothing);
+    expect(find.text('Папа'), findsNothing);
+    expect(find.text('Дедушка / Бабушка'), findsNothing);
+
+    await tester.tap(find.text('Друг'));
+    await tester.pumpAndSettle();
+    expect(capturedResult?.relationType, RelationType.friend);
+    expect(capturedResult?.gender, isNull);
+  });
+
+  testWidgets('Круг друзей: «Другая связь» pops null relation', (tester) async {
+    await _openSheet(tester, isFriendsCircle: true);
+    await tester.tap(find.text('Другая связь — заполню сам'));
+    await tester.pumpAndSettle();
+    expect(capturedResult, isNotNull);
+    expect(capturedResult!.relationType, isNull);
   });
 }

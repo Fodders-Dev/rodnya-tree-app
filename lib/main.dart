@@ -330,7 +330,13 @@ class _MyAppState extends State<MyApp> {
       }
       messengerState?.showSnackBar(
         SnackBar(
-          content: Text('Вы присоединились к ${outcome.treeName ?? "дереву"}'),
+          // Имя ветки в именительном после двоеточия — «к Близкие друзья»
+          // склонять произвольные названия нельзя (смоук 2026-07-04).
+          content: Text(
+            outcome.treeName == null
+                ? 'Вы присоединились'
+                : 'Вы присоединились: «${outcome.treeName}»',
+          ),
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 4),
         ),

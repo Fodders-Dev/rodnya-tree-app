@@ -158,7 +158,14 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
 
   String _relationLabel(FamilyPerson person) {
     final relation = (person.relation ?? '').trim();
-    return relation.isNotEmpty ? relation : 'Родственник';
+    if (relation.isNotEmpty) {
+      return relation;
+    }
+    // В круге друзей fallback «Родственник» врал (смоук 2026-07-04) —
+    // у участников круга relation пустой, подпись должна быть «Друг».
+    final isFriendsCircle =
+        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
+    return isFriendsCircle ? 'Друг' : 'Родственник';
   }
 
   List<_BranchChatCandidate> _buildBranchCandidates(
