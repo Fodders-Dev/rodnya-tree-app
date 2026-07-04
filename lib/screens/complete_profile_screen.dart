@@ -7,6 +7,7 @@
 // профиль» later. Form-validation and persistence semantics are
 // unchanged from the previous version.
 
+import '../utils/user_facing_error.dart';
 import '../utils/genealogy_dates.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
@@ -182,7 +183,10 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
       debugPrint('Ошибка при сохранении профиля: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка при сохранении профиля: $e')),
+        SnackBar(
+            content: Text(humanizeError(e,
+                fallback:
+                    'Не удалось сохранить профиль. Попробуйте ещё раз.'))),
       );
     } finally {
       if (mounted) {

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../utils/user_facing_error.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
@@ -107,7 +108,9 @@ class _PostCardState extends State<PostCard>
       if (!mounted) return;
       setState(() => _reactions = beforeReactions);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось сохранить реакцию: $e')),
+        SnackBar(
+            content: Text(
+                humanizeError(e, fallback: 'Не удалось сохранить реакцию.'))),
       );
     }
   }
@@ -186,7 +189,9 @@ class _PostCardState extends State<PostCard>
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось обновить реакцию: $e')),
+          SnackBar(
+              content: Text(
+                  humanizeError(e, fallback: 'Не удалось обновить реакцию.'))),
         );
       }
     }
@@ -318,7 +323,9 @@ class _PostCardState extends State<PostCard>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка при удалении: $e')),
+          SnackBar(
+              content:
+                  Text(humanizeError(e, fallback: 'Не удалось удалить пост.'))),
         );
       }
     }

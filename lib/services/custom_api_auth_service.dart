@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/auth_providers_availability.dart';
@@ -19,10 +20,12 @@ import '../utils/client_instance_id.dart';
 import '../utils/device_descriptor.dart';
 import '../utils/url_utils.dart';
 
-class CustomApiException implements Exception {
+class CustomApiException implements UserFacingApiException {
   const CustomApiException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override
@@ -282,6 +285,7 @@ class CustomApiAuthService implements AuthServiceInterface {
   void unregisterPreSignOutHook(Future<void> Function() hook) {
     _preSignOutHooks.remove(hook);
   }
+
   StreamSubscription<GoogleSignInAuthenticationEvent>?
       _googleWebAccountSubscription;
 
@@ -322,8 +326,7 @@ class CustomApiAuthService implements AuthServiceInterface {
   List<String> get currentProviderIds => _session?.providerIds ?? const [];
 
   @override
-  bool get currentRequiresOnboarding =>
-      _session?.requiresOnboarding ?? false;
+  bool get currentRequiresOnboarding => _session?.requiresOnboarding ?? false;
 
   /// Ship Q1 (2026-05-25): mark local session's requiresOnboarding=false
   /// после wizard skip. Called by OnboardingController после successful
@@ -1311,8 +1314,8 @@ class CustomApiAuthService implements AuthServiceInterface {
       // Сохраняем pending для возможной повторной попытки на 5xx
       // (transient). На 4xx чистим, чтобы не повторять заведомо
       // невозможную операцию на каждом /-redirect'е.
-      final isClientError = (error.statusCode ?? 0) >= 400 &&
-          (error.statusCode ?? 0) < 500;
+      final isClientError =
+          (error.statusCode ?? 0) >= 400 && (error.statusCode ?? 0) < 500;
       if (isClientError) {
         _invitationService.clearPendingInvitation();
       }
@@ -1334,7 +1337,8 @@ class CustomApiAuthService implements AuthServiceInterface {
       _invitationService.emitOutcome(
         InvitationProcessOutcome.failure(
           errorCode: 'unknown',
-          errorMessage: 'Не удалось обработать приглашение. Попробуйте ещё раз.',
+          errorMessage:
+              'Не удалось обработать приглашение. Попробуйте ещё раз.',
           treeId: treeId,
           personId: personId,
         ),

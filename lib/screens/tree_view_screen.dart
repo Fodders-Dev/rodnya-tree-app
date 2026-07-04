@@ -1699,7 +1699,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Не удалось: $error'),
+          content: Text(
+              humanizeError(error, fallback: 'Не удалось изменить видимость.')),
           backgroundColor: Colors.red.shade800,
         ),
       );
@@ -1741,7 +1742,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Не удалось удалить: $error'),
+          content: Text(humanizeError(error, fallback: 'Не удалось удалить.')),
           backgroundColor: Colors.red.shade800,
         ),
       );
@@ -1912,7 +1913,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось загрузить подсказки: $error')),
+        SnackBar(
+            content: Text(humanizeError(error,
+                fallback: 'Не удалось загрузить подсказки.'))),
       );
       return;
     }
@@ -1973,7 +1976,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось связать карточки: $error')),
+        SnackBar(
+            content: Text(humanizeError(error,
+                fallback: 'Не удалось связать карточки.'))),
       );
     }
   }
@@ -2037,7 +2042,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         } catch (error) {
           if (sheetContext.mounted) {
             ScaffoldMessenger.of(sheetContext).showSnackBar(
-              SnackBar(content: Text('Не удалось применить выбор: $error')),
+              SnackBar(
+                  content: Text(humanizeError(error,
+                      fallback: 'Не удалось применить выбор.'))),
             );
           }
           return;
@@ -2085,7 +2092,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось скрыть подсказку: $error')),
+        SnackBar(
+            content: Text(humanizeError(error,
+                fallback: 'Не удалось скрыть подсказку.'))),
       );
     }
   }
@@ -2133,7 +2142,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось добавить карточку: $error')),
+        SnackBar(
+            content: Text(humanizeError(error,
+                fallback: 'Не удалось добавить карточку.'))),
       );
     }
   }
@@ -2203,7 +2214,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось создать связь: $error')),
+        SnackBar(
+            content: Text(
+                humanizeError(error, fallback: 'Не удалось создать связь.'))),
       );
     }
   }
@@ -2682,7 +2695,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       );
     } catch (error) {
       if (!mounted) return;
-      _showSnack('Не удалось найти родство: $error');
+      _showSnack(humanizeError(error, fallback: 'Не удалось найти родство.'));
       return;
     }
     if (!mounted) return;

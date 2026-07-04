@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../utils/user_facing_error.dart';
 import '../widgets/attachment_picker_sheet.dart';
 import '../widgets/kruzhok_recorder_screen.dart';
 import 'package:provider/provider.dart';
@@ -179,7 +180,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         _selectedMedia = picked;
       });
     } catch (error) {
-      _showError('Не удалось сделать фото: $error');
+      _showError(humanizeError(error, fallback: 'Не удалось сделать фото.'));
     }
   }
 
@@ -198,7 +199,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         _selectedMedia = picked;
       });
     } catch (error) {
-      _showError('Не удалось выбрать изображение: $error');
+      _showError(
+          humanizeError(error, fallback: 'Не удалось выбрать изображение.'));
     }
   }
 
@@ -216,7 +218,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         _selectedMedia = picked;
       });
     } catch (error) {
-      _showError('Не удалось записать видео: $error');
+      _showError(humanizeError(error, fallback: 'Не удалось записать видео.'));
     }
   }
 
@@ -234,7 +236,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         _selectedMedia = picked;
       });
     } catch (error) {
-      _showError('Не удалось выбрать видео: $error');
+      _showError(humanizeError(error, fallback: 'Не удалось выбрать видео.'));
     }
   }
 
@@ -269,9 +271,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         type: _storyType,
         text: text.isEmpty ? null : text,
         media: _selectedMedia,
-        circleId: _selectedBranchPersonIds.isEmpty
-            ? _selectedCircleId
-            : null,
+        circleId: _selectedBranchPersonIds.isEmpty ? _selectedCircleId : null,
         scopeType: _scopeType,
         anchorPersonIds: _selectedBranchPersonIds.toList(growable: false),
       );
@@ -286,7 +286,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
       if (!mounted) {
         return;
       }
-      _showError('Не удалось опубликовать историю: $error');
+      _showError(
+          humanizeError(error, fallback: 'Не удалось опубликовать историю.'));
     } finally {
       if (mounted) {
         setState(() {
@@ -336,8 +337,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
       // here just hides the "Выбрать людей" affordance.
       List<FamilyPerson> people = const <FamilyPerson>[];
       try {
-        final familyTreeService =
-            GetIt.I<FamilyTreeServiceInterface>();
+        final familyTreeService = GetIt.I<FamilyTreeServiceInterface>();
         people = await familyTreeService.getRelatives(treeId);
       } catch (_) {
         // ignored
@@ -494,9 +494,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                   Text(
                     selectedCount == 0
                         ? 'Поиск по имени · доступно ${_availablePeople.length}'
-                        : selectedPeople
-                                .map((p) => p.displayName)
-                                .join(', ') +
+                        : selectedPeople.map((p) => p.displayName).join(', ') +
                             (selectedCount > selectedPeople.length
                                 ? ' и ещё ${selectedCount - selectedPeople.length}'
                                 : ''),
@@ -972,9 +970,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                   FilledButton.tonalIcon(
                     onPressed: _openMediaPicker,
                     icon: const Icon(Icons.add_photo_alternate_rounded),
-                    label: Text(_selectedMedia == null
-                        ? 'Добавить медиа'
-                        : 'Заменить'),
+                    label: Text(
+                        _selectedMedia == null ? 'Добавить медиа' : 'Заменить'),
                   ),
                   if (_selectedMedia != null)
                     OutlinedButton.icon(

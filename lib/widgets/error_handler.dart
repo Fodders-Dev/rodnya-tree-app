@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class ErrorHandler extends StatelessWidget {
@@ -24,7 +25,11 @@ class ErrorHandler extends StatelessWidget {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  errorDetails.exception.toString(),
+                  // Сырой exception — только в debug: пользователю стек
+                  // build-краша не нужен и не читаем.
+                  kDebugMode
+                      ? errorDetails.exception.toString()
+                      : 'Попробуйте перезапустить приложение — мы уже разбираемся.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey[700]),
                 ),

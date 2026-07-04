@@ -12,6 +12,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../utils/user_facing_error.dart';
 import '../utils/date_parser.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
@@ -847,7 +848,11 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      showAppSnackBar(context, error.toString(), isError: true);
+      showAppSnackBar(
+        context,
+        humanizeError(error, fallback: 'Не удалось начать звонок.'),
+        isError: true,
+      );
     }
   }
 

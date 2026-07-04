@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/identity_service_interface.dart';
 import '../models/identity_claim.dart';
@@ -296,10 +297,12 @@ class CustomApiIdentityService implements IdentityServiceInterface {
   }
 }
 
-class CustomApiIdentityException implements Exception {
+class CustomApiIdentityException implements UserFacingApiException {
   const CustomApiIdentityException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override

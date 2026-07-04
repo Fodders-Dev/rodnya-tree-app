@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/gathering_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
@@ -273,10 +274,12 @@ class CustomApiGatheringService implements GatheringServiceInterface {
   }
 }
 
-class CustomApiGatheringException implements Exception {
+class CustomApiGatheringException implements UserFacingApiException {
   const CustomApiGatheringException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override

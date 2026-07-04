@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/call_service_interface.dart';
 import '../models/call_event.dart';
@@ -12,10 +13,14 @@ import '../utils/client_instance_id.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
 
-class CustomApiCallException implements Exception {
+class CustomApiCallException implements UserFacingApiException {
   const CustomApiCallException(this.message);
 
+  @override
   final String message;
+
+  @override
+  int? get statusCode => null;
 
   @override
   String toString() => message;

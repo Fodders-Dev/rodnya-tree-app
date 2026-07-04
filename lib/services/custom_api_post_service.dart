@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
@@ -434,10 +435,12 @@ class CustomApiPostService implements PostServiceInterface {
   }
 }
 
-class CustomApiPostException implements Exception {
+class CustomApiPostException implements UserFacingApiException {
   const CustomApiPostException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override

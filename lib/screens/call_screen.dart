@@ -10,6 +10,7 @@ import 'package:get_it/get_it.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../utils/user_facing_error.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../models/call_invite.dart';
 import '../models/call_media_mode.dart';
@@ -520,7 +521,11 @@ class _CallScreenState extends State<CallScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
+        SnackBar(
+          content: Text(
+            humanizeError(error, fallback: 'Не удалось принять звонок.'),
+          ),
+        ),
       );
     }
   }
@@ -540,7 +545,11 @@ class _CallScreenState extends State<CallScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
+        SnackBar(
+          content: Text(
+            humanizeError(error, fallback: 'Не удалось войти в звонок.'),
+          ),
+        ),
       );
     }
   }
@@ -849,7 +858,8 @@ class _CallScreenState extends State<CallScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Не удалось позвать повторно: $error'),
+          content: Text(
+              humanizeError(error, fallback: 'Не удалось позвать повторно.')),
         ),
       );
     } finally {

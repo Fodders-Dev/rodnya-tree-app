@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
@@ -90,8 +91,9 @@ class CustomApiStoryService implements StoryServiceInterface {
         'expiresAt': expiresAt?.toIso8601String(),
         if (circleId != null && circleId.trim().isNotEmpty)
           'circleId': circleId.trim(),
-        'scopeType':
-            scopeType == TreeContentScopeType.branches ? 'branches' : 'wholeTree',
+        'scopeType': scopeType == TreeContentScopeType.branches
+            ? 'branches'
+            : 'wholeTree',
         if (anchorPersonIds.isNotEmpty) 'anchorPersonIds': anchorPersonIds,
       },
     );
@@ -301,10 +303,12 @@ class CustomApiStoryService implements StoryServiceInterface {
   }
 }
 
-class CustomApiStoryException implements Exception {
+class CustomApiStoryException implements UserFacingApiException {
   const CustomApiStoryException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override

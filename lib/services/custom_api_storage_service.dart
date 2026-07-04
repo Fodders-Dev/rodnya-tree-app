@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../utils/url_utils.dart';
@@ -294,10 +295,12 @@ class CustomApiStorageService implements StorageServiceInterface {
   }
 }
 
-class CustomApiStorageException implements Exception {
+class CustomApiStorageException implements UserFacingApiException {
   const CustomApiStorageException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override

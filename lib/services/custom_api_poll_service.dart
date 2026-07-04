@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/poll_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
@@ -263,10 +264,12 @@ class CustomApiPollService implements PollServiceInterface {
   }
 }
 
-class CustomApiPollException implements Exception {
+class CustomApiPollException implements UserFacingApiException {
   const CustomApiPollException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override

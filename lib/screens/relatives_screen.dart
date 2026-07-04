@@ -295,7 +295,9 @@ class _RelativesScreenState extends State<RelativesScreen> {
         } catch (error) {
           if (sheetContext.mounted) {
             ScaffoldMessenger.of(sheetContext).showSnackBar(
-              SnackBar(content: Text('Не удалось применить выбор: $error')),
+              SnackBar(
+                  content: Text(humanizeError(error,
+                      fallback: 'Не удалось применить выбор.'))),
             );
           }
           return;
@@ -333,7 +335,9 @@ class _RelativesScreenState extends State<RelativesScreen> {
         } catch (error) {
           if (sheetContext.mounted) {
             ScaffoldMessenger.of(sheetContext).showSnackBar(
-              SnackBar(content: Text('Не удалось применить выбор: $error')),
+              SnackBar(
+                  content: Text(humanizeError(error,
+                      fallback: 'Не удалось применить выбор.'))),
             );
           }
           return;

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 
+import '../utils/user_facing_error.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/comment.dart';
@@ -127,7 +128,8 @@ class _CommentSheetState extends State<CommentSheet> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Ошибка при загрузке комментариев: $e';
+          _error =
+              humanizeError(e, fallback: 'Не удалось загрузить комментарии.');
           _isLoading = false;
         });
       }
@@ -176,7 +178,9 @@ class _CommentSheetState extends State<CommentSheet> {
       if (mounted) {
         setState(() => _isSending = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка при добавлении комментария: $e')),
+          SnackBar(
+              content: Text(humanizeError(e,
+                  fallback: 'Не удалось добавить комментарий.'))),
         );
       }
     }
@@ -599,7 +603,9 @@ class _CommentSheetState extends State<CommentSheet> {
         }).toList();
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось сохранить реакцию: $e')),
+        SnackBar(
+            content: Text(
+                humanizeError(e, fallback: 'Не удалось сохранить реакцию.'))),
       );
     }
   }

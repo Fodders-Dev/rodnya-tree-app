@@ -727,7 +727,8 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
       // block them from filling the form by hand.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Не удалось загрузить родственников: $error'),
+          content: Text(humanizeError(error,
+              fallback: 'Не удалось загрузить родственников.')),
           duration: const Duration(seconds: 3),
         ),
       );

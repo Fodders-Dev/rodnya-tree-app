@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../backend/models/user_facing_exception.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/circle_service_interface.dart';
 import '../models/audience_preset.dart';
@@ -126,10 +127,12 @@ class CustomApiCircleService implements CircleServiceInterface {
   }
 }
 
-class CustomApiCircleException implements Exception {
+class CustomApiCircleException implements UserFacingApiException {
   const CustomApiCircleException(this.message, {this.statusCode});
 
+  @override
   final String message;
+  @override
   final int? statusCode;
 
   @override

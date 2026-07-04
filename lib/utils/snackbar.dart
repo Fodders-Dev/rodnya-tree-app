@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'user_facing_error.dart';
 
 /// App-wide snackbar helper. Renders a floating, rounded toast that
 /// reads as a discrete card rather than a flat material edge-to-edge
@@ -57,9 +58,7 @@ void showAppSnackBar(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isError
-                ? Icons.error_outline_rounded
-                : Icons.info_outline_rounded,
+            isError ? Icons.error_outline_rounded : Icons.info_outline_rounded,
             size: 18,
             color: fg.withValues(alpha: 0.85),
           ),
@@ -76,5 +75,24 @@ void showAppSnackBar(
         ],
       ),
     ),
+  );
+}
+
+/// Ошибка → человеческий текст → штатный снекбар. Один вызов вместо
+/// повторяющегося блока `SnackBar(content: Text('…: $error'))`,
+/// который утаскивал сырой toString() пользователю (UX-аудит
+/// 2026-07-04). [fallback] — понятная фраза конкретного действия
+/// («Не удалось принять звонок.»).
+void showErrorSnackBar(
+  BuildContext context,
+  Object error, {
+  required String fallback,
+  SnackBarAction? action,
+}) {
+  showAppSnackBar(
+    context,
+    humanizeError(error, fallback: fallback),
+    isError: true,
+    action: action,
   );
 }
