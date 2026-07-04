@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
+import '../utils/date_parser.dart';
 import '../utils/invitation_share.dart';
 
 import '../theme/app_theme.dart';
@@ -680,10 +681,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                     heroTag: 'add_relative_fab',
                     shape: const StadiumBorder(),
                     onPressed: () {
-                      showRelationPickerAndNavigateAdd(
-                        context,
-                        treeId: selectedTreeId,
-                      );
+                      unawaited(_startAddRelativeFlow(selectedTreeId));
                     },
                     tooltip: _graphAddLabel(treeProvider),
                     icon: const Icon(Icons.add),
@@ -959,10 +957,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
               FilledButton.icon(
                 onPressed: _currentTreeId == null
                     ? null
-                    : () => showRelationPickerAndNavigateAdd(
-                          context,
-                          treeId: _currentTreeId!,
-                        ),
+                    : () => unawaited(_startAddRelativeFlow(_currentTreeId!)),
                 icon: const Icon(Icons.person_add_alt_1_outlined),
                 label: const Text('Добавить'),
               ),
@@ -1192,6 +1187,46 @@ class _RelativesScreenState extends State<RelativesScreen> {
 
     if (relativesForTab.isEmpty) {
       final treeProvider = Provider.of<TreeProvider>(context, listen: false);
+      // Пустой ПОИСК ≠ пустое дерево: «Родных пока нет / Добавьте
+      // первого человека» при 40 родных и неудачном запросе вводило в
+      // заблуждение (смоук 2026-07-04).
+      final searchQuery = _searchQuery.trim();
+      if (searchQuery.isNotEmpty) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: GlassPanel(
+              padding: const EdgeInsets.all(16),
+              borderRadius: BorderRadius.circular(22),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.search_off_rounded,
+                    size: 32,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Никого не нашли',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'По запросу «$searchQuery» совпадений нет.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -1235,10 +1270,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   FilledButton.icon(
                     onPressed: _currentTreeId == null
                         ? null
-                        : () => showRelationPickerAndNavigateAdd(
-                              context,
-                              treeId: _currentTreeId!,
-                            ),
+                        : () =>
+                            unawaited(_startAddRelativeFlow(_currentTreeId!)),
                     style: FilledButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1310,334 +1343,362 @@ class _RelativesScreenState extends State<RelativesScreen> {
       flatList.addAll(relativesForTab);
     }
 
-    return ListView.builder(
-      key: key,
-      // Нижний инсет под плавающий нав-бар — как у FAB (тот же
-      // AppTheme.bottomNavInset). Один список обслуживает «В приложении»,
-      // «Нужно пригласить» и результаты поиска (общий flatList), так что
-      // инсет покрывает все три скролла вкладки «Семья».
-      padding:
-          EdgeInsets.only(top: 4, bottom: AppTheme.bottomNavInset(context)),
-      itemCount: flatList.length,
-      itemBuilder: (context, index) {
-        final item = flatList[index];
+    // Pull-to-refresh: данные экрана — one-shot fetch без realtime, а
+    // родню добавляют и ДРУГИЕ члены семьи, пока экран открыт. Паттерн
+    // как у home_screen/chats_list.
+    return RefreshIndicator(
+      onRefresh: () async {
+        final treeId = _currentTreeId;
+        if (treeId != null) {
+          await _loadDataForSelectedTree(treeId);
+        }
+      },
+      child: ListView.builder(
+        key: key,
+        physics: const AlwaysScrollableScrollPhysics(),
+        // Нижний инсет под плавающий нав-бар — как у FAB (тот же
+        // AppTheme.bottomNavInset). Один список обслуживает «В приложении»,
+        // «Нужно пригласить» и результаты поиска (общий flatList), так что
+        // инсет покрывает все три скролла вкладки «Семья».
+        padding:
+            EdgeInsets.only(top: 4, bottom: AppTheme.bottomNavInset(context)),
+        itemCount: flatList.length,
+        itemBuilder: (context, index) {
+          final item = flatList[index];
 
-        if (item is _RelativesSectionHeader) {
-          final theme = Theme.of(context);
-          final tokens = theme.extension<RodnyaDesignTokens>() ??
-              (theme.brightness == Brightness.dark
-                  ? RodnyaDesignTokens.dark
-                  : RodnyaDesignTokens.light);
-          final headerRow = Row(
-            children: [
-              Expanded(
-                child: Text(
-                  item.title,
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.18,
-                  ),
-                ),
-              ),
-              if (item.count != null && item.count! > 0)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: tokens.warmSoft,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
+          if (item is _RelativesSectionHeader) {
+            final theme = Theme.of(context);
+            final tokens = theme.extension<RodnyaDesignTokens>() ??
+                (theme.brightness == Brightness.dark
+                    ? RodnyaDesignTokens.dark
+                    : RodnyaDesignTokens.light);
+            final headerRow = Row(
+              children: [
+                Expanded(
                   child: Text(
-                    '${item.count}',
-                    style: AppTheme.sans(
-                      color: tokens.warm,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
+                    item.title,
+                    style: AppTheme.serif(
+                      color: tokens.ink,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.18,
                     ),
                   ),
                 ),
-              // F3: шеврон у сворачиваемой секции — видно, что строка
-              // нажимается и что внутри ещё есть люди.
-              if (item.collapsible) ...[
-                const SizedBox(width: 6),
-                Icon(
-                  item.expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 22,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+                if (item.count != null && item.count! > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.warmSoft,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${item.count}',
+                      style: AppTheme.sans(
+                        color: tokens.warm,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                // F3: шеврон у сворачиваемой секции — видно, что строка
+                // нажимается и что внутри ещё есть люди.
+                if (item.collapsible) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    item.expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 22,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ],
               ],
-            ],
-          );
-          if (item.collapsible && item.onToggle != null) {
-            return InkWell(
-              key: const Key('relatives-pending-section-toggle'),
-              borderRadius: BorderRadius.circular(12),
-              onTap: item.onToggle,
-              child: Padding(
-                // ≥44dp тап-цель: 18+8 вертикальных отступов + строка.
-                padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
-                child: headerRow,
-              ),
             );
-          }
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
-            child: headerRow,
-          );
-        } else if (item is FamilyPerson) {
-          final relative = item;
-          final relationDescription = _getRelationDescription(relative);
-
-          ChatPreview? chatPreview;
-          if (isOnlineTab && relative.userId != null) {
-            try {
-              chatPreview = _chatPreviews.firstWhere(
-                (preview) => preview.otherUserId == relative.userId,
-              );
-            } catch (e) {
-              chatPreview = null;
-            }
-          }
-
-          final String lastMessageText = chatPreview?.lastMessage ?? '';
-          final DateTime? lastMessageTimestamp = chatPreview?.lastMessageTime;
-          final int unreadCount = chatPreview?.unreadCount ?? 0;
-          final bool isLastMessageFromMe =
-              chatPreview?.lastMessageSenderId == _currentUserId;
-          final bool canStartChat = _canStartChat(relative);
-          final bool canInvite = _canInviteRelative(relative);
-          final contactStatus = _getContactStatus(relative);
-          final int photoCount = relative.photoGallery.length;
-          final bool hasGallery = photoCount > 0;
-          final avatarImage =
-              buildAvatarImageProvider(relative.primaryPhotoUrl);
-
-          final theme = Theme.of(context);
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color:
-                      theme.colorScheme.outlineVariant.withValues(alpha: 0.20),
+            if (item.collapsible && item.onToggle != null) {
+              return InkWell(
+                key: const Key('relatives-pending-section-toggle'),
+                borderRadius: BorderRadius.circular(12),
+                onTap: item.onToggle,
+                child: Padding(
+                  // ≥44dp тап-цель: 18+8 вертикальных отступов + строка.
+                  padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
+                  child: headerRow,
                 ),
-              ),
-              child: ListTile(
-                leading: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: () {
-                      debugPrint(
-                        'Avatar tapped for ${relative.displayName}, navigating to details...',
-                      );
-                      context.push(
-                        relativeDetailsRoute(
-                          relative.id,
-                          treeId: relative.treeId,
-                        ),
-                      );
-                    },
-                    child: CircleAvatar(
-                      radius: 25,
-                      backgroundImage: avatarImage,
-                      child: avatarImage == null
-                          ? Text(relative.initials,
-                              style: TextStyle(fontSize: 18))
+              );
+            }
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
+              child: headerRow,
+            );
+          } else if (item is FamilyPerson) {
+            final relative = item;
+            final relationDescription = _getRelationDescription(relative);
+
+            ChatPreview? chatPreview;
+            if (isOnlineTab && relative.userId != null) {
+              try {
+                chatPreview = _chatPreviews.firstWhere(
+                  (preview) => preview.otherUserId == relative.userId,
+                );
+              } catch (e) {
+                chatPreview = null;
+              }
+            }
+
+            final String lastMessageText = chatPreview?.lastMessage ?? '';
+            final DateTime? lastMessageTimestamp = chatPreview?.lastMessageTime;
+            final int unreadCount = chatPreview?.unreadCount ?? 0;
+            final bool isLastMessageFromMe =
+                chatPreview?.lastMessageSenderId == _currentUserId;
+            final bool canStartChat = _canStartChat(relative);
+            final bool canInvite = _canInviteRelative(relative);
+            final contactStatus = _getContactStatus(relative);
+            final int photoCount = relative.photoGallery.length;
+            final bool hasGallery = photoCount > 0;
+            final avatarImage =
+                buildAvatarImageProvider(relative.primaryPhotoUrl);
+
+            final theme = Theme.of(context);
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface.withValues(alpha: 0.72),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: theme.colorScheme.outlineVariant
+                        .withValues(alpha: 0.20),
+                  ),
+                ),
+                child: ListTile(
+                  leading: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () {
+                        debugPrint(
+                          'Avatar tapped for ${relative.displayName}, navigating to details...',
+                        );
+                        context.push(
+                          relativeDetailsRoute(
+                            relative.id,
+                            treeId: relative.treeId,
+                          ),
+                        );
+                      },
+                      child: CircleAvatar(
+                        radius: 25,
+                        backgroundImage: avatarImage,
+                        child: avatarImage == null
+                            ? Text(relative.initials,
+                                style: TextStyle(fontSize: 18))
+                            : null,
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    relative.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: unreadCount > 0
+                          ? Theme.of(context).primaryColor
                           : null,
                     ),
                   ),
-                ),
-                title: Text(
-                  relative.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color:
-                        unreadCount > 0 ? Theme.of(context).primaryColor : null,
-                  ),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      relationDescription,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                    ),
-                    if (!isOnlineTab || hasGallery)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            // Skip the per-tile invite-status chip for the
-                            // pending section since the section header already
-                            // says "Нужно пригласить". Keep "Можно написать"
-                            // and "Только просмотр" so chat-ready and view-only
-                            // states stay scannable per row.
-                            if (!isOnlineTab && !canInvite)
-                              _buildRelativeInfoChip(
-                                context,
-                                icon: Icons.circle,
-                                label: contactStatus.label,
-                                color: contactStatus.color,
-                                iconSize: 8,
-                              ),
-                            if (hasGallery)
-                              _buildRelativeInfoChip(
-                                context,
-                                icon: Icons.photo_library_outlined,
-                                label: _countLabel(
-                                  photoCount,
-                                  one: 'фото',
-                                  few: 'фото',
-                                  many: 'фото',
-                                ),
-                                color: Theme.of(context).colorScheme.secondary,
-                              ),
-                            if (relative.primaryPhotoUrl != null)
-                              _buildRelativeInfoChip(
-                                context,
-                                icon: Icons.star_outline,
-                                label: 'Основное фото',
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                          ],
-                        ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        relationDescription,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
                       ),
-                    if (isOnlineTab && lastMessageText.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2.0),
-                        child: Row(
-                          children: [
-                            if (isLastMessageFromMe)
-                              Text(
-                                'Вы: ',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey[600],
+                      if (!isOnlineTab || hasGallery)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              // Skip the per-tile invite-status chip for the
+                              // pending section since the section header already
+                              // says "Нужно пригласить". Keep "Можно написать"
+                              // and "Только просмотр" so chat-ready and view-only
+                              // states stay scannable per row.
+                              if (!isOnlineTab && !canInvite)
+                                _buildRelativeInfoChip(
+                                  context,
+                                  icon: Icons.circle,
+                                  label: contactStatus.label,
+                                  color: contactStatus.color,
+                                  iconSize: 8,
                                 ),
-                              ),
-                            Expanded(
-                              child: Text(
-                                lastMessageText,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: unreadCount > 0
-                                      ? Colors.black87
-                                      : Colors.black54,
-                                  fontWeight: unreadCount > 0
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
+                              if (hasGallery)
+                                _buildRelativeInfoChip(
+                                  context,
+                                  icon: Icons.photo_library_outlined,
+                                  label: _countLabel(
+                                    photoCount,
+                                    one: 'фото',
+                                    few: 'фото',
+                                    many: 'фото',
+                                  ),
+                                  color:
+                                      Theme.of(context).colorScheme.secondary,
                                 ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (isOnlineTab &&
-                        lastMessageText.isEmpty &&
-                        relative.userId != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2.0),
-                        child: Text(
-                          'Нет сообщений',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[500],
-                            fontStyle: FontStyle.italic,
+                              if (relative.primaryPhotoUrl != null)
+                                _buildRelativeInfoChip(
+                                  context,
+                                  icon: Icons.star_outline,
+                                  label: 'Основное фото',
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                            ],
                           ),
                         ),
-                      ),
-                  ],
-                ),
-                trailing: isOnlineTab && lastMessageTimestamp != null
-                    ? Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            _formatTimestamp(lastMessageTimestamp),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: unreadCount > 0
-                                  ? Theme.of(context).primaryColor
-                                  : Colors.grey,
-                              fontWeight: unreadCount > 0
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                          if (unreadCount > 0)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4.0),
-                              child: CircleAvatar(
-                                radius: 9,
-                                backgroundColor: Theme.of(context).primaryColor,
-                                child: Text(
-                                  unreadCount.toString(),
+                      if (isOnlineTab && lastMessageText.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2.0),
+                          child: Row(
+                            children: [
+                              if (isLastMessageFromMe)
+                                Text(
+                                  'Вы: ',
                                   style: TextStyle(
-                                    color:
-                                        Theme.of(context).colorScheme.onPrimary,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              Expanded(
+                                child: Text(
+                                  lastMessageText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: unreadCount > 0
+                                        ? Colors.black87
+                                        : Colors.black54,
+                                    fontWeight: unreadCount > 0
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
                                   ),
                                 ),
                               ),
+                            ],
+                          ),
+                        ),
+                      if (isOnlineTab &&
+                          lastMessageText.isEmpty &&
+                          relative.userId != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2.0),
+                          child: Text(
+                            'Нет сообщений',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[500],
+                              fontStyle: FontStyle.italic,
                             ),
-                        ],
-                      )
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Phase 3.4 chunk 5: per-row conflict
-                          // badge. Compact = icon-only (число
-                          // уходит в Semantics label, чтобы не
-                          // загромождать строку). Tap → sheet
-                          // конкретного person'а.
-                          if ((_conflictCounts[relative.id] ?? 0) > 0)
-                            IdentityConflictsBadge(
-                              count: _conflictCounts[relative.id]!,
-                              compact: true,
-                              onTap: () => _showConflictsSheet(relative.id),
+                          ),
+                        ),
+                    ],
+                  ),
+                  trailing: isOnlineTab && lastMessageTimestamp != null
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              _formatTimestamp(lastMessageTimestamp),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: unreadCount > 0
+                                    ? Theme.of(context).primaryColor
+                                    : Colors.grey,
+                                fontWeight: unreadCount > 0
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
                             ),
-                          if (canStartChat)
-                            IconButton(
-                              icon: const Icon(Icons.message_outlined),
-                              tooltip: 'Написать ${relative.displayName}',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () => _openChatWithRelative(relative),
-                            ),
-                          if (canInvite)
-                            IconButton(
-                              icon: const Icon(Icons.person_add_alt_1_outlined),
-                              tooltip: 'Пригласить ${relative.displayName}',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () =>
-                                  _shareInviteForRelative(relative),
-                            ),
-                          const Icon(Icons.chevron_right),
-                        ],
-                      ),
-                onTap: () {
-                  if (isOnlineTab) {
-                    if (canStartChat) {
-                      _openChatWithRelative(relative);
+                            if (unreadCount > 0)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4.0),
+                                child: CircleAvatar(
+                                  radius: 9,
+                                  backgroundColor:
+                                      Theme.of(context).primaryColor,
+                                  child: Text(
+                                    unreadCount.toString(),
+                                    style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onPrimary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Phase 3.4 chunk 5: per-row conflict
+                            // badge. Compact = icon-only (число
+                            // уходит в Semantics label, чтобы не
+                            // загромождать строку). Tap → sheet
+                            // конкретного person'а.
+                            if ((_conflictCounts[relative.id] ?? 0) > 0)
+                              IdentityConflictsBadge(
+                                count: _conflictCounts[relative.id]!,
+                                compact: true,
+                                onTap: () => _showConflictsSheet(relative.id),
+                              ),
+                            if (canStartChat)
+                              IconButton(
+                                icon: const Icon(Icons.message_outlined),
+                                tooltip: 'Написать ${relative.displayName}',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () =>
+                                    _openChatWithRelative(relative),
+                              ),
+                            if (canInvite)
+                              IconButton(
+                                icon:
+                                    const Icon(Icons.person_add_alt_1_outlined),
+                                tooltip: 'Пригласить ${relative.displayName}',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () =>
+                                    _shareInviteForRelative(relative),
+                              ),
+                            const Icon(Icons.chevron_right),
+                          ],
+                        ),
+                  onTap: () {
+                    if (isOnlineTab) {
+                      if (canStartChat) {
+                        _openChatWithRelative(relative);
+                      } else {
+                        debugPrint(
+                          'Cannot chat with self or invalid user, navigating to details for ${relative.displayName}',
+                        );
+                        context.push(
+                          relativeDetailsRoute(
+                            relative.id,
+                            treeId: relative.treeId,
+                          ),
+                        );
+                      }
                     } else {
                       debugPrint(
-                        'Cannot chat with self or invalid user, navigating to details for ${relative.displayName}',
+                        'Offline tab, navigating to details for ${relative.displayName}',
                       );
                       context.push(
                         relativeDetailsRoute(
@@ -1646,31 +1707,21 @@ class _RelativesScreenState extends State<RelativesScreen> {
                         ),
                       );
                     }
-                  } else {
-                    debugPrint(
-                      'Offline tab, navigating to details for ${relative.displayName}',
-                    );
-                    context.push(
-                      relativeDetailsRoute(
-                        relative.id,
-                        treeId: relative.treeId,
-                      ),
-                    );
-                  }
-                },
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
+                  },
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
                 ),
               ),
-            ),
-          );
-        }
-        return SizedBox.shrink();
-      },
+            );
+          }
+          return SizedBox.shrink();
+        },
+      ),
     );
   }
 
@@ -1851,7 +1902,32 @@ class _RelativesScreenState extends State<RelativesScreen> {
     }
   }
 
-  String _formatTimestamp(DateTime dateTime) {
+  /// Смоук 2026-07-04 (дважды): «Сохранено ✓», а карточки в списке нет
+  /// до полной перезагрузки. Данные экрана — one-shot fetch
+  /// (getRelativesStream = Stream.fromFuture), а все точки «Добавить»
+  /// выбрасывали результат add-флоу. Паттерн tree_view_screen: ждём
+  /// результат и перезагружаем. Перезагружаем и на null-результате
+  /// (back из quick-add цикла сохраняет людей БЕЗ pop-результата —
+  /// лишний fetch на отмене безвреден, пропущенная карточка — нет).
+  Future<void> _startAddRelativeFlow(String treeId) async {
+    final isFriendsCircle =
+        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
+    await showRelationPickerAndNavigateAdd(
+      context,
+      treeId: treeId,
+      isFriendsCircle: isFriendsCircle,
+    );
+    if (!mounted) {
+      return;
+    }
+    await _loadDataForSelectedTree(treeId);
+  }
+
+  String _formatTimestamp(DateTime rawDateTime) {
+    // Таймзоны: серверные метки — UTC-режим; display обязан локализовать
+    // (см. date_parser контракт; смоук 2026-07-04 показывал 13:25 вместо
+    // 16:25 в превью чата).
+    final DateTime dateTime = toLocalForDisplay(rawDateTime);
     final DateTime now = DateTime.now();
     final DateTime today = DateTime(now.year, now.month, now.day);
     final DateTime yesterday = today.subtract(const Duration(days: 1));

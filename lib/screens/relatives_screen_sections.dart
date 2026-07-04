@@ -55,11 +55,9 @@ extension _RelativesScreenSections on _RelativesScreenState {
 
     if (value == 'add') {
       // Audit Screen 4.2 (2026-05-28): explicit «Кем приходится?»
-      // step ПЕРЕД name form.
-      showRelationPickerAndNavigateAdd(
-        context,
-        treeId: selectedTreeId,
-      );
+      // step ПЕРЕД name form. Через _startAddRelativeFlow — список
+      // перезагружается после сохранения (stale-list смоук 2026-07-04).
+      unawaited(_startAddRelativeFlow(selectedTreeId));
     } else if (value == 'find') {
       context.push('/relatives/find/$selectedTreeId');
     } else if (value == 'create_tree') {
