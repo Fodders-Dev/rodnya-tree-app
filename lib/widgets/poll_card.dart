@@ -13,6 +13,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/poll_service_interface.dart';
 import '../models/poll.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_parser.dart';
 import 'feed_media_gallery.dart';
 import 'media_lightbox.dart';
 
@@ -168,7 +169,8 @@ class _PollCardState extends State<PollCard> {
               ),
               const SizedBox(height: 2),
               Text(
-                DateFormat('d MMMM', 'ru').format(_poll.createdAt),
+                DateFormat('d MMMM', 'ru')
+                    .format(toLocalForDisplay(_poll.createdAt)),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: tokens.inkMuted,
                 ),

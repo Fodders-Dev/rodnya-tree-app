@@ -7,6 +7,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
 import '../models/story.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_parser.dart';
 import '../utils/image_decode.dart';
 import '../widgets/media_lightbox.dart';
 
@@ -26,8 +27,7 @@ class StoryArchiveScreen extends StatefulWidget {
 }
 
 class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
-  final StoryServiceInterface _storyService =
-      GetIt.I<StoryServiceInterface>();
+  final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
 
   bool _loading = true;
@@ -58,9 +58,7 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
       // side, we re-filter here in case a not-yet-expired entry sneaks
       // through. The archive should only show fully expired stories.
       final now = DateTime.now();
-      final expired = all
-          .where((s) => s.expiresAt.isBefore(now))
-          .toList()
+      final expired = all.where((s) => s.expiresAt.isBefore(now)).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       if (!mounted) return;
       setState(() {
@@ -106,7 +104,8 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
   }
 
   String _captionFor(Story story) {
-    final date = DateFormat('d MMMM yyyy в HH:mm', 'ru').format(story.createdAt);
+    final date = DateFormat('d MMMM yyyy в HH:mm', 'ru')
+        .format(toLocalForDisplay(story.createdAt));
     if (story.type == StoryType.text && (story.text ?? '').trim().isNotEmpty) {
       return '${story.text!.trim()}\n\n$date';
     }
@@ -170,8 +169,7 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
       return ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          Icon(Icons.cloud_off_outlined,
-              size: 56, color: tokens.inkSecondary),
+          Icon(Icons.cloud_off_outlined, size: 56, color: tokens.inkSecondary),
           const SizedBox(height: 12),
           Text(
             'Не удалось загрузить архив. $_error',
@@ -228,8 +226,8 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
         childAspectRatio: 9 / 16,
       ),
       itemCount: _archived.length,
-      itemBuilder: (context, index) =>
-          _ArchivedStoryTile(story: _archived[index], onTap: () => _openStory(index)),
+      itemBuilder: (context, index) => _ArchivedStoryTile(
+          story: _archived[index], onTap: () => _openStory(index)),
     );
   }
 }
@@ -274,7 +272,8 @@ class _ArchivedStoryTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    DateFormat('d MMM', 'ru').format(story.createdAt),
+                    DateFormat('d MMM', 'ru')
+                        .format(toLocalForDisplay(story.createdAt)),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.white,
@@ -315,9 +314,7 @@ class _ArchivedStoryTile extends StatelessWidget {
         padding: const EdgeInsets.all(8),
         alignment: Alignment.center,
         child: Text(
-          (story.text ?? '').trim().isEmpty
-              ? 'История'
-              : story.text!.trim(),
+          (story.text ?? '').trim().isEmpty ? 'История' : story.text!.trim(),
           maxLines: 5,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,

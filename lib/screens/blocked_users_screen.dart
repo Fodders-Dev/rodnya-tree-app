@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../backend/interfaces/safety_service_interface.dart';
 import '../models/user_block_record.dart';
+import '../utils/date_parser.dart';
 import '../utils/photo_url.dart';
 
 class BlockedUsersScreen extends StatefulWidget {
@@ -125,7 +126,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
               itemBuilder: (context, index) {
                 final block = blocks[index];
                 final formattedDate = DateFormat('d MMM yyyy, HH:mm', 'ru')
-                    .format(block.createdAt);
+                    .format(toLocalForDisplay(block.createdAt));
                 final avatarImage =
                     buildAvatarImageProvider(block.blockedUserPhotoUrl);
                 return ListTile(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/tree_change_record.dart';
+import '../utils/date_parser.dart';
 
 enum TreeHistoryFilter {
   all,
@@ -336,7 +337,7 @@ class _TreeHistorySheetState extends State<TreeHistorySheet> {
 
   String _formatDate(DateTime date) {
     try {
-      return DateFormat('d MMM, HH:mm', 'ru').format(date);
+      return DateFormat('d MMM, HH:mm', 'ru').format(toLocalForDisplay(date));
     } catch (_) {
       return date.toIso8601String();
     }

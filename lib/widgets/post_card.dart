@@ -11,6 +11,7 @@ import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
 import '../models/reaction_summary.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_parser.dart';
 import 'comment_sheet.dart';
 import 'feed_media_gallery.dart';
 import 'glass_panel.dart';
@@ -206,7 +207,8 @@ class _PostCardState extends State<PostCard>
     final buffer = StringBuffer()
       ..writeln(widget.post.authorName)
       ..writeln(
-        DateFormat('d MMMM yyyy в HH:mm', 'ru').format(widget.post.createdAt),
+        DateFormat('d MMMM yyyy в HH:mm', 'ru')
+            .format(toLocalForDisplay(widget.post.createdAt)),
       );
 
     if (widget.post.content.trim().isNotEmpty) {
@@ -383,7 +385,7 @@ class _PostCardState extends State<PostCard>
     final tokens = _tokensFor(theme);
     final authorPhotoUrl = widget.post.renderableAuthorPhotoUrl;
     final timeText = DateFormat('d MMM • HH:mm', 'ru').format(
-      widget.post.createdAt,
+      toLocalForDisplay(widget.post.createdAt),
     );
 
     return Padding(

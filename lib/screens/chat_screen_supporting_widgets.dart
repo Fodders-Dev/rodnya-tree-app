@@ -2080,7 +2080,8 @@ class _AttachmentViewerDialogState extends State<_AttachmentViewerDialog> {
           currentItem.senderLabel!.isNotEmpty)
         currentItem.senderLabel!,
       if (currentItem.timestamp != null)
-        DateFormat('dd.MM.yyyy H:mm', 'ru').format(currentItem.timestamp!),
+        DateFormat('dd.MM.yyyy H:mm', 'ru')
+            .format(toLocalForDisplay(currentItem.timestamp!)),
     ].join(' • ');
 
     return CallbackShortcuts(

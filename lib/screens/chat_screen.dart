@@ -3514,9 +3514,11 @@ class _ChatScreenState extends State<ChatScreen> {
       final d = delta.inDays;
       return '$byl $d ${_daysSuffix(d)} назад';
     }
-    // Older than a week — fall back to a date string.
+    // Older than a week — fall back to a date string (локальная дата:
+    // UTC-компоненты у полуночи давали соседний день).
+    final local = toLocalForDisplay(lastSeen);
     final date =
-        '${lastSeen.day.toString().padLeft(2, '0')}.${lastSeen.month.toString().padLeft(2, '0')}';
+        '${local.day.toString().padLeft(2, '0')}.${local.month.toString().padLeft(2, '0')}';
     return '$byl $date';
   }
 

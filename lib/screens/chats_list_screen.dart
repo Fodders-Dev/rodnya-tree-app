@@ -27,6 +27,7 @@ import '../services/chat_notification_settings_store.dart';
 import '../services/custom_api_chat_service.dart';
 import '../services/custom_api_realtime_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_parser.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
@@ -496,7 +497,12 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     });
   }
 
-  String _formatTimestamp(DateTime timestamp) {
+  String _formatTimestamp(DateTime rawTimestamp) {
+    // Таймзоны (смоук 2026-07-04): серверные метки приходят в UTC-режиме
+    // (контракт date_parser: parse сохраняет UTC, display локализует) —
+    // без toLocal список показывал 13:25 при локальных 16:25, а бакеты
+    // «сегодня/Вчера/день недели» ехали у полуночи.
+    final timestamp = toLocalForDisplay(rawTimestamp);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final messageDate =

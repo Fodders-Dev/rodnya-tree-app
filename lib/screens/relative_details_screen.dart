@@ -16,6 +16,7 @@ import '../services/custom_api_auth_service.dart' show CustomApiException;
 import '../services/tree_mutation_history.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
+import '../utils/date_parser.dart';
 import '../utils/invitation_share.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
@@ -2436,7 +2437,8 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         : record.actorId == _authService.currentUserId
             ? 'Вы'
             : 'Участник дерева';
-    final when = DateFormat('d MMM, HH:mm', 'ru').format(record.createdAt);
+    final when = DateFormat('d MMM, HH:mm', 'ru')
+        .format(toLocalForDisplay(record.createdAt));
     return '$who · $when';
   }
 }

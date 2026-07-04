@@ -11,6 +11,7 @@ import '../backend/interfaces/identity_service_interface.dart';
 import '../models/identity_claim.dart';
 import '../models/merge_proposal.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_parser.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
 
@@ -1669,15 +1670,13 @@ class _ReviewersLine extends StatelessWidget {
         for (final reviewer in reviewers)
           DecoratedBox(
             decoration: BoxDecoration(
-              color: reviewer.accepted
-                  ? tokens.accentSoft
-                  : tokens.surfaceStrong,
+              color:
+                  reviewer.accepted ? tokens.accentSoft : tokens.surfaceStrong,
               borderRadius: BorderRadius.circular(999),
               border: Border.all(color: tokens.surfaceLine),
             ),
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1820,7 +1819,7 @@ class _MergedEarlierCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             mergedAt != null
-                ? 'Объединены ${DateFormat('d MMMM y', 'ru').format(mergedAt)} — считаются одним человеком.'
+                ? 'Объединены ${DateFormat('d MMMM y', 'ru').format(toLocalForDisplay(mergedAt))} — считаются одним человеком.'
                 : 'Объединены — считаются одним человеком.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: tokens.inkSecondary,

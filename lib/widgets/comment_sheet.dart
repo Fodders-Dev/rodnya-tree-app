@@ -9,6 +9,7 @@ import '../models/comment.dart';
 import '../models/post.dart';
 import '../models/reaction_summary.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_parser.dart';
 import 'empty_state_widget.dart';
 import 'loading_indicator.dart';
 import 'reaction_chip_strip.dart';
@@ -503,7 +504,7 @@ class _CommentSheetState extends State<CommentSheet> {
                     const SizedBox(width: 8),
                     Text(
                       DateFormat('d MMM в HH:mm', 'ru')
-                          .format(comment.createdAt),
+                          .format(toLocalForDisplay(comment.createdAt)),
                       style: TextStyle(
                         color: Colors.grey.shade600,
                         fontSize: 12,
@@ -518,8 +519,7 @@ class _CommentSheetState extends State<CommentSheet> {
                   ReactionChipStrip(
                     reactions: comment.reactions,
                     currentUserId: _authService.currentUserId,
-                    onToggle: (emoji) =>
-                        _toggleCommentReaction(comment, emoji),
+                    onToggle: (emoji) => _toggleCommentReaction(comment, emoji),
                   ),
                 ],
                 // Inline "Ответить" affordance — shown for any comment
@@ -567,8 +567,7 @@ class _CommentSheetState extends State<CommentSheet> {
   Future<void> _toggleCommentReaction(Comment comment, String emoji) async {
     final userId = _authService.currentUserId;
     if (userId == null || userId.isEmpty) return;
-    final originalReactions =
-        List<ReactionSummary>.from(comment.reactions);
+    final originalReactions = List<ReactionSummary>.from(comment.reactions);
     // Optimistic local toggle so the chip flickers in immediately.
     HapticFeedback.lightImpact();
     final next = _applyOptimisticReaction(originalReactions, emoji, userId);
