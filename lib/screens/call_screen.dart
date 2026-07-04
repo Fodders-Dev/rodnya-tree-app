@@ -56,6 +56,16 @@ class _CallScreenState extends State<CallScreen> {
   // (S20 FE 2026-07-04 — publish камеры падал молча, юзер видел
   // перечёркнутую иконку без единого объяснения).
   bool _lastCameraPublishFailed = false;
+  // Дебаунс «Завершить»: второй тап во время exit-анимации снимал бы
+  // нижележащий роут вторым maybePop.
+  bool _isFinishingCall = false;
+  // Видел ли листенер СВОЙ звонок в координаторе — гейт для дисмисса
+  // по id-mismatch (см. _handleCoordinatorChanged).
+  bool _coordinatorTrackedOurCall = false;
+  // Экран открылся сразу на терминальном состоянии (гонка stale-PIP):
+  // координатор молчит (bare return без notify), pop-по-null не
+  // сработает — закрываемся сами после короткой паузы.
+  Timer? _terminalAutoCloseTimer;
   // Incoming-call ringer: periodic system click + heavy haptic while
   // the call is ringing and we're the callee. Was missing entirely —
   // user reported "звонки в тишину идут".
@@ -145,6 +155,24 @@ class _CallScreenState extends State<CallScreen> {
     unawaited(_loadCallParticipantSummaries());
     _syncRinger();
     _syncDurationTicker();
+    if (widget.coordinator.currentCall?.id == _resolvedCall.id) {
+      _coordinatorTrackedOurCall = true;
+    }
+    // Stuck-path №3 (скаут 2026-07-04): терминальный initialCall при
+    // молчащем координаторе — activateCall упрётся в bare return без
+    // notify, экран завис бы статично. Пауза, чтобы юзер увидел исход.
+    if (_resolvedCall.state.isTerminal &&
+        widget.coordinator.currentCall == null) {
+      _terminalAutoCloseTimer = Timer(const Duration(milliseconds: 1200), () {
+        if (!mounted) {
+          return;
+        }
+        if (_resolvedCall.state.isTerminal &&
+            widget.coordinator.currentCall == null) {
+          _dismissCallScreen();
+        }
+      });
+    }
   }
 
   @override
@@ -157,6 +185,7 @@ class _CallScreenState extends State<CallScreen> {
     _stopRinger();
     _videoChromeHideTimer?.cancel();
     _durationTicker?.cancel();
+    _terminalAutoCloseTimer?.cancel();
     super.dispose();
   }
 
@@ -342,17 +371,23 @@ class _CallScreenState extends State<CallScreen> {
     final coordinatorCall = widget.coordinator.currentCall;
     if (coordinatorCall == null) {
       if (mounted) {
-        Future<void>.microtask(() {
-          if (mounted) {
-            Navigator.of(context).maybePop();
-          }
-        });
+        Future<void>.microtask(_dismissCallScreen);
       }
       return;
     }
     if (coordinatorCall.id != _resolvedCall.id) {
+      // Координатор переключился на ДРУГОЙ звонок — наш закончился и
+      // был вытеснен. Раньше экран замерзал навсегда (терминальные
+      // снапшоты чужих id координатор дропает — скаут, stuck-path №2).
+      // Гард _coordinatorTrackedOurCall закрывает гонку свежего экрана:
+      // между addListener и завершением activateCall координатор ещё
+      // может уведомлять про предыдущий звонок.
+      if (_coordinatorTrackedOurCall && mounted) {
+        Future<void>.microtask(_dismissCallScreen);
+      }
       return;
     }
+    _coordinatorTrackedOurCall = true;
     // Microphone publish failure surfaced — поднимаем snackbar один
     // раз на transition false → true. Без этого юзер видит «mic on»
     // иконку хотя собеседник его не слышит (Bug 1 root cause #2 per
@@ -511,13 +546,41 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _finishCall() async {
+    // Дебаунс двойного тапа: сам API-вызов дедупится в координаторе
+    // (memo-future), но второй maybePop здесь снял бы НИЖЕЛЕЖАЩИЙ роут
+    // во время exit-анимации.
+    if (_isFinishingCall) {
+      return;
+    }
+    _isFinishingCall = true;
     try {
       final result = await widget.coordinator.finishCall(_resolvedCall.id);
       if (!mounted) {
         return;
       }
       Navigator.of(context).maybePop(result ?? _resolvedCall);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isFinishingCall = false;
+    }
+  }
+
+  /// Закрыть CallScreen надёжно: сперва снять СВОИ открытые шторки
+  /// (аудио-маршрут / пикер устройств / чат — они живут на том же
+  /// навигаторе), потом сам экран. Одиночный maybePop снимал только
+  /// верхний роут — шторку — и экран зависал на терминальном состоянии
+  /// (скаут 2026-07-04, stuck-path №1: _currentCall уже null, повторного
+  /// notify не будет).
+  void _dismissCallScreen() {
+    if (!mounted) {
+      return;
+    }
+    final navigator = Navigator.of(context);
+    final ownRoute = ModalRoute.of(context);
+    if (ownRoute != null && !ownRoute.isCurrent) {
+      navigator.popUntil((route) => route == ownRoute || route.isFirst);
+    }
+    navigator.maybePop();
   }
 
   void _minimizeCall() {

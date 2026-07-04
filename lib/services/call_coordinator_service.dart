@@ -570,30 +570,100 @@ class CallCoordinatorService extends ChangeNotifier
     return invite;
   }
 
-  Future<CallInvite> acceptCall([String? callId]) async {
+  // Дебаунс lifecycle-действий (UX-аудит P1): double-tap по «Принять»/
+  // «Завершить» на лагающем устройстве давал дубль state-dependent
+  // API-вызова (повторный reject/cancel/hangUp по уже меняющемуся
+  // звонку). Memo-future: повторный вызов для того же callId получает
+  // УЖЕ идущую операцию. Покрывает все входы разом — кнопки экрана,
+  // Telecom pending actions, кнопки FGS-уведомления.
+  Future<CallInvite>? _acceptInFlight;
+  String? _acceptInFlightCallId;
+  Future<CallInvite>? _joinInFlight;
+  String? _joinInFlightCallId;
+  Future<CallInvite?>? _finishInFlight;
+  String? _finishInFlightCallId;
+
+  Future<CallInvite> acceptCall([String? callId]) {
     final resolvedCallId = callId ?? _currentCall?.id;
     if (resolvedCallId == null || resolvedCallId.isEmpty) {
       throw StateError('Нет активного звонка для принятия.');
     }
-    final invite = await _callService.acceptCall(resolvedCallId);
-    await _applyCall(invite);
-    return invite;
+    final inFlight = _acceptInFlight;
+    if (inFlight != null && _acceptInFlightCallId == resolvedCallId) {
+      return inFlight;
+    }
+    Future<CallInvite> run() async {
+      try {
+        final invite = await _callService.acceptCall(resolvedCallId);
+        await _applyCall(invite);
+        return invite;
+      } finally {
+        _acceptInFlight = null;
+        _acceptInFlightCallId = null;
+      }
+    }
+
+    final future = run();
+    _acceptInFlight = future;
+    _acceptInFlightCallId = resolvedCallId;
+    return future;
   }
 
   /// P1: «залететь в группу» — enter an already-active group call the user
   /// belongs to but hasn't joined yet. POST /join mints the per-participant
   /// token, then _applyCall connects to the room exactly like accept.
-  Future<CallInvite> joinActiveCall([String? callId]) async {
+  Future<CallInvite> joinActiveCall([String? callId]) {
     final resolvedCallId = callId ?? _currentCall?.id;
     if (resolvedCallId == null || resolvedCallId.isEmpty) {
       throw StateError('Нет звонка для входа.');
     }
-    final invite = await _callService.joinCall(resolvedCallId);
-    await _applyCall(invite);
-    return invite;
+    final inFlight = _joinInFlight;
+    if (inFlight != null && _joinInFlightCallId == resolvedCallId) {
+      return inFlight;
+    }
+    Future<CallInvite> run() async {
+      try {
+        final invite = await _callService.joinCall(resolvedCallId);
+        await _applyCall(invite);
+        return invite;
+      } finally {
+        _joinInFlight = null;
+        _joinInFlightCallId = null;
+      }
+    }
+
+    final future = run();
+    _joinInFlight = future;
+    _joinInFlightCallId = resolvedCallId;
+    return future;
   }
 
-  Future<CallInvite?> finishCall([String? callId]) async {
+  Future<CallInvite?> finishCall([String? callId]) {
+    final resolvedForDedup = callId ?? _currentCall?.id;
+    final inFlight = _finishInFlight;
+    if (inFlight != null &&
+        resolvedForDedup != null &&
+        _finishInFlightCallId == resolvedForDedup) {
+      return inFlight;
+    }
+    Future<CallInvite?> run() async {
+      try {
+        return await _finishCallInner(callId);
+      } finally {
+        _finishInFlight = null;
+        _finishInFlightCallId = null;
+      }
+    }
+
+    final future = run();
+    if (resolvedForDedup != null) {
+      _finishInFlight = future;
+      _finishInFlightCallId = resolvedForDedup;
+    }
+    return future;
+  }
+
+  Future<CallInvite?> _finishCallInner(String? callId) async {
     final activeCall = _currentCall;
     final resolvedCallId = callId ?? activeCall?.id;
     if (resolvedCallId == null || resolvedCallId.isEmpty) {
@@ -1129,8 +1199,11 @@ class CallCoordinatorService extends ChangeNotifier
         await _mediaPermissionRequester.call(call.mediaMode);
     if (!hasMediaPermissions) {
       _hasMediaPermissionIssue = true;
-      _connectionError =
-          'Нет доступа к микрофону или камере. Разрешите доступ в настройках приложения.';
+      // UX-аудит P1: для аудио-звонка камера не запрашивается вовсе —
+      // говорим конкретно про микрофон, а не пугаем «или камере».
+      _connectionError = call.mediaMode.isVideo
+          ? 'Нет доступа к микрофону или камере. Разрешите доступ в настройках приложения.'
+          : 'Нет доступа к микрофону. Разрешите доступ в настройках приложения.';
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
       _connectAttemptInFlight = false;

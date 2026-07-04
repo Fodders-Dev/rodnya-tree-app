@@ -84,9 +84,11 @@ void main() {
       );
 
       expect(coordinator.hasMediaPermissionIssue, isTrue);
+      // Аудио-звонок → сообщение только про микрофон (UX-аудит P1:
+      // «или камере» пугало, хотя камера не запрашивалась вовсе).
       expect(
         coordinator.connectionError,
-        'Нет доступа к микрофону или камере. Разрешите доступ в настройках приложения.',
+        'Нет доступа к микрофону. Разрешите доступ в настройках приложения.',
       );
       expect(coordinator.isConnectingRoom, isFalse);
       expect(coordinator.room, isNull);
@@ -1064,6 +1066,74 @@ void main() {
   );
 
   test(
+    'Дебаунс: параллельные acceptCall одного звонка → один API-вызов',
+    () async {
+      final service = _CountingCallService(
+        activeCall: _buildCall(state: CallState.ringing),
+      );
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (_) async {},
+      );
+
+      await coordinator.ensureRuntimeReady();
+      service.acceptCallRequests = 0;
+
+      // Double-tap по «Принять»: оба вызова стартуют до первого await.
+      final results = await Future.wait([
+        coordinator.acceptCall('call-1'),
+        coordinator.acceptCall('call-1'),
+      ]);
+
+      expect(service.acceptCallRequests, 1);
+      expect(results[0].id, results[1].id);
+
+      // После завершения memo снят — следующий accept снова идёт в API.
+      await coordinator.acceptCall('call-1');
+      expect(service.acceptCallRequests, 2);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'Дебаунс: параллельные finishCall одного звонка → один hangUp',
+    () async {
+      final activeCall = _buildCall(
+        state: CallState.active,
+        session: const CallSession(
+          roomName: 'room-1',
+          url: 'wss://livekit.example.test',
+          token: 'token-1',
+          participantIdentity: 'user-1',
+        ),
+      );
+      final service = _CountingCallService(activeCall: activeCall);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (_) async {},
+      );
+
+      await coordinator.ensureRuntimeReady();
+      await coordinator.activateCall(activeCall);
+      service.hangUpRequests = 0;
+
+      await Future.wait([
+        coordinator.finishCall('call-1'),
+        coordinator.finishCall('call-1'),
+      ]);
+
+      expect(service.hangUpRequests, 1);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'Гигиена звонков: живой переход ringing→active латчится локальными '
     'часами (без серверного дрейфа)',
     () async {
@@ -1220,6 +1290,7 @@ class _CountingCallService implements CallServiceInterface {
   int activeCallRequests = 0;
   int callByIdRequests = 0;
   int acceptCallRequests = 0;
+  int hangUpRequests = 0;
 
   _CountingCallService._internal({
     required this.activeCall,
@@ -1277,7 +1348,10 @@ class _CountingCallService implements CallServiceInterface {
   }
 
   @override
-  Future<CallInvite> hangUp(String callId) async => activeCall!;
+  Future<CallInvite> hangUp(String callId) async {
+    hangUpRequests += 1;
+    return activeCall!;
+  }
 
   @override
   Future<CallInvite> rejectCall(String callId) async => activeCall!;
