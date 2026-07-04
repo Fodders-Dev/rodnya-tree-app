@@ -45,10 +45,15 @@ class CallCoordinatorService extends ChangeNotifier
     maxBitrate: 32000,
     bitratePriority: Priority.high,
   );
+  // ВАЖНО: без bitratePriority. LiveKit подставляет его только в верхний
+  // simulcast-слой, авто-слои q/h остаются с дефолтным low, а нативный
+  // WebRTC требует одинаковый bitrate_priority у всех encodings — иначе
+  // addTransceiver падает целиком («C++ addTransceiver failed», камера
+  // не публикуется вовсе). Санитайзер в _publishLocalCamera страхует
+  // это инвариантом на случай будущих правок профиля.
   static const VideoEncoding _callVideoEncoding = VideoEncoding(
     maxFramerate: 30,
     maxBitrate: 2000 * 1000,
-    bitratePriority: Priority.medium,
   );
   static const RoomOptions _callRoomOptions = RoomOptions(
     defaultCameraCaptureOptions: CameraCaptureOptions(
@@ -218,6 +223,10 @@ class CallCoordinatorService extends ChangeNotifier
   // separate flag чтобы CallScreen мог поднять banner / snackbar и
   // юзер увидел real state вместо silent fail.
   bool _microphonePublishFailed = false;
+  // Камерный аналог `_microphonePublishFailed`: publish упал (нативный
+  // отказ addTransceiver, permission, HAL) — UI обязан показать честное
+  // «камера не подключилась» вместо перечёркнутой иконки без объяснений.
+  bool _cameraPublishFailed = false;
   bool _cameraEnabled = false;
   bool _isSwitchingCamera = false;
   CameraPosition _cameraPosition = CameraPosition.front;
@@ -268,6 +277,10 @@ class CallCoordinatorService extends ChangeNotifier
   /// surface'ить факт пользователю (без этого UI lies about mic
   /// state и собеседник просто не слышит).
   bool get microphonePublishFailed => _microphonePublishFailed;
+
+  /// True если попытка включить камеру не дошла до публикации —
+  /// CallScreen поднимает snackbar с «Повторить» (Q1-паттерн микрофона).
+  bool get cameraPublishFailed => _cameraPublishFailed;
   bool get cameraEnabled => _cameraEnabled;
   bool get isSwitchingCamera => _isSwitchingCamera;
   CameraPosition get cameraPosition => _cameraPosition;
@@ -663,11 +676,29 @@ class CallCoordinatorService extends ChangeNotifier
     }
 
     final nextValue = !_cameraEnabled;
-    await room.localParticipant?.setCameraEnabled(
-      nextValue,
-      cameraCaptureOptions: _cameraCaptureOptionsFor(room),
-    );
-    _cameraEnabled = nextValue;
+    if (nextValue) {
+      // Enable-путь зеркалит микрофон (Q1): проверяем что публикация
+      // реально состоялась, иначе иконка врала бы «камера включена»
+      // при молчаливом фейле (Samsung S20 FE, 2026-07-04: нативный
+      // addTransceiver отверг simulcast-энкодинги — камера открылась
+      // на HAL, но в комнату не публиковалась, без единой ошибки в UI).
+      final published = await _publishLocalCamera(room);
+      _cameraPublishFailed = !published;
+      _cameraEnabled = published;
+    } else {
+      try {
+        await room.localParticipant?.setCameraEnabled(
+          false,
+          cameraCaptureOptions: _cameraCaptureOptionsFor(room),
+        );
+      } catch (error) {
+        debugPrint('[call] toggle camera off threw: $error');
+      }
+      // Выключение не может «навредить» юзеру — состояние honest-off,
+      // flag чистим чтобы следующий enable retry'нулся свежим.
+      _cameraEnabled = false;
+      _cameraPublishFailed = false;
+    }
     notifyListeners();
   }
 
@@ -781,6 +812,7 @@ class CallCoordinatorService extends ChangeNotifier
       _connectionError = null;
       _hasMediaPermissionIssue = false;
       _microphonePublishFailed = false;
+      _cameraPublishFailed = false;
       _hasSeenRemoteParticipant = false;
       _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
@@ -819,6 +851,7 @@ class CallCoordinatorService extends ChangeNotifier
       _connectionError = null;
       _hasMediaPermissionIssue = false;
       _microphonePublishFailed = false;
+      _cameraPublishFailed = false;
       _hasSeenRemoteParticipant = false;
       _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
@@ -1089,6 +1122,7 @@ class CallCoordinatorService extends ChangeNotifier
     _connectionError = null;
     _hasMediaPermissionIssue = false;
     _microphonePublishFailed = false;
+    _cameraPublishFailed = false;
     notifyListeners();
 
     final hasMediaPermissions =
@@ -1212,18 +1246,25 @@ class CallCoordinatorService extends ChangeNotifier
         '[call] room.connect ok uptime=${_uptimeSinceConnect()}ms',
       );
       _microphoneEnabled = true;
-      _cameraEnabled = call.mediaMode.isVideo;
       // Publish mic separately от room.connect — на Android 14+ без
       // FOREGROUND_SERVICE_MICROPHONE permission setMicrophoneEnabled
       // может silently fail (publication == null) даже когда room
       // успешно connected. Этот fix surface'ит failure через
       // `microphonePublishFailed` flag вместо silently lying в UI.
       _microphonePublishFailed = !(await _publishLocalMicrophone(room));
+      // Камеру для видео-звонка публикуем БЕЗУСЛОВНО по mediaMode, а
+      // `_cameraEnabled` выставляем из РЕЗУЛЬТАТА. Раньше здесь было
+      // «_cameraEnabled = isVideo (до mic-await) … setCameraEnabled(
+      // _cameraEnabled)» — гонка: пока ждали publish микрофона, его
+      // LocalTrackPublishedEvent триггерил _syncMediaStateFromLiveKit,
+      // тот читал «камера ещё не опубликована» и затирал intent-флаг в
+      // false → setCameraEnabled(false) → тихий no-op, видео-звонок
+      // поднимался без видео (S20 FE, 2026-07-04). Failure камеры
+      // больше не роняет весь connect (звук живёт, юзеру — Q1-баннер).
       if (call.mediaMode.isVideo) {
-        await room.localParticipant?.setCameraEnabled(
-          _cameraEnabled,
-          cameraCaptureOptions: _cameraCaptureOptionsFor(room),
-        );
+        final published = await _publishLocalCamera(room);
+        _cameraPublishFailed = !published;
+        _cameraEnabled = published;
       }
       _connectionError = null;
       _hasMediaPermissionIssue = false;
@@ -1253,6 +1294,7 @@ class CallCoordinatorService extends ChangeNotifier
       // mic-specific signal на этом этапе redundant. Clear чтобы не
       // surface'ить stale mic banner поверх banner'а connection failure.
       _microphonePublishFailed = false;
+      _cameraPublishFailed = false;
     } finally {
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
@@ -1513,11 +1555,14 @@ class CallCoordinatorService extends ChangeNotifier
       if (_microphoneEnabled) {
         _microphonePublishFailed = !(await _publishLocalMicrophone(room));
       }
-      if (activeCall.mediaMode.isVideo) {
-        await room.localParticipant?.setCameraEnabled(
-          _cameraEnabled,
-          cameraCaptureOptions: _cameraCaptureOptionsFor(room),
-        );
+      // Камера поднимается заново если была включена ДО реконнекта —
+      // это покрывает и видео-звонок, и audio→video upgrade (раньше
+      // гейт `mediaMode.isVideo` терял камеру апгрейднутого аудио-
+      // звонка). Была выключена — не трогаем: не включаем камеру
+      // за спиной пользователя.
+      if (_cameraEnabled) {
+        _cameraPublishFailed = !(await _publishLocalCamera(room));
+        _cameraEnabled = !_cameraPublishFailed;
       }
     } catch (_) {
       // LiveKit will continue reconnecting if media resume is not ready yet.
@@ -1705,6 +1750,12 @@ class CallCoordinatorService extends ChangeNotifier
       _microphonePublishFailed = false;
       changed = true;
     }
+    // Симметрично для камеры: publication реально поднялась — stale
+    // «камера не подключилась» баннер должен уйти.
+    if (camActual && _cameraPublishFailed) {
+      _cameraPublishFailed = false;
+      changed = true;
+    }
     if (changed) {
       notifyListeners();
       unawaited(_updateForegroundService());
@@ -1767,6 +1818,81 @@ class CallCoordinatorService extends ChangeNotifier
       debugPrint('[call] microphone publish threw: $error\n$stack');
       return false;
     }
+  }
+
+  /// Публикует локальную камеру. true при успехе, false при failure
+  /// (на failure `_cameraEnabled = false` для truthful UI state) —
+  /// зеркало [_publishLocalMicrophone].
+  ///
+  /// Первую публикацию делаем вручную (createCameraTrack +
+  /// publishVideoTrack) вместо `setCameraEnabled(true)`: в
+  /// livekit_client 2.7.0 setCameraEnabled при падении publish бросает,
+  /// а созданный им трек НЕ останавливает — камера остаётся захваченной
+  /// на уровне HAL до перезапуска приложения (наблюдали 6+ минут live
+  /// capture после единственного тапа; конкурирующие приложения
+  /// получали «Too many cameras already open»). Владея треком сами,
+  /// глушим его в catch. Повторное включение после mute идёт через
+  /// setCameraEnabled — там unmute существующей publication, трек не
+  /// создаётся и утечка невозможна.
+  Future<bool> _publishLocalCamera(Room room) async {
+    final participant = room.localParticipant;
+    if (participant == null) {
+      _cameraEnabled = false;
+      return false;
+    }
+    try {
+      final existing =
+          participant.getTrackPublicationBySource(TrackSource.camera);
+      if (existing != null) {
+        final publication = await participant.setCameraEnabled(
+          true,
+          cameraCaptureOptions: _cameraCaptureOptionsFor(room),
+        );
+        return publication != null;
+      }
+      final track = await LocalVideoTrack.createCameraTrack(
+        _cameraCaptureOptionsFor(room),
+      );
+      try {
+        await participant.publishVideoTrack(
+          track,
+          publishOptions: _sanitizedVideoPublishOptions(room),
+        );
+        return true;
+      } catch (_) {
+        await track.stop();
+        await track.dispose();
+        rethrow;
+      }
+    } catch (error, stack) {
+      _cameraEnabled = false;
+      debugPrint('[call] camera publish threw: $error\n$stack');
+      return false;
+    }
+  }
+
+  /// Страховка инварианта нативного WebRTC: при simulcast у всех
+  /// encodings должен быть ОДИНАКОВЫЙ bitrate_priority/network_priority.
+  /// LiveKit подставляет приоритет из videoEncoding только в верхний
+  /// слой (авто-слои q/h остаются с дефолтным low) → addTransceiver
+  /// отвергает весь набор («C++ addTransceiver failed»), камера не
+  /// публикуется вовсе. Срезаем приоритеты из videoEncoding, оставляя
+  /// битрейт/fps — рабочую часть медиа-профиля.
+  VideoPublishOptions _sanitizedVideoPublishOptions(Room room) {
+    final options = room.roomOptions.defaultVideoPublishOptions;
+    final encoding = options.videoEncoding;
+    if (!options.simulcast ||
+        encoding == null ||
+        (encoding.bitratePriority == null &&
+            encoding.networkPriority == null)) {
+      return options;
+    }
+    return options.copyWith(
+      videoEncoding: VideoEncoding(
+        maxFramerate: encoding.maxFramerate,
+        maxBitrate: encoding.maxBitrate,
+      ),
+    );
   }
 
   Future<void> _applyCallPreferences(Room room, CallInvite call) async {
@@ -2133,6 +2259,7 @@ class CallCoordinatorService extends ChangeNotifier
     _isReconnectingRoom = false;
     _microphoneEnabled = true;
     _microphonePublishFailed = false;
+    _cameraPublishFailed = false;
     _cameraEnabled = false;
     _isSwitchingCamera = false;
     _cameraPosition = CameraPosition.front;
@@ -2210,6 +2337,22 @@ class CallCoordinatorService extends ChangeNotifier
     notifyListeners();
   }
 
+  /// Test seam — камерное зеркало [debugMarkMicrophonePublishFailed]:
+  /// flip'ает `cameraPublishFailed` без настоящей LiveKit Room для
+  /// unit-проверки getter + notifier boundary. Production-кода это
+  /// никогда не вызывает.
+  @visibleForTesting
+  void debugMarkCameraPublishFailed(bool failed) {
+    if (_cameraPublishFailed == failed) {
+      return;
+    }
+    _cameraPublishFailed = failed;
+    if (failed) {
+      _cameraEnabled = false;
+    }
+    notifyListeners();
+  }
+
   /// Test seam — direct set `_cameraEnabled` для проверки Fix B
   /// preservation flow. Production-кода не использует.
   @visibleForTesting
@@ -2250,6 +2393,10 @@ class CallCoordinatorService extends ChangeNotifier
     // mic actually published per LiveKit truth.
     if (micEnabled && _microphonePublishFailed) {
       _microphonePublishFailed = false;
+      changed = true;
+    }
+    if (camEnabled && _cameraPublishFailed) {
+      _cameraPublishFailed = false;
       changed = true;
     }
     if (changed) {

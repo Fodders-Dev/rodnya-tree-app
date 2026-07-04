@@ -52,6 +52,10 @@ class _CallScreenState extends State<CallScreen> {
   // чтобы snackbar показывался ровно на false → true transition (а не
   // каждый notifyListeners во время failure). Reset на dispose.
   bool _lastMicrophonePublishFailed = false;
+  // Камерное зеркало: transition-tracking для cameraPublishFailed
+  // (S20 FE 2026-07-04 — publish камеры падал молча, юзер видел
+  // перечёркнутую иконку без единого объяснения).
+  bool _lastCameraPublishFailed = false;
   // Incoming-call ringer: periodic system click + heavy haptic while
   // the call is ringing and we're the callee. Was missing entirely —
   // user reported "звонки в тишину идут".
@@ -387,6 +391,41 @@ class _CallScreenState extends State<CallScreen> {
       });
     }
     _lastMicrophonePublishFailed = micPublishFailed;
+    // Camera publish failure — тот же Q1-паттерн, что и микрофон выше:
+    // snackbar один раз на false → true transition + «Повторить».
+    final camPublishFailed = widget.coordinator.cameraPublishFailed;
+    if (camPublishFailed && !_lastCameraPublishFailed) {
+      Future<void>.microtask(() {
+        if (!mounted) {
+          return;
+        }
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 6),
+            content: const Text(
+              'Камера не подключилась. Собеседник не видит видео.',
+            ),
+            action: SnackBarAction(
+              label: 'Повторить',
+              onPressed: () {
+                if (!mounted) {
+                  return;
+                }
+                // Reset tracker — если retry снова fails, показываем
+                // snackbar заново (а не silently swallow'иваем).
+                _lastCameraPublishFailed = false;
+                // toggleCamera включит камеру заново: `_cameraEnabled`
+                // уже false, потому что failure обнулило truthful state.
+                unawaited(widget.coordinator.toggleCamera());
+              },
+            ),
+          ),
+        );
+      });
+    }
+    _lastCameraPublishFailed = camPublishFailed;
     final previousState = _resolvedCall.state;
     setState(() {
       _call = coordinatorCall;

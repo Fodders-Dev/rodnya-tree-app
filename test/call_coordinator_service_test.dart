@@ -477,6 +477,85 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService media profile: simulcast без per-encoding '
+    'приоритетов (иначе нативный addTransceiver отвергает камеру)',
+    () {
+      // S20 FE 2026-07-04: bitratePriority из videoEncoding LiveKit
+      // подставляет только в верхний simulcast-слой, авто-слои q/h
+      // остаются с дефолтным low. Нативный WebRTC требует одинаковый
+      // bitrate_priority/network_priority у всех encodings и отвергает
+      // весь набор («C++ addTransceiver failed») — камера не
+      // публикуется ни в одном звонке. Гвардия от возврата поля в
+      // профиль; runtime-страховка — _sanitizedVideoPublishOptions.
+      final videoPublish = CallCoordinatorService
+          .debugCallRoomOptions.defaultVideoPublishOptions;
+      if (videoPublish.simulcast) {
+        expect(videoPublish.videoEncoding?.bitratePriority, isNull);
+        expect(videoPublish.videoEncoding?.networkPriority, isNull);
+      }
+    },
+  );
+
+  test(
+    'CallCoordinatorService exposes cameraPublishFailed flag и '
+    'notifies listeners on transition',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+
+      expect(coordinator.cameraPublishFailed, isFalse);
+      expect(coordinator.cameraEnabled, isFalse);
+
+      var notifyCount = 0;
+      void listener() => notifyCount++;
+      coordinator.addListener(listener);
+
+      // Production-flow: _publishLocalCamera вернул false (нативный
+      // отказ addTransceiver / permission / HAL). Truthful UI: камера
+      // остаётся off, флаг поднят для Q1-баннера в CallScreen.
+      coordinator.debugMarkCameraPublishFailed(true);
+      expect(coordinator.cameraPublishFailed, isTrue);
+      expect(coordinator.cameraEnabled, isFalse);
+      expect(notifyCount, 1);
+
+      // Idempotent — повторный set того же значения без notify,
+      // иначе snackbar перепоказывался бы на каждый notifyListeners.
+      coordinator.debugMarkCameraPublishFailed(true);
+      expect(notifyCount, 1);
+
+      coordinator.debugMarkCameraPublishFailed(false);
+      expect(coordinator.cameraPublishFailed, isFalse);
+      expect(notifyCount, 2);
+
+      coordinator.removeListener(listener);
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService media sync clears stale cameraPublishFailed '
+    'когда camera actually published',
+    () async {
+      // Зеркало Q1-reconciliation микрофона: если retry (или поздний
+      // LocalTrackPublishedEvent) поднял камеру, stale баннер «камера
+      // не подключилась» обязан уйти без пересоздания звонка.
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+
+      coordinator.debugMarkCameraPublishFailed(true);
+      expect(coordinator.cameraPublishFailed, isTrue);
+      expect(coordinator.cameraEnabled, isFalse);
+
+      coordinator.debugApplyMediaSync(micEnabled: true, camEnabled: true);
+
+      expect(coordinator.cameraEnabled, isTrue);
+      expect(coordinator.cameraPublishFailed, isFalse);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService skips background resync when session is missing',
     () async {
       final service = _CountingCallService(
