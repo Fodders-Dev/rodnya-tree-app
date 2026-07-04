@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.lang.ref.WeakReference
@@ -48,6 +49,10 @@ object RodnyaCallAudioBridge {
     private var active = false
     private var deviceCallback: AudioDeviceCallback? = null
     private var lastRequestedRoute: String? = null
+    // Гигиена звонков: гашение экрана у уха (аудио-звонок на ушном).
+    // Владелец политики — Dart (setProximity); здесь только держатель
+    // лока с гарантированным release в stopCallAudio()/teardown().
+    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     fun configure(activity: MainActivity, engine: FlutterEngine) {
         activityRef = WeakReference(activity)
@@ -73,6 +78,11 @@ object RodnyaCallAudioBridge {
                         result.success(applyRoute(route))
                     }
                     "currentRoute" -> result.success(currentRoute())
+                    "setProximity" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        setProximity(enabled)
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             } catch (t: Throwable) {
@@ -108,6 +118,9 @@ object RodnyaCallAudioBridge {
         if (!active) {
             return
         }
+        // Гарантированный release proximity-лока на конце звонка — даже
+        // если Dart не прислал setProximity(false) (краш, гонка).
+        releaseProximityLock()
         unregisterDeviceCallback(am)
         lastRequestedRoute = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -158,10 +171,62 @@ object RodnyaCallAudioBridge {
         } catch (_: Throwable) {
             // best-effort: teardown на пути lifecycle не должен бросать.
         }
+        // stopCallAudio no-op'ится при !active — отпускаем лок явно,
+        // иначе после смерти движка экран остался бы тёмным.
+        releaseProximityLock()
         activityRef?.get()?.volumeControlStream = AudioManager.USE_DEFAULT_STREAM_TYPE
         activityRef = null
         channel?.setMethodCallHandler(null)
         channel = null
+    }
+
+    /**
+     * Гигиена звонков: PROXIMITY_SCREEN_OFF_WAKE_LOCK — экран гаснет,
+     * когда датчик приближения закрыт (телефон у уха), и включается
+     * обратно, когда телефон убрали. Идемпотентно (guard на isHeld).
+     * Включается только при активном звонке; release — с
+     * RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY, чтобы экран не вспыхнул,
+     * пока телефон ещё у уха (случайные нажатия щекой).
+     */
+    private fun setProximity(enabled: Boolean) {
+        if (!enabled) {
+            releaseProximityLock()
+            return
+        }
+        if (!active) {
+            return
+        }
+        if (proximityWakeLock?.isHeld == true) {
+            return
+        }
+        val pm = appContext?.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            ?: return
+        if (!pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+            return
+        }
+        val lock = proximityWakeLock ?: pm.newWakeLock(
+            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+            "rodnya:call_proximity",
+        ).also {
+            it.setReferenceCounted(false)
+            proximityWakeLock = it
+        }
+        try {
+            lock.acquire()
+        } catch (_: Throwable) {
+            // best-effort: сбой лока не должен ронять звонок.
+        }
+    }
+
+    private fun releaseProximityLock() {
+        val lock = proximityWakeLock ?: return
+        try {
+            if (lock.isHeld) {
+                lock.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
+            }
+        } catch (_: Throwable) {
+            // best-effort
+        }
     }
 
     private fun requestFocus(am: AudioManager) {

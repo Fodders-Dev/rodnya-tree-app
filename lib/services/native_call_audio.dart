@@ -21,6 +21,10 @@ abstract class CallAudioRouter {
   /// FR5: фактический активный маршрут (для отражения в UI).
   Future<String?> currentRoute();
 
+  /// Гигиена звонков: PROXIMITY_SCREEN_OFF_WAKE_LOCK — гасить экран,
+  /// когда телефон у уха (аудио-звонок на ушном динамике).
+  Future<void> setProximityEnabled(bool enabled);
+
   void dispose();
 }
 
@@ -80,6 +84,13 @@ class NativeCallAudio implements CallAudioRouter {
   @override
   Future<String?> currentRoute() async {
     return _invoke<String?>('currentRoute');
+  }
+
+  /// Гигиена звонков: датчик приближения гасит экран у уха. Kotlin-мост
+  /// дополнительно отпускает лок в stop()/teardown() (страховка).
+  @override
+  Future<void> setProximityEnabled(bool enabled) async {
+    await _invoke<void>('setProximity', {'enabled': enabled});
   }
 
   Future<T?> _invoke<T>(String method, [Map<String, dynamic>? args]) async {

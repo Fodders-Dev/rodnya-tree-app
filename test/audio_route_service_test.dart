@@ -136,6 +136,103 @@ void main() {
     expect(service.selectedRouteId, 'speaker');
   }));
 
+  test('Гигиена звонков: proximity доходит до моста только при живом звонке',
+      (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+
+    // До attachRoom enable игнорируется — нельзя захватить лок для
+    // незапущенного/законченного звонка.
+    await service.setProximityEnabled(true);
+    expect(
+      native.calls.where((call) => call.startsWith('setProximity')),
+      isEmpty,
+    );
+
+    await service.attachRoom(_FakeRoom(), isVideo: false);
+    await service.setProximityEnabled(true);
+    expect(native.calls, contains('setProximity:true'));
+
+    // Идемпотентность: повторный enable не дёргает мост.
+    native.calls.clear();
+    await service.setProximityEnabled(true);
+    expect(native.calls, isEmpty);
+
+    await service.setProximityEnabled(false);
+    expect(native.calls, contains('setProximity:false'));
+
+    // Detach сбрасывает Dart-флаг: после следующего attach enable
+    // снова доходит до моста (чистое состояние нового звонка).
+    await service.setProximityEnabled(true);
+    await service.attachRoom(null);
+    native.calls.clear();
+    await service.attachRoom(_FakeRoom(), isVideo: false);
+    await service.setProximityEnabled(true);
+    expect(native.calls, contains('setProximity:true'));
+  }));
+
+  test('CA1+: reassert повторно применяет выбранный нативный маршрут',
+      (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+
+    await service.attachRoom(_FakeRoom(), isVideo: true);
+    expect(service.selectedRouteId, 'speaker');
+
+    native.calls.clear();
+    await service.reassertNativeAudioOwnership();
+
+    expect(native.calls, ['setRoute:speaker']);
+  }));
+
+  test(
+      'Ревью P2: reassert применяет намерение пользователя, а не '
+      'транзиентный OS-маршрут', (() async {
+    final native = _FakeCallAudioRouter()
+      // SCO-переговоры: setRoute(bluetooth) успешен, но ОС ещё
+      // рапортует earpiece.
+      ..updateCurrentOnSetRoute = false
+      ..current = 'earpiece';
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[
+        MediaDevice('bluetooth', 'AirPods', 'audiooutput', null),
+      ],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+
+    await service.attachRoom(_FakeRoom(), isVideo: false);
+    final bluetooth =
+        service.routes.firstWhere((route) => route.id == 'bluetooth');
+    await service.selectRoute(bluetooth);
+    expect(service.selectedRouteId, 'bluetooth');
+
+    // Смена устройств в SCO-окне → refreshRoutes реконсилирует
+    // selectedRouteId к транзиентному 'earpiece'.
+    await service.refreshRoutes();
+    expect(service.selectedRouteId, 'earpiece');
+
+    // Track-событие дёргает reassert — он должен продолжить добиваться
+    // выбора пользователя (bluetooth), а не закрепить транзиент.
+    native.calls.clear();
+    await service.reassertNativeAudioOwnership();
+    expect(native.calls, ['setRoute:bluetooth']);
+  }));
+
   test('CA1 FR5: успешный выбор отражается сразу, факт сверяется позже',
       (() async {
     final native = _FakeCallAudioRouter()
@@ -295,6 +392,11 @@ class _FakeCallAudioRouter implements CallAudioRouter {
 
   @override
   Future<String?> currentRoute() async => current;
+
+  @override
+  Future<void> setProximityEnabled(bool enabled) async {
+    calls.add('setProximity:$enabled');
+  }
 
   @override
   void dispose() {

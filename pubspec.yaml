@@ -162,6 +162,7 @@ dependencies:
   flutter_webrtc: ^1.4.0
   firebase_core: ^4.11.0
   firebase_messaging: ^16.4.1
+  wakelock_plus: ^1.5.2
 
 dev_dependencies:
   flutter_test:

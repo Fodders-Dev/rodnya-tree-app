@@ -5,6 +5,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:get_it/get_it.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -63,6 +64,10 @@ class _CallScreenState extends State<CallScreen> {
   // was annoying ("шапка торчит — нахуя?").
   bool _videoChromeVisible = true;
   Timer? _videoChromeHideTimer;
+  // Таймер длительности звонка: тикает раз в секунду пока звонок
+  // active, база — coordinator.activeSince (латчится один раз на
+  // звонок). Skip'ается в flutter_test binding'е (см. _startRinger).
+  Timer? _durationTicker;
   // Collapsible action row: lets the user fold the bottom mic / audio /
   // camera / chat / device controls down to just the end-call button so
   // the video stage gets more breathing room. Same affordance the user
@@ -135,6 +140,7 @@ class _CallScreenState extends State<CallScreen> {
     unawaited(widget.coordinator.activateCall(_resolvedCall));
     unawaited(_loadCallParticipantSummaries());
     _syncRinger();
+    _syncDurationTicker();
   }
 
   @override
@@ -146,7 +152,32 @@ class _CallScreenState extends State<CallScreen> {
     );
     _stopRinger();
     _videoChromeHideTimer?.cancel();
+    _durationTicker?.cancel();
     super.dispose();
+  }
+
+  /// Держит секундный тикер длительности ровно пока звонок active.
+  /// В flutter_test binding'е periodic-таймер не заводим — pumpAndSettle
+  /// иначе никогда не settle'ится (конвенция файла, см. _startRinger).
+  void _syncDurationTicker() {
+    final shouldTick = _resolvedCall.state == CallState.active &&
+        widget.coordinator.activeSince != null;
+    if (shouldTick && _durationTicker == null) {
+      final bindingName = WidgetsBinding.instance.runtimeType.toString();
+      if (bindingName.contains('TestWidgetsFlutterBinding')) {
+        return;
+      }
+      _durationTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        // Хром спрятан (видеозвонок, авто-hide) — статус невидим,
+        // секундная перерисовка впустую; догоним при показе хрома.
+        if (_isVideoCall && !_videoChromeVisible) return;
+        setState(() {});
+      });
+    } else if (!shouldTick) {
+      _durationTicker?.cancel();
+      _durationTicker = null;
+    }
   }
 
   void _scheduleVideoChromeHide() {
@@ -365,6 +396,7 @@ class _CallScreenState extends State<CallScreen> {
     // accept / decline / cancel / "joined on other device" all need
     // to silence the loop immediately.
     _syncRinger();
+    _syncDurationTicker();
     // Lifecycle SFX: a soft chime when the line connects, a closing
     // descend when it ends. Skipped on first hop into ringing — the
     // ringer loop itself is the audio cue at that point.
@@ -850,11 +882,18 @@ class _CallScreenState extends State<CallScreen> {
             return 'Ожидаем участников звонка...';
           }
           final connectedCount = _remoteParticipants.length + 1;
-          return '${_formatParticipantCount(connectedCount)} в звонке';
+          final base = '${_formatParticipantCount(connectedCount)} в звонке';
+          final duration = _callDurationText();
+          return duration == null ? base : '$base · $duration';
         }
-        return _remoteParticipant == null
-            ? 'Ожидаем подключение собеседника...'
-            : (_isVideoCall ? 'Видеозвонок' : 'Аудиозвонок');
+        if (_remoteParticipant == null) {
+          return 'Ожидаем подключение собеседника...';
+        }
+        // Собеседник на линии — вместо статичного «Видеозвонок» /
+        // «Аудиозвонок» показываем тикающую длительность (Telegram-
+        // поведение). Fallback на старую метку, пока база не залатчена.
+        return _callDurationText() ??
+            (_isVideoCall ? 'Видеозвонок' : 'Аудиозвонок');
       case CallState.rejected:
         return 'Звонок отклонен';
       case CallState.cancelled:
@@ -866,6 +905,21 @@ class _CallScreenState extends State<CallScreen> {
       case CallState.failed:
         return 'Не удалось начать звонок';
     }
+  }
+
+  /// Текущая длительность звонка «м:сс» / «ч:мм:сс», null пока звонок
+  /// не стал active. Отрицательный дрейф серверного acceptedAt
+  /// клампится в ноль.
+  String? _callDurationText() {
+    final since = widget.coordinator.activeSince;
+    if (since == null) {
+      return null;
+    }
+    var elapsed = DateTime.now().difference(since);
+    if (elapsed.isNegative) {
+      elapsed = Duration.zero;
+    }
+    return formatCallDuration(elapsed);
   }
 
   String _formatParticipantCount(int count) {
@@ -1277,6 +1331,7 @@ class _CallScreenState extends State<CallScreen> {
     final track = showLocal ? localTrack : (remoteTrack ?? localTrack);
     final mirror =
         showLocal && widget.coordinator.cameraPosition == CameraPosition.front;
+    final fit = showLocal ? VideoViewFit.cover : VideoViewFit.contain;
     // Track whether the current pointer interaction has moved enough
     // to count as a drag. Without this, a quick tap that travels even
     // a few pixels was being claimed by the pan recogniser and the
@@ -1367,7 +1422,7 @@ class _CallScreenState extends State<CallScreen> {
             ),
             child: VideoTrackRenderer(
               track,
-              fit: VideoViewFit.cover,
+              fit: fit,
               mirrorMode:
                   mirror ? VideoViewMirrorMode.mirror : VideoViewMirrorMode.off,
             ),
@@ -1397,6 +1452,162 @@ class _LocalFullStage extends StatelessWidget {
         mirrorMode:
             mirror ? VideoViewMirrorMode.mirror : VideoViewMirrorMode.off,
       ),
+    );
+  }
+}
+
+/// Формат длительности звонка: «м:сс», после часа — «ч:мм:сс».
+@visibleForTesting
+String formatCallDuration(Duration elapsed) {
+  final totalSeconds = elapsed.inSeconds < 0 ? 0 : elapsed.inSeconds;
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  String two(int value) => value.toString().padLeft(2, '0');
+  if (hours > 0) {
+    return '$hours:${two(minutes)}:${two(seconds)}';
+  }
+  return '$minutes:${two(seconds)}';
+}
+
+/// Adaptive fit (Telegram/WhatsApp-поведение): ориентации видео и сцены
+/// совпадают → cover (небольшой crop, максимум картинки); сильный
+/// мисматч (собеседник повернул телефон) → contain (полный кадр с
+/// полосами вместо жёсткого центрального кропа). Порог 1.6 — отношение
+/// аспектов: 16:9-видео на 19.5:9-экране (1.22) кропится, landscape
+/// 16:9 на portrait-сцене (~3.8) letterbox'ится. Неизвестный аспект
+/// (кадры ещё не пошли) → contain, прежнее безопасное поведение.
+@visibleForTesting
+VideoViewFit resolveAdaptiveVideoFit({
+  required double? videoAspect,
+  required double? stageAspect,
+}) {
+  if (videoAspect == null ||
+      stageAspect == null ||
+      videoAspect <= 0 ||
+      stageAspect <= 0) {
+    return VideoViewFit.contain;
+  }
+  final mismatch = videoAspect > stageAspect
+      ? videoAspect / stageAspect
+      : stageAspect / videoAspect;
+  return mismatch <= 1.6 ? VideoViewFit.cover : VideoViewFit.contain;
+}
+
+/// Remote-видео с динамическим fit'ом по живым размерам кадра.
+///
+/// В livekit_client 2.7.0 нет события об изменении dimensions
+/// publication'а, а `renderer.onResize` безусловно перезаписывается
+/// внутри VideoTrackRenderer._attach — поэтому заводим СВОЙ
+/// RTCVideoRenderer (он ValueNotifier: didTextureChangeVideoSize /
+/// Rotation дёргают notifyListeners) и отдаём его как cachedRenderer.
+/// autoDisposeRenderer:false — им владеем мы, dispose наш.
+class _AdaptiveFitVideo extends StatefulWidget {
+  const _AdaptiveFitVideo({required this.track, this.mirror = false});
+
+  final VideoTrack track;
+  final bool mirror;
+
+  @override
+  State<_AdaptiveFitVideo> createState() => _AdaptiveFitVideoState();
+}
+
+class _AdaptiveFitVideoState extends State<_AdaptiveFitVideo> {
+  rtc.RTCVideoRenderer? _renderer;
+  double? _videoAspect;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_initRenderer());
+  }
+
+  Future<void> _initRenderer() async {
+    final renderer = rtc.RTCVideoRenderer();
+    try {
+      await renderer.initialize();
+    } catch (_) {
+      // Нет текстур (flutter_test / экзотическая платформа) — остаёмся
+      // на fallback-рендере со статичным contain.
+      unawaited(renderer.dispose());
+      return;
+    }
+    if (!mounted) {
+      unawaited(renderer.dispose());
+      return;
+    }
+    renderer.addListener(_handleFrameMetrics);
+    setState(() => _renderer = renderer);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AdaptiveFitVideo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.track, widget.track)) {
+      // Плитка получила другой трек (reorder в группе) — аспект старого
+      // трека больше не факт; до первых кадров нового — contain.
+      _videoAspect = null;
+    }
+  }
+
+  void _handleFrameMetrics() {
+    final value = _renderer?.value;
+    if (value == null || value.width <= 0 || value.height <= 0) {
+      return;
+    }
+    final aspect = value.aspectRatio; // rotation-aware
+    if (aspect == _videoAspect || !mounted) {
+      return;
+    }
+    setState(() => _videoAspect = aspect);
+  }
+
+  @override
+  void dispose() {
+    _renderer?.removeListener(_handleFrameMetrics);
+    unawaited(_renderer?.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final renderer = _renderer;
+    if (renderer == null) {
+      // Инициализация renderer'а — миллисекунды (раньше первого кадра);
+      // до готовности и при сбое — прежний contain-путь. ValueKey ниже
+      // форсит remount при готовности: VideoTrackRenderer не подхватывает
+      // смену cachedRenderer через didUpdateWidget.
+      return VideoTrackRenderer(
+        widget.track,
+        key: const ValueKey('adaptive-fit-fallback'),
+        fit: VideoViewFit.contain,
+        mirrorMode: widget.mirror
+            ? VideoViewMirrorMode.mirror
+            : VideoViewMirrorMode.off,
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final hasBoundedStage = constraints.hasBoundedWidth &&
+            constraints.hasBoundedHeight &&
+            constraints.maxHeight > 0;
+        final fit = resolveAdaptiveVideoFit(
+          videoAspect: _videoAspect,
+          stageAspect: hasBoundedStage
+              ? constraints.maxWidth / constraints.maxHeight
+              : null,
+        );
+        return VideoTrackRenderer(
+          widget.track,
+          key: const ValueKey('adaptive-fit-live'),
+          cachedRenderer: renderer,
+          autoDisposeRenderer: false,
+          fit: fit,
+          mirrorMode: widget.mirror
+              ? VideoViewMirrorMode.mirror
+              : VideoViewMirrorMode.off,
+        );
+      },
     );
   }
 }
@@ -1512,10 +1723,7 @@ class _CallStage extends StatelessWidget {
     }
 
     if (remoteVideoTrack != null) {
-      return VideoTrackRenderer(
-        remoteVideoTrack!,
-        fit: VideoViewFit.cover,
-      );
+      return _AdaptiveFitVideo(track: remoteVideoTrack!);
     }
 
     return DecoratedBox(
@@ -1907,13 +2115,7 @@ class _RemoteVideoTile extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             if (track != null)
-              VideoTrackRenderer(
-                track,
-                fit: VideoViewFit.cover,
-                mirrorMode: tile.mirror
-                    ? VideoViewMirrorMode.mirror
-                    : VideoViewMirrorMode.off,
-              )
+              _AdaptiveFitVideo(track: track, mirror: tile.mirror)
             else
               Center(
                 child: Column(

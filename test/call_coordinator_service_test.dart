@@ -18,6 +18,26 @@ import 'package:rodnya/services/rustore_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('CallCoordinatorService uses voice-first LiveKit media defaults', () {
+    final roomOptions = CallCoordinatorService.debugCallRoomOptions;
+    final connectOptions = CallCoordinatorService.debugCallConnectOptions;
+
+    expect(roomOptions.adaptiveStream, isTrue);
+    expect(roomOptions.dynacast, isTrue);
+    expect(roomOptions.defaultCameraCaptureOptions.params,
+        VideoParametersPresets.h720_169);
+    expect(roomOptions.defaultCameraCaptureOptions.maxFrameRate, 30);
+    expect(roomOptions.defaultAudioCaptureOptions.highPassFilter, isTrue);
+    expect(roomOptions.defaultAudioCaptureOptions.noiseSuppression, isTrue);
+    expect(roomOptions.defaultAudioCaptureOptions.echoCancellation, isTrue);
+    expect(roomOptions.defaultAudioPublishOptions.encoding?.maxBitrate, 32000);
+    expect(
+      roomOptions.defaultVideoPublishOptions.videoEncoding?.maxBitrate,
+      2000 * 1000,
+    );
+    expect(connectOptions.rtcConfiguration.isDscpEnabled, isTrue);
+  });
+
   test(
     'CallCoordinatorService resyncs active call on resume even without a current call',
     () async {
@@ -821,6 +841,272 @@ void main() {
       coordinator.dispose();
     },
   );
+
+  test(
+    'Гигиена звонков: wakelock держится на живом звонке и отпускается '
+    'на terminal',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final wakelockLog = <bool>[];
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (enable) async => wakelockLog.add(enable),
+      );
+
+      await coordinator.ensureRuntimeReady();
+      wakelockLog.clear();
+
+      // Ringing — уже живой звонок, экран не должен гаснуть.
+      await coordinator.activateCall(_buildCall(state: CallState.ringing));
+      expect(wakelockLog, contains(true));
+
+      // Recovery-snapshot того же звонка — идемпотентно, без
+      // повторного platform-вызова.
+      wakelockLog.clear();
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          updatedAt: DateTime(2026, 4, 20, 10, 2),
+          session: const CallSession(
+            roomName: 'room-1',
+            url: 'wss://livekit.example.test',
+            token: 'token-1',
+            participantIdentity: 'user-1',
+          ),
+        ),
+      );
+      expect(wakelockLog, isEmpty);
+
+      // Terminal — отпускаем.
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.ended,
+          updatedAt: DateTime(2026, 4, 20, 10, 5),
+        ),
+      );
+      expect(wakelockLog, contains(false));
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'Гигиена звонков: activeSince латчится один раз (acceptedAt) и '
+    'чистится на terminal',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (_) async {},
+      );
+
+      await coordinator.ensureRuntimeReady();
+      expect(coordinator.activeSince, isNull);
+
+      const session = CallSession(
+        roomName: 'room-1',
+        url: 'wss://livekit.example.test',
+        token: 'token-1',
+        participantIdentity: 'user-1',
+      );
+      // Первый снапшот УЖЕ active (рестарт / late-join) → база из
+      // серверного acceptedAt (переживает рестарт приложения).
+      final accepted = DateTime.now().subtract(const Duration(minutes: 5));
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          acceptedAt: accepted,
+          session: session,
+        ),
+      );
+      expect(coordinator.activeSince, accepted);
+
+      // Recovery-snapshot с другим acceptedAt не перезапускает отсчёт.
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          acceptedAt: accepted.add(const Duration(minutes: 1)),
+          updatedAt: DateTime(2026, 4, 20, 10, 2),
+          session: session,
+        ),
+      );
+      expect(coordinator.activeSince, accepted);
+
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.ended,
+          updatedAt: DateTime(2026, 4, 20, 10, 5),
+        ),
+      );
+      expect(coordinator.activeSince, isNull);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'Гигиена звонков: activeSince латчится локальным временем без acceptedAt',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (_) async {},
+      );
+
+      await coordinator.ensureRuntimeReady();
+
+      final before = DateTime.now();
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          session: const CallSession(
+            roomName: 'room-1',
+            url: 'wss://livekit.example.test',
+            token: 'token-1',
+            participantIdentity: 'user-1',
+          ),
+        ),
+      );
+      final after = DateTime.now();
+
+      final since = coordinator.activeSince;
+      expect(since, isNotNull);
+      expect(since!.isBefore(before), isFalse);
+      expect(since.isAfter(after), isFalse);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'Гигиена звонков: живой переход ringing→active латчится локальными '
+    'часами (без серверного дрейфа)',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (_) async {},
+      );
+
+      await coordinator.ensureRuntimeReady();
+      await coordinator.activateCall(_buildCall(state: CallState.ringing));
+
+      // Серверные часы «уехали» на минуту вперёд — наблюдённый живой
+      // переход должен игнорировать acceptedAt и взять локальное время.
+      final skewedAccepted = DateTime.now().add(const Duration(minutes: 1));
+      final before = DateTime.now();
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          acceptedAt: skewedAccepted,
+          updatedAt: DateTime(2026, 4, 20, 10, 2),
+          session: const CallSession(
+            roomName: 'room-1',
+            url: 'wss://livekit.example.test',
+            token: 'token-1',
+            participantIdentity: 'user-1',
+          ),
+        ),
+      );
+      final after = DateTime.now();
+
+      final since = coordinator.activeSince;
+      expect(since, isNotNull);
+      expect(since!.isBefore(before), isFalse);
+      expect(since.isAfter(after), isFalse);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'Гигиена звонков: acceptedAt из будущего клампится в локальное сейчас',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (_) async {},
+      );
+
+      await coordinator.ensureRuntimeReady();
+
+      // Первый снапшот сразу active (рестарт) при часах устройства,
+      // отстающих от сервера: таймер не должен замерзать на 0:00.
+      final before = DateTime.now();
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          acceptedAt: DateTime.now().add(const Duration(seconds: 45)),
+          session: const CallSession(
+            roomName: 'room-1',
+            url: 'wss://livekit.example.test',
+            token: 'token-1',
+            participantIdentity: 'user-1',
+          ),
+        ),
+      );
+      final after = DateTime.now();
+
+      final since = coordinator.activeSince;
+      expect(since, isNotNull);
+      expect(since!.isBefore(before), isFalse);
+      expect(since.isAfter(after), isFalse);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'Гигиена звонков: joinedOnAnotherDevice не дёргает wakelock on/off',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final wakelockLog = <bool>[];
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        wakelockToggler: (enable) async => wakelockLog.add(enable),
+      );
+
+      await coordinator.ensureRuntimeReady();
+      wakelockLog.clear();
+
+      final joinedElsewhere = _buildCall(
+        state: CallState.active,
+        session: const CallSession(
+          roomName: 'room-1',
+          url: 'wss://livekit.example.test',
+          token: 'token-1',
+          participantIdentity: 'user-1',
+        ),
+      ).copyWith(joinedOnAnotherDevice: true);
+
+      await coordinator.activateCall(joinedElsewhere);
+      // Recovery-снапшоты того же joined-звонка (2s poll) — ни одного
+      // enable и ни одного повторного platform-вызова (ревью P1).
+      await coordinator.activateCall(
+        joinedElsewhere.copyWith(updatedAt: DateTime(2026, 4, 20, 10, 2)),
+      );
+      await coordinator.activateCall(
+        joinedElsewhere.copyWith(updatedAt: DateTime(2026, 4, 20, 10, 3)),
+      );
+
+      expect(wakelockLog, isNot(contains(true)));
+      expect(wakelockLog.length, lessThanOrEqualTo(1));
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
 }
 
 CallInvite _buildCall({
@@ -829,6 +1115,7 @@ CallInvite _buildCall({
   CallMediaMode mediaMode = CallMediaMode.audio,
   CallSession? session,
   DateTime? updatedAt,
+  DateTime? acceptedAt,
 }) {
   return CallInvite(
     id: id,
@@ -840,6 +1127,7 @@ CallInvite _buildCall({
     state: state,
     createdAt: DateTime(2026, 4, 20, 10),
     updatedAt: updatedAt ?? DateTime(2026, 4, 20, 10, 1),
+    acceptedAt: acceptedAt,
     session: session,
   );
 }

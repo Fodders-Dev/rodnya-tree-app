@@ -91,6 +91,15 @@ class AudioRouteService extends ChangeNotifier {
   // на устаревшем устройстве).
   bool _refreshPending = false;
   AudioRouteOption? _pendingSelectRoute;
+  // Гигиена звонков: текущее желаемое состояние proximity-лока — guard
+  // от повторных вызовов моста при каждом notify координатора.
+  bool _proximityEnabled = false;
+  // Ревью P2: маршрут, который выбрал ПОЛЬЗОВАТЕЛЬ (или дефолт на
+  // attach). refreshRoutes реконсилирует _selectedRouteId с фактическим
+  // OS-маршрутом, который во время SCO-переговоров транзиентен —
+  // reassert по нему отменял бы недоделанное переключение на Bluetooth.
+  // Reassert применяет ИМЕННО намерение, не OS-снимок.
+  String? _lastUserSelectedRouteId;
 
   List<AudioRouteOption> get routes => _routes;
   String? get selectedRouteId => _selectedRouteId;
@@ -124,6 +133,10 @@ class AudioRouteService extends ChangeNotifier {
       // FR1: звонок завершён — отпускаем фокус, чистим маршрут, mode.
       // FR-E: гасим отложенный тап, чтобы он не применился после stop.
       _pendingSelectRoute = null;
+      _lastUserSelectedRouteId = null;
+      // Kotlin-мост отпустит proximity-лок внутри stop(); синхронизируем
+      // Dart-флаг, чтобы следующий звонок начал с чистого состояния.
+      _proximityEnabled = false;
       await _nativeAudio?.stop();
       // Call over → hand audio-focus management back to webrtc default.
       await _setWebrtcManageAudioFocus(true);
@@ -177,7 +190,16 @@ class AudioRouteService extends ChangeNotifier {
     }
     try {
       await rtc.Helper.setAndroidAudioConfiguration(
-        rtc.AndroidAudioConfiguration(manageAudioFocus: manage),
+        rtc.AndroidAudioConfiguration(
+          manageAudioFocus: manage,
+          androidAudioMode: rtc.AndroidAudioMode.inCommunication,
+          androidAudioStreamType: rtc.AndroidAudioStreamType.voiceCall,
+          androidAudioAttributesUsageType:
+              rtc.AndroidAudioAttributesUsageType.voiceCommunication,
+          androidAudioAttributesContentType:
+              rtc.AndroidAudioAttributesContentType.speech,
+          forceHandleAudioRouting: false,
+        ),
       );
     } catch (error) {
       debugPrint('[call-audio] setAndroidAudioConfiguration failed: $error');
@@ -193,10 +215,66 @@ class AudioRouteService extends ChangeNotifier {
   // No-op off the native path and once the call ended (room detached) so we
   // never re-grab focus for a finished call.
   Future<void> reassertNativeAudioOwnership() async {
-    if (_nativeAudio == null || _room == null) {
+    final native = _nativeAudio;
+    if (native == null || _room == null) {
       return;
     }
     await _setWebrtcManageAudioFocus(false);
+    // Ревью P2: во время идущего переключения не вмешиваемся — иначе
+    // track-событие в SCO-окне реассертнуло бы транзиентный маршрут и
+    // отменило выбор пользователя.
+    if (_isSelecting) {
+      return;
+    }
+    final intentId = _lastUserSelectedRouteId;
+    final route = (intentId == null
+            ? null
+            : _routes.firstWhereOrNull((option) => option.id == intentId)) ??
+        selectedRoute;
+    if (route == null || !_isNativeBridgeRoute(route.type)) {
+      return;
+    }
+    try {
+      await native.setRoute(route.id);
+    } catch (error) {
+      debugPrint('[call-audio] reassert route failed: $error');
+    }
+  }
+
+  /// Гигиена звонков: включить/выключить гашение экрана у уха
+  /// (PROXIMITY_SCREEN_OFF_WAKE_LOCK). Политику (active + ушной +
+  /// камера опущена) считает CallCoordinatorService; здесь — только
+  /// доставка до нативного моста. No-op вне Android-пути. Включение
+  /// требует живого звонка (room attached) — отложенный enable после
+  /// завершения не должен захватить лок для законченного звонка;
+  /// выключение проходит всегда.
+  Future<void> setProximityEnabled(bool enabled) async {
+    final native = _nativeAudio;
+    if (native == null) {
+      return;
+    }
+    final effective = enabled && _room != null;
+    if (_proximityEnabled == effective) {
+      return;
+    }
+    _proximityEnabled = effective;
+    try {
+      await native.setProximityEnabled(effective);
+    } catch (error) {
+      debugPrint('[call-audio] setProximityEnabled failed: $error');
+    }
+  }
+
+  static bool _isNativeBridgeRoute(AudioRouteType type) {
+    switch (type) {
+      case AudioRouteType.speaker:
+      case AudioRouteType.earpiece:
+      case AudioRouteType.bluetooth:
+      case AudioRouteType.wired:
+        return true;
+      case AudioRouteType.device:
+        return false;
+    }
   }
 
   Future<void> refreshRoutes() async {
@@ -265,6 +343,9 @@ class AudioRouteService extends ChangeNotifier {
         // FR2: маршрутизация нативом (setCommunicationDevice).
         final ok = await native.setRoute(option.id);
         if (ok) {
+          // Намерение пользователя для reassert (ревью P2) — фиксируем
+          // только на подтверждённом переключении.
+          _lastUserSelectedRouteId = option.id;
           // CA1+: re-assert webrtc-relinquish — livekit may have re-grabbed
           // audio focus on a track (un)publish since connect, which would
           // otherwise yank the route back from the bridge.

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../backend/interfaces/call_service_interface.dart';
 import '../models/call_event.dart';
@@ -33,9 +34,53 @@ typedef CallMediaDeviceSelector = Future<void> Function(
   MediaDevice device,
 );
 typedef CallVibrationTrigger = Future<void> Function();
+// Гигиена звонков (2026-07-04): держатель экрана на время живого звонка.
+// Seam — тесты инжектят рекордер вместо реального WakelockPlus (platform
+// channel в flutter_test кидает MissingPluginException).
+typedef CallWakelockToggler = Future<void> Function(bool enable);
 
 class CallCoordinatorService extends ChangeNotifier
     with WidgetsBindingObserver {
+  static const AudioEncoding _callAudioEncoding = AudioEncoding(
+    maxBitrate: 32000,
+    bitratePriority: Priority.high,
+  );
+  static const VideoEncoding _callVideoEncoding = VideoEncoding(
+    maxFramerate: 30,
+    maxBitrate: 2000 * 1000,
+    bitratePriority: Priority.medium,
+  );
+  static const RoomOptions _callRoomOptions = RoomOptions(
+    defaultCameraCaptureOptions: CameraCaptureOptions(
+      params: VideoParametersPresets.h720_169,
+      maxFrameRate: 30,
+    ),
+    defaultAudioCaptureOptions: AudioCaptureOptions(
+      noiseSuppression: true,
+      echoCancellation: true,
+      autoGainControl: true,
+      highPassFilter: true,
+      voiceIsolation: true,
+      typingNoiseDetection: true,
+    ),
+    defaultAudioPublishOptions: AudioPublishOptions(
+      encoding: _callAudioEncoding,
+      dtx: true,
+      red: true,
+    ),
+    defaultVideoPublishOptions: VideoPublishOptions(
+      videoEncoding: _callVideoEncoding,
+      simulcast: true,
+      degradationPreference: DegradationPreference.balanced,
+      backupVideoCodec: BackupVideoCodec(enabled: false),
+    ),
+    adaptiveStream: true,
+    dynacast: true,
+  );
+  static const ConnectOptions _callConnectOptions = ConnectOptions(
+    rtcConfiguration: RTCConfiguration(isDscpEnabled: true),
+  );
+
   CallCoordinatorService({
     required CallServiceInterface callService,
     CustomApiRealtimeService? realtimeService,
@@ -51,6 +96,7 @@ class CallCoordinatorService extends ChangeNotifier
     AndroidIncomingCallService? androidIncomingCallService,
     CallForegroundService? callForegroundService,
     CallVibrationTrigger? vibrationTrigger,
+    CallWakelockToggler? wakelockToggler,
     Duration ringingRecoveryInterval = const Duration(seconds: 2),
     Duration activeCallRecoveryInterval = const Duration(seconds: 2),
   })  : _callService = callService,
@@ -71,6 +117,7 @@ class CallCoordinatorService extends ChangeNotifier
         _androidIncomingCallService = androidIncomingCallService,
         _callForegroundService = callForegroundService,
         _vibrationTrigger = vibrationTrigger ?? _defaultVibrationTrigger,
+        _wakelockToggler = wakelockToggler ?? _defaultWakelockToggler,
         _ringingRecoveryInterval = ringingRecoveryInterval,
         _activeCallRecoveryInterval = activeCallRecoveryInterval,
         _mediaPermissionRequester =
@@ -93,6 +140,9 @@ class CallCoordinatorService extends ChangeNotifier
     unawaited(_androidIncomingCallService?.registerPhoneAccount());
     unawaited(ensureRuntimeReady());
     unawaited(_handlePendingAndroidCallAction());
+    // Proximity-политика зависит от аудио-маршрута (ушной/динамик) —
+    // пересчитываем её на каждую смену маршрута.
+    _audioRouteService.addListener(_handleAudioRouteChanged);
   }
 
   final CallServiceInterface _callService;
@@ -117,6 +167,7 @@ class CallCoordinatorService extends ChangeNotifier
   // calls (idempotency на rapid `_applyCall(active)` re-fires).
   String? _foregroundServiceCallId;
   final CallVibrationTrigger _vibrationTrigger;
+  final CallWakelockToggler _wakelockToggler;
   final Duration _ringingRecoveryInterval;
   final Duration _activeCallRecoveryInterval;
 
@@ -136,6 +187,15 @@ class CallCoordinatorService extends ChangeNotifier
   String? _activeCallRecoveryCallId;
 
   CallInvite? _currentCall;
+  // Гигиена звонков: текущее желаемое состояние wakelock'а — guard от
+  // повторных platform-вызовов на каждый recovery-snapshot (2s poll).
+  bool _wakelockActive = false;
+  // Момент, когда звонок стал active — база для таймера длительности.
+  // Латчится ОДИН раз на звонок (`??=`): recovery-snapshot'ы и
+  // reconnect'ы не сбрасывают отсчёт. Серверный acceptedAt
+  // предпочтительнее (переживает рестарт приложения), локальный
+  // DateTime.now() — fallback для снапшотов без acceptedAt.
+  DateTime? _activeSince;
   Room? _room;
   EventsListener<RoomEvent>? _roomListener;
   String? _connectedRoomName;
@@ -191,6 +251,10 @@ class CallCoordinatorService extends ChangeNotifier
 
   String? get currentUserId => _callService.currentUserId;
   CallInvite? get currentCall => _currentCall;
+
+  /// Момент перехода текущего звонка в active — база таймера
+  /// длительности в UI. Null пока звонок не active (и после конца).
+  DateTime? get activeSince => _activeSince;
   Room? get room => _room;
   bool get isConnectingRoom => _isConnectingRoom;
   bool get isReconnectingRoom => _isReconnectingRoom;
@@ -601,9 +665,7 @@ class CallCoordinatorService extends ChangeNotifier
     final nextValue = !_cameraEnabled;
     await room.localParticipant?.setCameraEnabled(
       nextValue,
-      cameraCaptureOptions: CameraCaptureOptions(
-        cameraPosition: _cameraPosition,
-      ),
+      cameraCaptureOptions: _cameraCaptureOptionsFor(room),
     );
     _cameraEnabled = nextValue;
     notifyListeners();
@@ -722,8 +784,10 @@ class CallCoordinatorService extends ChangeNotifier
       _hasSeenRemoteParticipant = false;
       _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
+      _activeSince = null;
       _clearConnectionQualityState();
       notifyListeners();
+      await _setWakelockActive(false);
       await _stopForegroundService(force: true);
       await _disposeRoom();
       return;
@@ -758,8 +822,10 @@ class CallCoordinatorService extends ChangeNotifier
       _hasSeenRemoteParticipant = false;
       _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
+      _activeSince = null;
       _clearConnectionQualityState();
       notifyListeners();
+      await _setWakelockActive(false);
       await _stopForegroundService(force: true);
       await _disposeRoom();
       return;
@@ -768,6 +834,10 @@ class CallCoordinatorService extends ChangeNotifier
     final previousCallId = _currentCall?.id;
     final previousRoomName = _connectedRoomName;
     _currentCall = nextCall;
+    // Живой звонок (ringing/active) — экран не должен гаснуть. Гейт на
+    // joinedOnAnotherDevice: иначе recovery-poll (2s) чередовал бы
+    // enable здесь / disable в joined-ветке ниже весь звонок (ревью P1).
+    unawaited(_setWakelockActive(!nextCall.joinedOnAnotherDevice));
     if (nextCall.state == CallState.ringing) {
       _scheduleRingingRecovery(nextCall);
       _cancelActiveCallRecovery();
@@ -809,6 +879,7 @@ class CallCoordinatorService extends ChangeNotifier
       _lastIncomingVibrationCallId = null;
       _cameraPosition = CameraPosition.front;
       _isSwitchingCamera = false;
+      _activeSince = null;
     }
     if (!nextCall.mediaMode.isVideo) {
       // Fix B (2026-05-22): не reset'им cameraEnabled пока room
@@ -823,6 +894,20 @@ class CallCoordinatorService extends ChangeNotifier
         _cameraEnabled = false;
       }
     }
+    if (nextCall.state == CallState.active && _activeSince == null) {
+      // Живой переход ringing→active наблюдали сами → локальные часы
+      // (без серверного дрейфа). Иначе (рестарт приложения / late-join
+      // уже active звонка) — серверный acceptedAt, клампнутый «не из
+      // будущего»: устройство с отстающими часами не должно видеть
+      // замороженный 0:00 (ревью P2).
+      final observedLiveTransition = currentCall?.id == nextCall.id &&
+          currentCall?.state == CallState.ringing;
+      final now = DateTime.now();
+      final accepted = nextCall.acceptedAt;
+      _activeSince = observedLiveTransition || accepted == null
+          ? now
+          : (accepted.isAfter(now) ? now : accepted);
+    }
     _joinedOnAnotherDevice = nextCall.joinedOnAnotherDevice;
     notifyListeners();
 
@@ -831,8 +916,12 @@ class CallCoordinatorService extends ChangeNotifier
         _isConnectingRoom = false;
         _isReconnectingRoom = false;
         _connectionError = null;
+        _activeSince = null;
         _clearReconnectRestoredBanner();
         notifyListeners();
+        // Звонок продолжается на другом устройстве — ЭТОТ девайс
+        // отпускает экран и сервис.
+        await _setWakelockActive(false);
         await _stopForegroundService(force: true);
         await _disposeRoom();
         return;
@@ -853,6 +942,9 @@ class CallCoordinatorService extends ChangeNotifier
           previousRoomName != null &&
           _room == null;
       await _ensureConnected(nextCall, reconnect: shouldReconnect);
+      // Медиаканал (пере)подключён — пересчитать proximity-политику
+      // (маршрут по умолчанию уже применён внутри attachRoom).
+      unawaited(_syncProximityWakeLock());
       return;
     }
 
@@ -1015,7 +1107,7 @@ class CallCoordinatorService extends ChangeNotifier
 
     await _disposeRoom();
 
-    final room = Room();
+    final room = Room(roomOptions: _callRoomOptions);
     final listener = room.createListener();
     listener
       ..on<RoomDisconnectedEvent>((event) {
@@ -1111,7 +1203,11 @@ class CallCoordinatorService extends ChangeNotifier
         '[call] room.connect start url=${session.url} '
         'roomName=${session.roomName} reconnect=$reconnect',
       );
-      await room.connect(session.url, session.token);
+      await room.connect(
+        session.url,
+        session.token,
+        connectOptions: _callConnectOptions,
+      );
       debugPrint(
         '[call] room.connect ok uptime=${_uptimeSinceConnect()}ms',
       );
@@ -1126,9 +1222,7 @@ class CallCoordinatorService extends ChangeNotifier
       if (call.mediaMode.isVideo) {
         await room.localParticipant?.setCameraEnabled(
           _cameraEnabled,
-          cameraCaptureOptions: CameraCaptureOptions(
-            cameraPosition: _cameraPosition,
-          ),
+          cameraCaptureOptions: _cameraCaptureOptionsFor(room),
         );
       }
       _connectionError = null;
@@ -1422,9 +1516,7 @@ class CallCoordinatorService extends ChangeNotifier
       if (activeCall.mediaMode.isVideo) {
         await room.localParticipant?.setCameraEnabled(
           _cameraEnabled,
-          cameraCaptureOptions: CameraCaptureOptions(
-            cameraPosition: _cameraPosition,
-          ),
+          cameraCaptureOptions: _cameraCaptureOptionsFor(room),
         );
       }
     } catch (_) {
@@ -1443,6 +1535,48 @@ class CallCoordinatorService extends ChangeNotifier
   /// на re-fires `_applyCall(active)` для того же звонка.
   /// No-op на non-Android либо когда service не инжектирован
   /// (некоторые tests).
+  /// Гигиена звонков: держим экран включённым пока звонок живой
+  /// (ringing/active), отпускаем на любом terminal/teardown-пути.
+  /// Идемпотентно — guard на _wakelockActive, потому что _applyCall
+  /// re-fire'ится каждые 2s recovery-poll'ом.
+  Future<void> _setWakelockActive(bool active) async {
+    if (_wakelockActive == active) {
+      return;
+    }
+    _wakelockActive = active;
+    try {
+      await _wakelockToggler(active);
+    } catch (error) {
+      // Best-effort: сбой wakelock не должен ломать звонок.
+      debugPrint('[call-wakelock] toggle($active) failed: $error');
+    }
+  }
+
+  static Future<void> _defaultWakelockToggler(bool enable) {
+    return WakelockPlus.toggle(enable: enable);
+  }
+
+  void _handleAudioRouteChanged() {
+    unawaited(_syncProximityWakeLock());
+  }
+
+  /// Proximity-политика (Telegram-поведение): гасим экран у уха ТОЛЬКО
+  /// в чисто аудио-состоянии — звонок active, медиаканал подключён,
+  /// маршрут «ушной», камера не поднята (mediaMode video или локальный
+  /// audio→video upgrade выключают датчик). AudioRouteService сам
+  /// no-op'ит вне Android-пути, а Kotlin-мост дополнительно отпускает
+  /// лок в stop()/teardown() — страховка от пропущенного false.
+  Future<void> _syncProximityWakeLock() async {
+    final call = _currentCall;
+    final desired = call != null &&
+        call.state == CallState.active &&
+        _room != null &&
+        !call.mediaMode.isVideo &&
+        !_cameraEnabled &&
+        _audioRouteService.selectedRoute?.type == AudioRouteType.earpiece;
+    await _audioRouteService.setProximityEnabled(desired);
+  }
+
   Future<void> _ensureForegroundServiceStarted(CallInvite call) async {
     final service = _callForegroundService;
     if (service == null || !service.isSupported) {
@@ -1581,6 +1715,9 @@ class CallCoordinatorService extends ChangeNotifier
     // ownership now, or «Динамик» and hardware volume silently stop working
     // after a mic/camera toggle. No-op off-Android and after the call ends.
     unawaited(_audioRouteService.reassertNativeAudioOwnership());
+    // Камера могла подняться/опуститься (audio→video upgrade) —
+    // proximity-политика зависит от неё.
+    unawaited(_syncProximityWakeLock());
   }
 
   /// Try to publish the local microphone. Возвращает true при
@@ -1782,6 +1919,12 @@ class CallCoordinatorService extends ChangeNotifier
     CameraPosition position,
   ) {
     return track.setCameraPosition(position);
+  }
+
+  CameraCaptureOptions _cameraCaptureOptionsFor(Room room) {
+    return room.roomOptions.defaultCameraCaptureOptions.copyWith(
+      cameraPosition: _cameraPosition,
+    );
   }
 
   static Future<List<MediaDevice>> _defaultAudioInputEnumerator() {
@@ -1999,7 +2142,9 @@ class CallCoordinatorService extends ChangeNotifier
     _hasSeenRemoteParticipant = false;
     _joinedOnAnotherDevice = false;
     _lastIncomingVibrationCallId = null;
+    _activeSince = null;
     _locallyStartedCallIds.clear();
+    await _setWakelockActive(false);
     await _stopForegroundService(force: true);
     await _disposeRoom();
     notifyListeners();
@@ -2031,13 +2176,23 @@ class CallCoordinatorService extends ChangeNotifier
     _cancelActiveCallRecovery();
     _clearReconnectRestoredBanner();
     _cancelReconnectWatchdog();
+    _audioRouteService.removeListener(_handleAudioRouteChanged);
     unawaited(_callEventsSubscription?.cancel());
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_pushSubscription?.cancel());
+    unawaited(_setWakelockActive(false));
+    unawaited(_audioRouteService.setProximityEnabled(false));
     unawaited(_stopForegroundService(force: true));
     unawaited(_disposeRoom());
     super.dispose();
   }
+
+  /// Test seam — exposes call media defaults without a real LiveKit Room.
+  @visibleForTesting
+  static RoomOptions get debugCallRoomOptions => _callRoomOptions;
+
+  @visibleForTesting
+  static ConnectOptions get debugCallConnectOptions => _callConnectOptions;
 
   /// Test seam — позволяет flip'ать `microphonePublishFailed` без
   /// настоящей LiveKit Room. Используется unit-test'ом для проверки
