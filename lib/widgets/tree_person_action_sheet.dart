@@ -31,6 +31,7 @@ Future<void> showTreePersonActionSheet(
   VoidCallback? onToggleHide,
   bool isHidden = false,
   VoidCallback? onAddSecondParent,
+  VoidCallback? onAskStory,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -66,6 +67,12 @@ Future<void> showTreePersonActionSheet(
         Navigator.of(sheetContext).pop();
         onDelete();
       },
+      onAskStory: onAskStory == null
+          ? null
+          : () {
+              Navigator.of(sheetContext).pop();
+              onAskStory();
+            },
       onToggleHide: onToggleHide == null
           ? null
           : () {
@@ -89,6 +96,7 @@ class TreePersonActionSheet extends StatelessWidget {
     this.onToggleHide,
     this.isHidden = false,
     this.onAddSecondParent,
+    this.onAskStory,
   });
 
   final FamilyPerson person;
@@ -122,6 +130,13 @@ class TreePersonActionSheet extends StatelessWidget {
   /// Used к flip toggle tile copy + icon (visibility_off → visibility).
   final bool isHidden;
 
+  /// UX-аудит 2026-07-04 P1: «Спросить историю» прямо с канваса —
+  /// north-star фича (сохранение семейной памяти) была закопана в
+  /// профиль на 2-3 тапа без аффорданса. Доступна всем ролям: share
+  /// вопроса прав не требует, запись ответа гейтится ниже по флоу
+  /// (article-permission на экране деталей).
+  final VoidCallback? onAskStory;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -144,9 +159,8 @@ class TreePersonActionSheet extends StatelessWidget {
               children: [
                 _PersonAvatar(
                   photoUrl: person.photoUrl,
-                  fallbackInitial: person.name.isNotEmpty
-                      ? person.name[0]
-                      : '?',
+                  fallbackInitial:
+                      person.name.isNotEmpty ? person.name[0] : '?',
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 14),
@@ -188,6 +202,13 @@ class TreePersonActionSheet extends StatelessWidget {
               label: 'Открыть профиль',
               onTap: onOpenProfile,
             ),
+            if (onAskStory != null)
+              _ActionTile(
+                key: const Key('tree-action-ask-story'),
+                icon: Icons.auto_stories_outlined,
+                label: 'Спросить историю',
+                onTap: onAskStory!,
+              ),
             // Ship FE7 (2026-05-26): hide-filter toggle. Tile renders
             // когда callback provided (tree bound к семя + caller
             // is member). Hide is per-user — другие members видят
@@ -275,9 +296,8 @@ class _ActionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = isDestructive
-        ? theme.colorScheme.error
-        : theme.colorScheme.onSurface;
+    final color =
+        isDestructive ? theme.colorScheme.error : theme.colorScheme.onSurface;
     return ListTile(
       leading: Icon(icon, color: color),
       title: Text(

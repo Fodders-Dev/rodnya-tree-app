@@ -1624,6 +1624,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           ? () => _toggleHidePerson(person, isCurrentlyHidden)
           : null,
       onOpenProfile: () => _openPersonDetails(person),
+      // UX-аудит P1: «Спросить историю» с канваса в один тап — экран
+      // деталей сам поднимет шит вопросов (initialAction: 'story').
+      onAskStory: () => _openPersonDetails(person, action: 'story'),
       onEdit: () {
         context
             .push<dynamic>(

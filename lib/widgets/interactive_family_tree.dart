@@ -2808,12 +2808,52 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       final branchRootPersonId = widget.branchRootPersonId;
       if (branchRootPersonId != null && branchRootPersonId.isNotEmpty) {
         _focusOnPerson(branchRootPersonId);
+      } else {
+        // UX-аудит P0: большое дерево при fit-all — море нечитаемых
+        // карточек, пользователь вынужден искать себя вручную. Если
+        // дерево НЕ умещается в читаемом масштабе (raw fit ниже пола
+        // 0.55, т.е. fit-all всё равно показывает лишь часть) —
+        // центрируемся на карточке самого пользователя: «я и моя
+        // семья вокруг меня». Малые деревья по-прежнему показываются
+        // целиком. Явный branchRootPersonId выше приоритетом.
+        final selfFocusId = _initialSelfFocusPersonId();
+        if (selfFocusId != null) {
+          _focusOnPerson(selfFocusId);
+        }
       }
       _hasAppliedViewportFit = true;
       // From now on, zoom/fit/center actions are user-initiated → the
       // transient HUD may show (it stayed silent through the auto-fit).
       _zoomHudReady = true;
     });
+  }
+
+  /// Узел пользователя для стартового центрирования — только когда
+  /// fit-all нечитаем (см. _scheduleViewportFit). Null → оставить fit.
+  String? _initialSelfFocusPersonId() {
+    final viewport = _viewportSize;
+    if (viewport == null ||
+        viewport.width <= 0 ||
+        viewport.height <= 0 ||
+        treeSize == Size.zero) {
+      return null;
+    }
+    if (_rawFitScale(viewport) >= 0.55) {
+      return null;
+    }
+    return _findCurrentUserNodeId();
+  }
+
+  /// «Сырой» масштаб вписывания дерева в viewport — ДО клампа полом
+  /// 0.55: ниже пола значит «fit-all показал бы нечитаемые карточки
+  /// либо обрезал дерево».
+  double _rawFitScale(Size viewport) {
+    final horizontalInset = viewport.width >= 1180 ? 18.0 : 28.0;
+    final horizontalScale = (viewport.width - horizontalInset) / treeSize.width;
+    final verticalScale =
+        (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
+            treeSize.height;
+    return min(horizontalScale, verticalScale * 1.14);
   }
 
   void _fitTreeToViewport() {
@@ -2827,18 +2867,13 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
     final contentWidth = treeSize.width;
     final contentHeight = treeSize.height;
-    final horizontalInset = viewport.width >= 1180 ? 18.0 : 28.0;
-    final horizontalScale = (viewport.width - horizontalInset) / contentWidth;
-    final verticalScale =
-        (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
-            contentHeight;
     // User-reported: «дерево у нас так далеко при открытии, можно
     // ближе». The previous 0.2 lower clamp rendered medium-sized
     // trees at ~20% of viewport — readable on desktop, but on a
     // 360 dp phone the names became unreadable squiggles. Bump the
     // floor to 0.55 so even a 30-person tree fills enough of the
     // viewport that the user can read top-row names without zooming.
-    final targetScale = min(horizontalScale, verticalScale * 1.14);
+    final targetScale = _rawFitScale(viewport);
     final safeScale = targetScale.clamp(0.55, _maxViewportFitScale(viewport));
 
     final translateX = (viewport.width - contentWidth * safeScale) / 2;
@@ -4383,10 +4418,8 @@ class _TreeLayoutEngine {
     //    corner. Pull its subtree to the mean X of whatever parents ARE
     //    positioned. The sweep below resolves any overlap this introduces.
     falseRootParentIds.forEach((group, parentIds) {
-      final parentXs = parentIds
-          .map((id) => positions[id]?.dx)
-          .whereType<double>()
-          .toList();
+      final parentXs =
+          parentIds.map((id) => positions[id]?.dx).whereType<double>().toList();
       if (parentXs.isEmpty) return;
       final target = parentXs.reduce((a, b) => a + b) / parentXs.length;
       shiftSubtree(group, target - groupCenterX(group));
@@ -4421,7 +4454,9 @@ class _TreeLayoutEngine {
                   runningRight + InteractiveFamilyTree.siblingSeparation) {
             shiftSubtree(
               group,
-              runningRight + InteractiveFamilyTree.siblingSeparation - extent[0],
+              runningRight +
+                  InteractiveFamilyTree.siblingSeparation -
+                  extent[0],
             );
           }
           runningRight = subtreeExtent(group)[1];
@@ -4431,8 +4466,7 @@ class _TreeLayoutEngine {
 
     for (var iteration = 0; iteration < 4; iteration++) {
       for (final bridge in bridges) {
-        final centers =
-            parentFamiliesOf[bridge]!.map(groupCenterX).toList();
+        final centers = parentFamiliesOf[bridge]!.map(groupCenterX).toList();
         final mid = centers.reduce((a, b) => a + b) / centers.length;
         shiftSubtree(bridge, mid - groupCenterX(bridge));
       }

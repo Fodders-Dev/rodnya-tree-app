@@ -114,6 +114,52 @@ void main() {
     expect(deleteCount, 1);
   });
 
+  testWidgets(
+      'UX-аудит P1: «Спросить историю» рендерится и зовёт callback, '
+      'когда onAskStory передан', (tester) async {
+    int askStoryCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TreePersonActionSheet(
+            person: _samplePerson(),
+            onOpenProfile: () {},
+            onEdit: () {},
+            onAddRelative: () {},
+            onConnect: () {},
+            onDelete: () {},
+            onAskStory: () => askStoryCount++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Спросить историю'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tree-action-ask-story')));
+    await tester.pumpAndSettle();
+    expect(askStoryCount, 1);
+  });
+
+  testWidgets('UX-аудит P1: без onAskStory тайла историй нет', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TreePersonActionSheet(
+            person: _samplePerson(),
+            onOpenProfile: () {},
+            onEdit: () {},
+            onAddRelative: () {},
+            onConnect: () {},
+            onDelete: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Спросить историю'), findsNothing);
+    expect(find.byKey(const Key('tree-action-ask-story')), findsNothing);
+  });
+
   testWidgets('Delete action visually destructive (error color)',
       (tester) async {
     await tester.pumpWidget(
@@ -226,8 +272,7 @@ void main() {
     );
   });
 
-  testWidgets(
-      'B3: onAddSecondParent задан → пункт есть и вызывает колбэк',
+  testWidgets('B3: onAddSecondParent задан → пункт есть и вызывает колбэк',
       (tester) async {
     var calls = 0;
     await tester.pumpWidget(
