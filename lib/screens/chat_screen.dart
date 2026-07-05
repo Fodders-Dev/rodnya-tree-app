@@ -298,6 +298,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, DateTime> _peerLastSeenAt = <String, DateTime>{};
   static const double _recordingLockThreshold = 52;
   static const double _recordingCancelThreshold = 72;
+  // Voice-cancel зона (UX-аудит P1): визуальный отклик слайда-влево.
+  // ValueNotifier вместо setState — плавные per-move перерисовки только
+  // внутри recording-бара; контроллер записи остаётся platform-pure.
+  final ValueNotifier<double> _recordingDragDx = ValueNotifier<double>(0);
 
   // C3a/V1 (ревью): персистентный pointer-трекинг press-hold. Цикл записи
   // (move/lock/cancel/release) ведём raw-Listener'ом на СТАБИЛЬНОМ слое над
@@ -400,6 +404,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _messagesScrollController.dispose();
     _messageController.dispose();
     _searchController.dispose();
+    _recordingDragDx.dispose();
     _messageFocusNode.dispose();
     _typingHeartbeatTimer?.cancel();
     _typingDecayTimer?.cancel();
@@ -736,6 +741,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _recordingPointerId = micPointer;
     _recordingPointerOrigin = details.globalPosition;
     _recordingPointerReleased = false;
+    _recordingDragDx.value = 0;
     await _startRecording();
     // FX1/C3a FR3: палец отпустили, пока шёл старт (диалог разрешения) —
     // не оставляем осиротевшую запись без пальца: отменяем (discard).
@@ -765,6 +771,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final dx = event.position.dx - origin.dx;
     final dy = event.position.dy - origin.dy;
+    // Визуальный отклик слайда: бар следит за пальцем (0..-порог).
+    _recordingDragDx.value =
+        dx.clamp(-_recordingCancelThreshold, 0.0).toDouble();
 
     if (dx <= -_recordingCancelThreshold) {
       // C2: тактильный фидбек на слайд-влево (отмена).
@@ -772,6 +781,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // Указатель больше не ведёт запись — отпускание не должно отправить.
       _recordingPointerId = null;
       _recordingPointerOrigin = null;
+      _recordingDragDx.value = 0;
       unawaited(_cancelRecording());
       return;
     }
@@ -786,6 +796,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // отправка/отмена идут кнопками locked-бара.
       _recordingPointerId = null;
       _recordingPointerOrigin = null;
+      _recordingDragDx.value = 0;
     }
   }
 
@@ -798,6 +809,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_recordingController.state == ChatRecordingState.recording) {
       _recordingPointerId = null;
       _recordingPointerOrigin = null;
+      _recordingDragDx.value = 0;
       unawaited(_stopAndSendRecording());
       return;
     }
@@ -815,6 +827,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_recordingController.state == ChatRecordingState.recording) {
       _recordingPointerId = null;
       _recordingPointerOrigin = null;
+      _recordingDragDx.value = 0;
       unawaited(_cancelRecording());
       return;
     }
@@ -3939,58 +3952,131 @@ class _ChatScreenState extends State<ChatScreen> {
                 .toString()
                 .padLeft(2, '0');
             final waveform = _recordingController.liveWaveform;
-            return Row(
-              children: [
-                // Cancel
-                IconButton(
-                  onPressed: _cancelRecording,
-                  tooltip: 'Отменить',
-                  icon: Icon(Icons.close_rounded, color: recColor),
-                ),
-                _PulsingDot(color: recColor),
-                const SizedBox(width: 8),
-                // C2: крупный таймер моноширинными цифрами.
-                Text(
-                  '$minutes:$seconds',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: recColor,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                // C2: живая волна по амплитуде вместо статичной подсказки.
-                // Когда замеров ещё нет — компактная подсказка про жесты.
-                Expanded(
-                  child: waveform.isEmpty
-                      ? Text(
-                          '← отмена  ↑ фиксация',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+            // Voice-cancel зона: слушаем dx слайда — подсказка едет за
+            // пальцем и гаснет, кнопка отмены «наливается» красным и
+            // раскрывает корзину у порога. Существующая подсказка/волна
+            // остаются как есть (тест-контракт: '← отмена  ↑ фиксация' и
+            // ключ 'recording-live-waveform' взаимоисключающи) — при
+            // progress == 0 слои отмены полностью прозрачны.
+            return ValueListenableBuilder<double>(
+              valueListenable: _recordingDragDx,
+              builder: (context, dragDx, _) {
+                final progress = (-dragDx / _recordingCancelThreshold)
+                    .clamp(0.0, 1.0)
+                    .toDouble();
+                final trashRevealed = progress > 0.6;
+                return Row(
+                  children: [
+                    // Cancel: кольцо-подсветка растёт с прогрессом слайда,
+                    // у порога иконка сменяется корзиной.
+                    Transform.scale(
+                      scale: 1.0 + 0.25 * progress,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: recColor.withValues(
+                            alpha: 0.10 + 0.35 * progress,
                           ),
-                          overflow: TextOverflow.ellipsis,
-                        )
-                      : SizedBox(
-                          height: 28,
-                          child: CustomPaint(
-                            key: const Key('recording-live-waveform'),
-                            painter: _VoiceWaveformPainter(
-                              waveform: waveform,
-                              progress: 1.0,
-                              activeColor: recColor,
-                              inactiveColor: recColor.withValues(alpha: 0.30),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          onPressed: _cancelRecording,
+                          tooltip: 'Отменить',
+                          icon: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 120),
+                            child: Icon(
+                              trashRevealed
+                                  ? Icons.delete_outline_rounded
+                                  : Icons.close_rounded,
+                              key: ValueKey(trashRevealed),
+                              color: recColor,
                             ),
-                            size: Size.infinite,
                           ),
                         ),
-                ),
-                const SizedBox(width: 6),
-                // C3a/V1: чисто визуальная мик-кнопка. Жест press-hold ведёт
-                // персистентный Listener над композером (см.
-                // _buildMessageInputArea) — отдельный recognizer тут не видел
-                // pointer-down и не получал onLongPressEnd на lift.
-                _PulsingMicButton(color: recColor),
-              ],
+                      ),
+                    ),
+                    _PulsingDot(color: recColor),
+                    const SizedBox(width: 8),
+                    // C2: крупный таймер моноширинными цифрами.
+                    Text(
+                      '$minutes:$seconds',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: recColor,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // C2: живая волна по амплитуде вместо статичной
+                    // подсказки; поверх — «← Отмена», едущая за пальцем.
+                    Expanded(
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Opacity(
+                            opacity: 1.0 - progress,
+                            child: waveform.isEmpty
+                                ? Text(
+                                    '← отмена  ↑ фиксация',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  )
+                                : SizedBox(
+                                    height: 28,
+                                    child: CustomPaint(
+                                      key: const Key('recording-live-waveform'),
+                                      painter: _VoiceWaveformPainter(
+                                        waveform: waveform,
+                                        progress: 1.0,
+                                        activeColor: recColor,
+                                        inactiveColor:
+                                            recColor.withValues(alpha: 0.30),
+                                      ),
+                                      size: Size.infinite,
+                                    ),
+                                  ),
+                          ),
+                          if (progress > 0)
+                            IgnorePointer(
+                              child: Transform.translate(
+                                offset: Offset(dragDx * 0.6, 0),
+                                child: Opacity(
+                                  opacity: (1.0 - progress).clamp(0.25, 1.0),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.chevron_left_rounded,
+                                        size: 18,
+                                        color: recColor,
+                                      ),
+                                      Text(
+                                        'Отмена',
+                                        style:
+                                            theme.textTheme.bodySmall?.copyWith(
+                                          color: recColor,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    // C3a/V1: чисто визуальная мик-кнопка. Жест press-hold
+                    // ведёт персистентный Listener над композером (см.
+                    // _buildMessageInputArea) — отдельный recognizer тут не
+                    // видел pointer-down и не получал onLongPressEnd на lift.
+                    _PulsingMicButton(color: recColor),
+                  ],
+                );
+              },
             );
           },
         ),
