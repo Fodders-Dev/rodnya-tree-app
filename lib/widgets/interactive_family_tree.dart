@@ -372,6 +372,11 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       TransformationController();
   Size? _viewportSize;
   bool _hasAppliedViewportFit = false;
+  // K (culling): the inflated scene rect whose nodes were built on the last
+  // frame. Read by the transform listener to decide when a pan/zoom has moved
+  // outside the built set and a rebuild is needed. Null = culling disabled
+  // (no viewport yet) → build all.
+  Rect? _lastCulledRect;
   String? _selectedEditPersonId;
   double _currentScale = 1.0;
   // Transient zoom HUD (audit #16/#20): a brief bottom-center pill that
@@ -428,6 +433,21 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
   Offset _viewportToCanvas(Offset viewportPoint) {
     return _transformationController.toScene(viewportPoint);
+  }
+
+  /// K (culling): the currently-visible region in scene/canvas coords. The
+  /// transform is translate + uniform scale only (no rotation), so two
+  /// opposite viewport corners mapped to scene space bound the visible rect.
+  /// Null before the first LayoutBuilder frame → callers build all nodes.
+  Rect? _visibleSceneRect() {
+    final vp = _viewportSize;
+    if (vp == null || vp.width <= 0 || vp.height <= 0) {
+      return null;
+    }
+    final topLeft = _transformationController.toScene(Offset.zero);
+    final bottomRight =
+        _transformationController.toScene(Offset(vp.width, vp.height));
+    return Rect.fromPoints(topLeft, bottomRight);
   }
 
   void _handleLassoStart(DragStartDetails details) {
@@ -801,18 +821,39 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   }
 
   void _handleTransformChanged() {
+    if (!mounted) {
+      return;
+    }
     final scale = _transformationController.value.getMaxScaleOnAxis();
-    if ((scale - _currentScale).abs() < 0.04 || !mounted) {
+    final scaleChanged = (scale - _currentScale).abs() >= 0.04;
+
+    // K (culling): rebuild the node list when the viewport has moved OUTSIDE
+    // the built set's cull rect, so nodes culled while offscreen reappear when
+    // panned/zoomed back into view. The ~1-viewport margin baked into
+    // _lastCulledRect means panning WITHIN it doesn't rebuild — idle-pan churn
+    // stays near zero. (Before culling, pans never rebuilt at all; this is the
+    // one behavioral change and is bounded by the margin.)
+    var cullRebuild = false;
+    final last = _lastCulledRect;
+    if (last != null) {
+      final vr = _visibleSceneRect();
+      if (vr == null ||
+          !(last.contains(vr.topLeft) && last.contains(vr.bottomRight))) {
+        cullRebuild = true;
+      }
+    }
+
+    if (!scaleChanged && !cullRebuild) {
       return;
     }
     setState(() {
       _currentScale = scale;
     });
-    // Pinch + the zoom +/- buttons flow through the transform; surface
-    // the live percentage. Fit / center override this with their own
-    // label right after they set the transform (they're called after the
-    // listener fires synchronously).
-    if (_zoomHudReady) {
+    // Pinch + the zoom +/- buttons flow through the transform; surface the live
+    // percentage. Only on an actual scale change — a pure pan-driven cull
+    // rebuild must not flash the zoom HUD. Fit / center override this with
+    // their own label right after they set the transform.
+    if (scaleChanged && _zoomHudReady) {
       _showZoomHud('${(scale * 100).round()}%');
     }
   }
@@ -1949,7 +1990,44 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     };
     final warningCache = <String, List<TreeGraphWarning>>{};
 
-    return nodePositions.entries.map((entry) {
+    // K (culling): drop person-node subtrees whose card is fully outside the
+    // viewport + ~1-viewport margin so 100+-node trees stay smooth on pan/zoom.
+    // Render-only — the edge / guide / active-path / lasso CustomPaint layers
+    // read the FULL nodePositions map and are untouched, so nothing visual
+    // disappears; only which Positioned card widgets are emitted changes.
+    final visible = _visibleSceneRect();
+    Rect? cullRect;
+    if (visible != null) {
+      cullRect = visible.inflate(max(visible.width, visible.height));
+    }
+    _lastCulledRect = cullRect;
+    final forceBuild = <String>{};
+    void pin(String? id) {
+      final trimmed = id?.trim();
+      if (trimmed != null && trimmed.isNotEmpty) {
+        forceBuild.add(trimmed);
+      }
+    }
+
+    // Never cull a node that focus / recenter / fit / edit might target, so
+    // those actions never point at an unbuilt node even for one frame.
+    pin(_findCurrentUserNodeId());
+    pin(widget.selectedPersonId);
+    pin(_selectedEditPersonId);
+    pin(widget.branchRootPersonId);
+    pin(widget.recenterOnPersonId);
+
+    return nodePositions.entries.where((entry) {
+      if (cullRect == null || forceBuild.contains(entry.key)) {
+        return true;
+      }
+      final cardRect = Rect.fromCenter(
+        center: entry.value,
+        width: InteractiveFamilyTree.nodeWidth,
+        height: InteractiveFamilyTree.nodeHeight,
+      );
+      return cullRect.overlaps(cardRect);
+    }).map((entry) {
       final personId = entry.key;
       final position = entry.value;
       final nodeData = nodeDataByPersonId[personId];
