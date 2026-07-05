@@ -3321,6 +3321,11 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context) => _ChatInfoSheet(
         initialDetails: details,
         currentUserId: currentUserId,
+        // Снапшот присутствия на момент открытия — строки участников
+        // показывают «в сети»/«был(а) …» (шит и так работает по
+        // снапшоту details, live-обновления внутри шита не нужны).
+        onlineUserIds: Set<String>.of(_onlineUserIds),
+        lastSeenByUserId: Map<String, DateTime>.of(_peerLastSeenAt),
         hasPinnedMessage: _pinnedMessage != null,
         initialNotificationLevel: _notificationSettings.level,
         initialAutoDeleteOption: _autoDeleteSettings.option,
@@ -7633,6 +7638,8 @@ class _ChatInfoSheet extends StatefulWidget {
   const _ChatInfoSheet({
     required this.initialDetails,
     required this.currentUserId,
+    this.onlineUserIds = const <String>{},
+    this.lastSeenByUserId = const <String, DateTime>{},
     required this.hasPinnedMessage,
     required this.initialNotificationLevel,
     required this.initialAutoDeleteOption,
@@ -7654,6 +7661,10 @@ class _ChatInfoSheet extends StatefulWidget {
 
   final ChatDetails initialDetails;
   final String currentUserId;
+
+  /// Снапшот присутствия на момент открытия шита (см. _openChatInfo).
+  final Set<String> onlineUserIds;
+  final Map<String, DateTime> lastSeenByUserId;
   final bool hasPinnedMessage;
   final ChatNotificationLevel initialNotificationLevel;
   final ChatAutoDeleteOption initialAutoDeleteOption;
@@ -7676,6 +7687,29 @@ class _ChatInfoSheet extends StatefulWidget {
 
   @override
   State<_ChatInfoSheet> createState() => _ChatInfoSheetState();
+}
+
+/// Компактное «когда был(а) в сети» для строк участников — нейтральная
+/// форма без гендерной эвристики (в отличие от заголовка личного чата,
+/// где имя одно и _formatLastSeen может позволить себе «была»).
+String _relativeLastSeenLabel(DateTime rawLastSeen) {
+  final lastSeen = toLocalForDisplay(rawLastSeen);
+  final delta = DateTime.now().difference(lastSeen);
+  if (delta.inMinutes < 1) {
+    return 'был(а) только что';
+  }
+  if (delta.inMinutes < 60) {
+    return 'был(а) ${delta.inMinutes} мин назад';
+  }
+  if (delta.inHours < 24) {
+    return 'был(а) ${delta.inHours} ч назад';
+  }
+  if (delta.inDays < 7) {
+    return 'был(а) ${delta.inDays} дн назад';
+  }
+  final date =
+      '${lastSeen.day.toString().padLeft(2, '0')}.${lastSeen.month.toString().padLeft(2, '0')}';
+  return 'был(а) $date';
 }
 
 class _ChatInfoSheetState extends State<_ChatInfoSheet> {
@@ -7767,6 +7801,9 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                   ),
                 ],
               ),
+              // UX-аудит: в группе участники — самое востребованное в «О
+              // чате», а лежали в самом низу за ~5 экранами настроек.
+              if (_details.isGroup) ..._buildParticipantsSectionWidgets(theme),
               const SizedBox(height: 16),
               GlassPanel(
                 padding: const EdgeInsets.all(14),
@@ -8020,76 +8057,9 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                     ),
                   ),
                 ),
-              const SizedBox(height: 18),
-              Text(
-                'Участники',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              GlassPanel(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                child: Column(
-                  children: _details.participants.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final participant = entry.value;
-                    final isCurrentUser =
-                        participant.userId == widget.currentUserId;
-                    final avatarImage =
-                        buildAvatarImageProvider(participant.photoUrl);
-                    return Column(
-                      children: [
-                        if (index > 0) const Divider(height: 1),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: CircleAvatar(
-                            backgroundImage: avatarImage,
-                            child: avatarImage == null
-                                ? Text(
-                                    participant.displayName.isNotEmpty
-                                        ? participant.displayName[0]
-                                        : '?',
-                                  )
-                                : null,
-                          ),
-                          title: Text(participant.displayName),
-                          subtitle: Text(isCurrentUser ? 'Вы' : 'Участник'),
-                          trailing: isCurrentUser || !_details.isGroup
-                              ? null
-                              : Wrap(
-                                  spacing: 2,
-                                  children: [
-                                    IconButton(
-                                      onPressed: _isSaving
-                                          ? null
-                                          : () => widget
-                                              .onOpenDirectChat(participant),
-                                      tooltip: 'Написать в личку',
-                                      icon: const Icon(
-                                        Icons.chat_bubble_outline_rounded,
-                                      ),
-                                    ),
-                                    if (_details.isEditableGroup)
-                                      IconButton(
-                                        onPressed: _isSaving
-                                            ? null
-                                            : () =>
-                                                _removeParticipant(participant),
-                                        tooltip: 'Убрать из чата',
-                                        icon: const Icon(
-                                          Icons.person_remove_outlined,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                        ),
-                      ],
-                    );
-                  }).toList(),
-                ),
-              ),
+              // Для групп секция «Участники» уехала наверх (сразу после
+              // чипов) — здесь остаётся только для личных/branch чатов.
+              if (!_details.isGroup) ..._buildParticipantsSectionWidgets(theme),
               // G2: самовыход из группы. Доступен только в обычном
               // групповом чате (как и кнопка «убрать»); личные/branch не
               // покидают этим путём.
@@ -8114,6 +8084,104 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
         ),
       ),
     );
+  }
+
+  /// Секция «Участники»: у групп рендерится сразу после чипов, у
+  /// личных/branch — на прежнем месте внизу. Строки кликабельны целиком
+  /// (тап → личка, тот же путь, что и иконка) и показывают присутствие
+  /// из снапшота на момент открытия шита.
+  List<Widget> _buildParticipantsSectionWidgets(ThemeData theme) {
+    return [
+      const SizedBox(height: 18),
+      Text(
+        'Участники',
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 8),
+      GlassPanel(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        child: Column(
+          children: _details.participants.asMap().entries.map((entry) {
+            final index = entry.key;
+            final participant = entry.value;
+            final isCurrentUser = participant.userId == widget.currentUserId;
+            final avatarImage = buildAvatarImageProvider(participant.photoUrl);
+            final isOnline = !isCurrentUser &&
+                widget.onlineUserIds.contains(participant.userId);
+            final lastSeen = widget.lastSeenByUserId[participant.userId] ??
+                participant.lastSeenAt;
+            final subtitle = isCurrentUser
+                ? 'Вы'
+                : isOnline
+                    ? 'в сети'
+                    : (lastSeen != null
+                        ? _relativeLastSeenLabel(lastSeen)
+                        : 'Участник');
+            return Column(
+              children: [
+                if (index > 0) const Divider(height: 1),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  // Вся строка — таргет для «в личку» (иконки справа
+                  // были единственной, слишком мелкой целью).
+                  onTap: isCurrentUser || _isSaving
+                      ? null
+                      : () => widget.onOpenDirectChat(participant),
+                  leading: CircleAvatar(
+                    backgroundImage: avatarImage,
+                    child: avatarImage == null
+                        ? Text(
+                            participant.displayName.isNotEmpty
+                                ? participant.displayName[0]
+                                : '?',
+                          )
+                        : null,
+                  ),
+                  title: Text(participant.displayName),
+                  subtitle: Text(
+                    subtitle,
+                    style: isOnline
+                        ? const TextStyle(
+                            color: Color(0xFF2EBD68),
+                            fontWeight: FontWeight.w600,
+                          )
+                        : null,
+                  ),
+                  trailing: isCurrentUser || !_details.isGroup
+                      ? null
+                      : Wrap(
+                          spacing: 2,
+                          children: [
+                            IconButton(
+                              onPressed: _isSaving
+                                  ? null
+                                  : () => widget.onOpenDirectChat(participant),
+                              tooltip: 'Написать в личку',
+                              icon: const Icon(
+                                Icons.chat_bubble_outline_rounded,
+                              ),
+                            ),
+                            if (_details.isEditableGroup)
+                              IconButton(
+                                onPressed: _isSaving
+                                    ? null
+                                    : () => _removeParticipant(participant),
+                                tooltip: 'Убрать из чата',
+                                icon: const Icon(
+                                  Icons.person_remove_outlined,
+                                ),
+                              ),
+                          ],
+                        ),
+                ),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
+    ];
   }
 
   Widget _buildChatIdentityCard(ThemeData theme) {

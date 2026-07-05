@@ -63,16 +63,23 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
     return Row(
       children: [
         GestureDetector(
-          onTap: !widget.isGroup &&
-                  widget.relativeId != null &&
-                  widget.relativeId!.isNotEmpty
-              ? () {
-                  // Light haptic before navigation — confirms the tap
-                  // hit before the screen swap, same TG / iOS pattern.
-                  HapticFeedback.lightImpact();
-                  context.push('/relative/details/${widget.relativeId}');
-                }
-              : null,
+          // Группа: аватар ведёт в «О чате» (участники) — раньше тап по
+          // аватару группы был мёртв, вся шапка кликабельна как в TG.
+          onTap: widget.isGroup
+              ? (_chatDetails == null || _isLoadingChatDetails
+                  ? null
+                  : () {
+                      HapticFeedback.lightImpact();
+                      _openChatInfo();
+                    })
+              : (widget.relativeId != null && widget.relativeId!.isNotEmpty
+                  ? () {
+                      // Light haptic before navigation — confirms the tap
+                      // hit before the screen swap, same TG / iOS pattern.
+                      HapticFeedback.lightImpact();
+                      context.push('/relative/details/${widget.relativeId}');
+                    }
+                  : null),
           child: Stack(
             clipBehavior: Clip.none,
             children: [

@@ -1257,6 +1257,56 @@ void main() {
     expect(find.text('Сбор у дома в 19:00'), findsOneWidget);
   });
 
+  testWidgets(
+      'J: тап по аватару ГРУППЫ открывает «О чате» с участниками '
+      '(раньше был мёртв)', (tester) async {
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        const ChatScreen(
+          chatId: 'chat-group-1',
+          title: 'Семья Кузнецовых',
+          chatType: 'group',
+          initialChatDetails: ChatDetails(
+            chatId: 'chat-group-1',
+            type: 'group',
+            title: 'Семья Кузнецовых',
+            participantIds: ['user-1', 'user-2'],
+            participants: [
+              ChatParticipantSummary(userId: 'user-1', displayName: 'Артем'),
+              ChatParticipantSummary(userId: 'user-2', displayName: 'Андрей'),
+            ],
+            branchRoots: [],
+            treeId: 'tree-1',
+          ),
+        ),
+      ),
+    );
+
+    chatService.emitMessages(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Аватар группы в шапке (иконка group_outlined в AppBar).
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(AppBar),
+            matching: find.byIcon(Icons.group_outlined),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('О чате'), findsOneWidget);
+    expect(find.text('Участники'), findsOneWidget);
+    // Строки участников на месте, свой помечен «Вы».
+    expect(find.text('Андрей'), findsOneWidget);
+    expect(find.text('Вы'), findsOneWidget);
+  });
+
   testWidgets('ChatScreen opens chat info for group chat', (tester) async {
     final chatService = _FakeChatService();
     getIt.registerSingleton<ChatServiceInterface>(chatService);
@@ -1292,6 +1342,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('О чате'), findsOneWidget);
+    // Для групп секция «Участники» теперь идёт сразу после чипов —
+    // быстрые действия ниже, доскролливаем шит.
+    expect(find.text('Участники'), findsOneWidget);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -300));
+    await tester.pumpAndSettle();
     expect(find.text('Быстрые действия'), findsOneWidget);
     expect(find.text('Поиск в чате'), findsOneWidget);
     expect(find.text('Открыть дерево'), findsOneWidget);
@@ -1516,7 +1571,9 @@ void main() {
 
     await tester.tap(find.text('Семья Кузнецовых').first);
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView).last, const Offset(0, -400));
+    // «Участники» у групп теперь выше — секция уведомлений уехала
+    // глубже, скроллим сильнее.
+    await tester.drag(find.byType(ListView).last, const Offset(0, -700));
     await tester.pumpAndSettle();
 
     expect(find.text('Уведомления'), findsOneWidget);
