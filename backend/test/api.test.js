@@ -992,7 +992,10 @@ test("group call starts from group chat and creates LiveKit sessions for every p
     );
     assert.equal(acceptedCall.call.joinedOnAnotherDevice, false);
     assert.equal(ensuredRooms.length, 1);
-    assert.equal(ensuredRooms[0].options.maxParticipants, 3);
+    // GP3: call rooms are created with a generous cap (max(count, 16)) rather
+    // than the exact head-count, so «add someone mid-call» always fits — the
+    // cap only bounds room size, access stays token-gated by membership.
+    assert.equal(ensuredRooms[0].options.maxParticipants, 16);
     // Per-session ownership: tokens are issued only to the originating session
     // and to the accepting session — never blanket-issued to all participants.
     assert.equal(createdSessions.length, 2);
@@ -1251,6 +1254,112 @@ test("group call: per-participant hangup keeps the call alive until the last lea
     );
   } finally {
     await stopTestServer(g.ctx);
+  }
+});
+
+test("group call: POST /add pulls a new chat member into a live call, and last-leaves still ends it", async () => {
+  const {fakeLiveKitService} = instrumentedGroupCallLiveKit();
+  const ctx = await startConfiguredTestServer({liveKitService: fakeLiveKitService});
+  try {
+    const caller = await registerTestUser(ctx, "add-caller@rodnya.app", "Caller");
+    const bob = await registerTestUser(ctx, "add-bob@rodnya.app", "Bob");
+    const carol = await registerTestUser(ctx, "add-carol@rodnya.app", "Carol");
+    // Group of all three, but start the call with ONLY bob — so carol is a
+    // chat member who is NOT yet on the call and can be added mid-call.
+    const groupRes = await fetch(`${ctx.baseUrl}/v1/chats/groups`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Созвон",
+        participantIds: [bob.user.id, carol.user.id],
+      }),
+    });
+    assert.equal(groupRes.status, 201);
+    const group = await groupRes.json();
+    const startRes = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId: group.chat.id,
+        mediaMode: "audio",
+        participantIds: [bob.user.id],
+      }),
+    });
+    assert.equal(startRes.status, 201);
+    const startedCall = (await startRes.json()).call;
+    assert.deepEqual(
+      [...startedCall.participantIds].sort(),
+      [caller.user.id, bob.user.id].sort(),
+      "call starts with only caller + bob",
+    );
+
+    await callAction(ctx, startedCall.id, "accept", bob); // → active
+
+    // Adding a userId that isn't a chat member (or is already on the call) → 400.
+    const emptyAddRes = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.id}/add`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${caller.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({participantIds: [bob.user.id]}),
+      },
+    );
+    assert.equal(emptyAddRes.status, 400, "re-adding an existing member is a no-op 400");
+
+    // caller adds carol mid-call.
+    const addRes = await fetch(`${ctx.baseUrl}/v1/calls/${startedCall.id}/add`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({participantIds: [carol.user.id]}),
+    });
+    assert.equal(addRes.status, 200);
+    const addedCall = (await addRes.json()).call;
+    assert.ok(
+      addedCall.participantIds.includes(carol.user.id),
+      "carol is now on the call roster",
+    );
+    assert.equal(addedCall.state, "active", "adding does not change the state");
+
+    // The added member can now join and gets a real session.
+    const joinRes = await callAction(ctx, startedCall.id, "join", carol);
+    assert.equal(joinRes.status, 200);
+    assert.ok(
+      (await joinRes.json()).call.session,
+      "added member gets a real session on join",
+    );
+
+    // Regression guard: growing the roster must NOT disturb last-leaves — the
+    // call still ends only when the final connected participant leaves.
+    assert.equal(
+      (await (await callAction(ctx, startedCall.id, "hangup", bob)).json()).call
+        .state,
+      "active",
+    );
+    assert.equal(
+      (await (await callAction(ctx, startedCall.id, "hangup", caller)).json())
+        .call.state,
+      "active",
+    );
+    assert.equal(
+      (await (await callAction(ctx, startedCall.id, "hangup", carol)).json())
+        .call.state,
+      "ended",
+      "ends only when the last (added) member leaves",
+    );
+  } finally {
+    await stopTestServer(ctx);
   }
 });
 

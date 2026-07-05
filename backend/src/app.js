@@ -90,6 +90,12 @@ const {registerVkAuthRoutes} = require("./routes/vk-auth-routes");
 const {normalizeAttachmentWaveform} = require("./chat-utils");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
+// GP3: LiveKit `maxParticipants` is a size cap only — it never grants access
+// (that stays token-gated by chat membership), and it can't be grown on an
+// already-created room. So we create every call room with a generous ceiling
+// so «add someone mid-call» always fits; a direct call's 16-cap room still
+// only admits its 2 token-holders.
+const GROUP_CALL_MAX_PARTICIPANTS = 16;
 // Потолок размера страницы GET /v1/chats. requestedLimit и так
 // зажат в [1,200]; это — понижаемый «рычаг» на случай инцидента.
 // Был ошибочно оставлен на 3 → у всех список чатов резался до 3 бесед.
@@ -2177,7 +2183,10 @@ function createApp({
     const callerSessionId = req.auth.sessionPublicId;
     try {
       await resolvedLiveKitService.ensureRoom(roomName, {
-        maxParticipants: callParticipantIds.length,
+        maxParticipants: Math.max(
+          callParticipantIds.length,
+          GROUP_CALL_MAX_PARTICIPANTS,
+        ),
       });
       const sessionByUserId = await createCallSessionsForParticipants({
         call,
@@ -3244,6 +3253,126 @@ function createApp({
     });
   });
 
+  // GP3: add a NEW person to a live call (unlike /nudge, which only re-rings
+  // people already on the list). Any current participant may add a chat member
+  // who isn't in the call yet; the newcomers get a fresh ring and land in the
+  // same room. Grows participantIds only — the last-leaves teardown is
+  // unaffected (see store.addCallParticipants).
+  app.post("/v1/calls/:callId/add", requireAuth, async (req, res) => {
+    const call = await requireCallAccess(req, res, req.params.callId);
+    if (!call) {
+      return;
+    }
+    const state = String(call.state || "").trim();
+    if (["ended", "missed", "rejected", "cancelled", "failed"].includes(state)) {
+      res.status(409).json({message: "Звонок уже завершён"});
+      return;
+    }
+
+    const chat = await store.findChat(call.chatId);
+    if (!chat) {
+      res.status(404).json({message: "Чат не найден"});
+      return;
+    }
+    const chatParticipantIds = normalizeParticipantIds(chat.participantIds || []);
+    const callParticipantIds = normalizeParticipantIds(call.participantIds || []);
+    const requestedIds = Array.isArray(req.body?.participantIds)
+      ? normalizeParticipantIds(req.body.participantIds)
+      : [];
+    // New = requested ∩ chat members − already-in-call.
+    const newParticipantIds = requestedIds.filter(
+      (participantId) =>
+        chatParticipantIds.includes(participantId) &&
+        !callParticipantIds.includes(participantId),
+    );
+    if (newParticipantIds.length === 0) {
+      res.status(400).json({message: "Некого добавить в звонок"});
+      return;
+    }
+
+    // Don't pull someone who's busy in another call into this one.
+    for (const participantId of newParticipantIds) {
+      await reconcileUserBusyCall(participantId);
+    }
+
+    const result = await store.addCallParticipants({
+      callId: call.id,
+      userIds: newParticipantIds,
+    });
+    if (result === null) {
+      res.status(404).json({message: "Звонок не найден"});
+      return;
+    }
+    if (result === undefined) {
+      res.status(409).json({message: "Звонок уже завершён"});
+      return;
+    }
+    if (result === false) {
+      res.status(400).json({message: "Некого добавить в звонок"});
+      return;
+    }
+
+    const {call: updatedCall, addedUserIds} = result;
+    const grownParticipantIds = normalizeParticipantIds(
+      updatedCall.participantIds || [],
+    );
+    // Rooms are created with a generous cap, but keep the ensure idempotent +
+    // non-shrinking so the newcomers always fit.
+    const roomName = updatedCall.roomName || `call_${updatedCall.id}`;
+    try {
+      await resolvedLiveKitService.ensureRoom(roomName, {
+        maxParticipants: Math.max(
+          grownParticipantIds.length,
+          GROUP_CALL_MAX_PARTICIPANTS,
+        ),
+      });
+    } catch (_) {
+      // best-effort — generous creation cap already covers additions.
+    }
+
+    // Ring the newcomers (realtime + background push), same as /nudge + POST.
+    const callerName = displayNameForCallParticipant(req.auth.user);
+    for (const inviteeId of addedUserIds) {
+      realtimeHub?.publishToUser(inviteeId, ({sessionPublicId}) => ({
+        type: "call.invite.created",
+        call: mapCallRecord(updatedCall, {
+          viewerUserId: inviteeId,
+          viewerSessionId: sessionPublicId,
+        }),
+      }));
+    }
+    for (const inviteeId of addedUserIds) {
+      await createAndDispatchNotification({
+        userId: inviteeId,
+        type: "call_invite",
+        title: callerName,
+        body: updatedCall.mediaMode === "video"
+          ? "Вас зовут в групповой видеозвонок"
+          : "Вас зовут в групповой аудиозвонок",
+        data: {
+          chatId: updatedCall.chatId,
+          callId: updatedCall.id,
+          mediaMode: updatedCall.mediaMode,
+        },
+        awaitPush: false,
+      });
+    }
+    // Refresh the roster for everyone already in the call (grown participantIds).
+    await publishCallState(updatedCall);
+
+    logCallEvent("participants.added", updatedCall, {
+      initiatorId: req.auth.user.id,
+      addedUserIds,
+    });
+
+    res.json({
+      call: mapCallRecord(updatedCall, {
+        viewerUserId: req.auth.user.id,
+        viewerSessionId: req.auth.sessionPublicId,
+      }),
+    });
+  });
+
   app.post("/v1/calls/:callId/accept", requireAuth, async (req, res) => {
     if (!resolvedLiveKitService.isConfigured) {
       res.status(503).json({message: "Звонки пока не настроены на сервере"});
@@ -3279,7 +3408,10 @@ function createApp({
     };
     try {
       await resolvedLiveKitService.ensureRoom(roomName, {
-        maxParticipants: callParticipantIds.length,
+        maxParticipants: Math.max(
+          callParticipantIds.length,
+          GROUP_CALL_MAX_PARTICIPANTS,
+        ),
       });
       const sessionByUserId = await createCallSessionsForParticipants({
         call,

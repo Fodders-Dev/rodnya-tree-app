@@ -19528,6 +19528,40 @@ class FileStore {
     return structuredClone(normalizeStoredCall(storedCall));
   }
 
+  // GP3: grow a live call's invite list (add-mid-call). Chat-membership of the
+  // new ids is validated by the caller (POST /v1/calls/:id/add). This ONLY
+  // extends participantIds — it deliberately does NOT touch sessionByUserId /
+  // joinedSessionByUserId, so the last-leaves teardown in hangupCall
+  // (someoneStillConnected) is unaffected: the call still ends only when the
+  // last JOINED participant leaves, never because the roster grew.
+  async addCallParticipants({callId, userIds}) {
+    const db = await this._read();
+    const storedCall = db.calls.find(
+      (entry) => String(entry?.id || "") === callId,
+    );
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+    if (call.state !== "active" && call.state !== "ringing") {
+      return undefined;
+    }
+    const existing = normalizeParticipantIds(storedCall.participantIds || []);
+    const additions = normalizeParticipantIds(userIds || []).filter(
+      (participantId) => !existing.includes(participantId),
+    );
+    if (additions.length === 0) {
+      return false;
+    }
+    storedCall.participantIds = [...existing, ...additions];
+    storedCall.updatedAt = nowIso();
+    await this._write(db);
+    return {
+      call: structuredClone(normalizeStoredCall(storedCall)),
+      addedUserIds: additions,
+    };
+  }
+
   async applyCallWebhook({roomName, event, participantIdentity = null}) {
     const normalizedRoomName = String(roomName || "").trim();
     if (!normalizedRoomName) {
