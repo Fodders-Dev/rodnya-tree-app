@@ -25,6 +25,13 @@ abstract class CallAudioRouter {
   /// когда телефон у уха (аудио-звонок на ушном динамике).
   Future<void> setProximityEnabled(bool enabled);
 
+  /// P0 teardown: Dart-рингер (audioplayers, AndroidAudioMode.ringtone)
+  /// оставляет AudioManager в MODE_RINGTONE после остановки. Возвращает
+  /// режим в NORMAL, но только когда НЕ идёт активная call-audio сессия
+  /// (guard на !active в нативе) — иначе рокер громкости залипает на
+  /// ring-стриме и кнопки громкости телефона «перестают работать».
+  Future<void> resetRingtoneModeIfIdle();
+
   void dispose();
 }
 
@@ -91,6 +98,13 @@ class NativeCallAudio implements CallAudioRouter {
   @override
   Future<void> setProximityEnabled(bool enabled) async {
     await _invoke<void>('setProximity', {'enabled': enabled});
+  }
+
+  /// P0 teardown: сброс залипшего MODE_RINGTONE после Dart-рингера. Гард на
+  /// активную сессию — в нативе (see resetRingtoneModeIfIdle).
+  @override
+  Future<void> resetRingtoneModeIfIdle() async {
+    await _invoke<void>('resetRingtoneModeIfIdle');
   }
 
   Future<T?> _invoke<T>(String method, [Map<String, dynamic>? args]) async {

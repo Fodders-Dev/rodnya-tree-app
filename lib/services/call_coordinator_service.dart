@@ -253,10 +253,15 @@ class CallCoordinatorService extends ChangeNotifier
   // park the name here and pull it out when the Telecom-side
   // showIncomingCall fires from _applyCall.
   final Map<String, String> _pushCallerNames = <String, String>{};
-  // De-dupe Telecom showIncomingCall — a single call can fan out
-  // both via push and notification.created realtime, and we don't
-  // want addNewIncomingCall to fire twice for the same callId.
-  String? _lastNativeIncomingCallId;
+  // Native incoming-call UIs (self-managed Telecom connection + ringtone
+  // notification) currently shown, keyed by callId. This is a SET, not a
+  // single slot: a superseded/orphaned incoming call (rapid successive
+  // calls, or one that ends server-side while a different call is
+  // _currentCall) must still be torn down — otherwise its Telecom
+  // connection strands on paired watches and holds MODE_RINGTONE, killing
+  // the phone's volume buttons. De-dupes showIncomingCall too (a call can
+  // fan out via both push and notification.created realtime).
+  final Set<String> _shownNativeIncomingCallIds = <String>{};
 
   String? get currentUserId => _callService.currentUserId;
   CallInvite? get currentCall => _currentCall;
@@ -876,12 +881,24 @@ class CallCoordinatorService extends ChangeNotifier
 
   Future<void> _applyCall(CallInvite? nextCall) async {
     final currentCall = _currentCall;
+    // A terminal snapshot must ALWAYS tear down its native incoming UI,
+    // even when it isn't the tracked _currentCall — a superseded/orphaned
+    // call reaches terminal while a different call is current, and both the
+    // ignore-gate (_shouldIgnoreCallSnapshot) and the terminal branch below
+    // return early for a non-current call. Without this, the orphan's
+    // Telecom connection strands on paired watches + holds MODE_RINGTONE.
+    if (nextCall != null && nextCall.state.isTerminal) {
+      _dismissNativeIncomingCall(nextCall.id);
+    }
     if (nextCall == null) {
       if (currentCall != null) {
-        _dismissNativeIncomingCall(currentCall.id);
         _pushCallerNames.remove(currentCall.id);
         _locallyStartedCallIds.remove(currentCall.id);
       }
+      // No active call server-side → sweep every shown native incoming UI,
+      // not just _currentCall's (rapid successive calls can leave more than
+      // one Telecom connection registered).
+      _dismissStaleNativeIncomingCalls();
       _cancelRingingRecovery();
       _cancelActiveCallRecovery();
       _currentCall = null;
@@ -948,6 +965,9 @@ class CallCoordinatorService extends ChangeNotifier
     final previousCallId = _currentCall?.id;
     final previousRoomName = _connectedRoomName;
     _currentCall = nextCall;
+    // A different call just became current — tear down any earlier native
+    // incoming UI so a superseded call can't keep ringing on a paired watch.
+    _dismissStaleNativeIncomingCalls(keepCallId: nextCall.id);
     // Живой звонок (ringing/active) — экран не должен гаснуть. Гейт на
     // joinedOnAnotherDevice: иначе recovery-poll (2s) чередовал бы
     // enable здесь / disable в joined-ветке ниже весь звонок (ревью P1).
@@ -2095,13 +2115,20 @@ class CallCoordinatorService extends ChangeNotifier
     if (currentUser == null || !call.isIncomingFor(currentUser)) {
       return;
     }
-    if (_lastNativeIncomingCallId == call.id) {
+    if (_shownNativeIncomingCallIds.contains(call.id)) {
       return;
     }
-    _lastNativeIncomingCallId = call.id;
-    final callerName = _pushCallerNames[call.id]?.trim().isNotEmpty == true
-        ? _pushCallerNames[call.id]!
-        : (call.initiatorId.isNotEmpty ? call.initiatorId : 'Родня');
+    _shownNativeIncomingCallIds.add(call.id);
+    // Never surface the raw initiatorId (a UUID): the Telecom side turns it
+    // into a bogus «phone number» on paired watches (they strip non-digits
+    // → «21433289429097»). The VKPNS push carries the real display name and
+    // lands before hydrate; without it we fall back to an empty string so
+    // the native side shows its neutral «Родня» label, not a user id.
+    final pushCallerName = _pushCallerNames[call.id]?.trim();
+    final callerName =
+        (pushCallerName != null && pushCallerName.isNotEmpty)
+            ? pushCallerName
+            : '';
     try {
       await service.showIncomingCall(
         callId: call.id,
@@ -2123,8 +2150,24 @@ class CallCoordinatorService extends ChangeNotifier
       return;
     }
     unawaited(_androidIncomingCallService?.dismissCall(normalizedCallId));
-    if (_lastNativeIncomingCallId == normalizedCallId) {
-      _lastNativeIncomingCallId = null;
+    _shownNativeIncomingCallIds.remove(normalizedCallId);
+  }
+
+  /// Tears down every shown native incoming-call UI except [keepCallId].
+  /// Called when a call is superseded by another, or when the server
+  /// reports no active call — orphaned Telecom connections must not linger
+  /// (phantom call on paired watch + stuck MODE_RINGTONE). Iterates a copy
+  /// because [_dismissNativeIncomingCall] mutates the set.
+  void _dismissStaleNativeIncomingCalls({String? keepCallId}) {
+    if (_shownNativeIncomingCallIds.isEmpty) {
+      return;
+    }
+    final stale = _shownNativeIncomingCallIds
+        .where((id) => id != keepCallId)
+        .toList(growable: false);
+    for (final id in stale) {
+      _dismissNativeIncomingCall(id);
+      _pushCallerNames.remove(id);
     }
   }
 
@@ -2335,10 +2378,10 @@ class CallCoordinatorService extends ChangeNotifier
   Future<void> reset() async {
     final activeCall = _currentCall;
     if (activeCall != null) {
-      _dismissNativeIncomingCall(activeCall.id);
       _pushCallerNames.remove(activeCall.id);
       _locallyStartedCallIds.remove(activeCall.id);
     }
+    _dismissStaleNativeIncomingCalls();
     _cancelRingingRecovery();
     _cancelActiveCallRecovery();
     _currentCall = null;
@@ -2383,10 +2426,7 @@ class CallCoordinatorService extends ChangeNotifier
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    final activeCall = _currentCall;
-    if (activeCall != null) {
-      _dismissNativeIncomingCall(activeCall.id);
-    }
+    _dismissStaleNativeIncomingCalls();
     _cancelRingingRecovery();
     _cancelActiveCallRecovery();
     _clearReconnectRestoredBanner();

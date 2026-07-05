@@ -399,6 +399,11 @@ class _FakeCallAudioRouter implements CallAudioRouter {
   }
 
   @override
+  Future<void> resetRingtoneModeIfIdle() async {
+    calls.add('resetRingtoneModeIfIdle');
+  }
+
+  @override
   void dispose() {
     calls.add('dispose');
     unawaited(_changes.close());

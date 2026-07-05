@@ -83,6 +83,10 @@ object RodnyaCallAudioBridge {
                         setProximity(enabled)
                         result.success(true)
                     }
+                    "resetRingtoneModeIfIdle" -> {
+                        resetRingtoneModeIfIdle()
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             } catch (t: Throwable) {
@@ -215,6 +219,29 @@ object RodnyaCallAudioBridge {
             lock.acquire()
         } catch (_: Throwable) {
             // best-effort: сбой лока не должен ронять звонок.
+        }
+    }
+
+    /**
+     * P0 teardown: Dart-рингер (audioplayers с AndroidAudioMode.ringtone)
+     * выставляет AudioManager.MODE_RINGTONE на этапе звонка и НЕ
+     * восстанавливает его на stop()/dispose(). Если звонок закончился на
+     * этапе звонка (никогда не было startCallAudio → active=false), режим
+     * RINGTONE залипал, а volumeControlStream оставался на ring-стриме —
+     * кнопки громкости телефона «переставали работать». Сбрасываем в NORMAL,
+     * но ТОЛЬКО когда мы не ведём активную call-audio сессию (иначе затёрли
+     * бы MODE_IN_COMMUNICATION живого звонка), и только если режим реально
+     * RINGTONE (для исходящего ringback это inCommunication — no-op).
+     */
+    private fun resetRingtoneModeIfIdle() {
+        val am = audioManager ?: return
+        if (active) {
+            return
+        }
+        if (am.mode == AudioManager.MODE_RINGTONE) {
+            am.mode = AudioManager.MODE_NORMAL
+            activityRef?.get()?.volumeControlStream =
+                AudioManager.USE_DEFAULT_STREAM_TYPE
         }
     }
 

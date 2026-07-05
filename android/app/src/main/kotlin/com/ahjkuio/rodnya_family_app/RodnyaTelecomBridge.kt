@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
@@ -32,6 +34,16 @@ private const val PREF_CALL_ID = "pending_call_id"
 private const val PREF_CHAT_ID = "pending_chat_id"
 
 object RodnyaTelecomBridge {
+    /**
+     * Ring-предохранитель self-managed соединения: если входящий не приняли
+     * и НЕ снесли (процесс убит / звонок вытеснен / call_cancelled-пуш не
+     * дошёл) — авто-disconnect по этому таймауту, чтобы фантомный вызов не
+     * висел вечно на часах и не держал MODE_RINGTONE. Слегка больше
+     * серверного ring-окна (~30s), чтобы не резать легитимный звонок раньше
+     * сервера. Общий источник для соединения и для нотификации-таймаута.
+     */
+    const val RING_TIMEOUT_MS = 45_000L
+
     fun configure(activity: MainActivity, flutterEngine: FlutterEngine) {
         handleIntent(activity, activity.intent)
         MethodChannel(
@@ -210,6 +222,16 @@ object RodnyaTelecomBridge {
         return RodnyaCallRegistry.dismiss(normalizedCallId)
     }
 
+    /**
+     * Публичный снос Telecom-соединения по callId — для терминального пуша
+     * (call_cancelled/call_ended) из RodnyaCallNotifier, который раньше гасил
+     * только нотификацию и оставлял self-managed соединение (фантом на часах +
+     * MODE_RINGTONE) живым. Идемпотентно: no-op, если соединения уже нет.
+     */
+    fun dismissConnection(context: Context, callId: String): Boolean {
+        return dismissCall(context, callId)
+    }
+
     private fun phoneAccountHandle(context: Context): PhoneAccountHandle {
         return PhoneAccountHandle(
             ComponentName(context, RodnyaConnectionService::class.java),
@@ -293,6 +315,27 @@ private class RodnyaCallConnection(
     callerName: String,
     isVideo: Boolean
 ) : Connection() {
+    // Гигиена teardown (P0): self-managed RINGING-соединение зеркалится на
+    // спаренные часы и держит аудио-режим. Если Flutter НЕ снёс его (процесс
+    // убит, звонок вытеснен другим, call_cancelled-пуш не дошёл) — раньше оно
+    // звонило ВЕЧНО: фантомный вызов на часах + залипший MODE_RINGTONE, из-за
+    // которого кнопки громкости телефона переставали работать. Предохранитель:
+    // авто-disconnect по ring-таймауту, если на звонок так и не ответили.
+    // @Volatile: onAnswer читает/пишет answered на Telecom-потоке, а
+    // ring-таймаут — на main; терминальный пуш дёргает finish() с фонового
+    // потока мессенджера. Плюс сам finish() маршалится на main (см. ниже),
+    // так что мутации Connection и флагов происходят на одном потоке.
+    @Volatile
+    private var answered = false
+    @Volatile
+    private var finished = false
+    private val timeoutHandler = Handler(Looper.getMainLooper())
+    private val ringTimeoutRunnable = Runnable {
+        if (!answered && !finished) {
+            finish(DisconnectCause.MISSED)
+        }
+    }
+
     init {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             connectionProperties = PROPERTY_SELF_MANAGED
@@ -300,10 +343,17 @@ private class RodnyaCallConnection(
         connectionCapabilities = CAPABILITY_MUTE
         setAudioModeIsVoip(true)
         setCallerDisplayName(callerName, TelecomManager.PRESENTATION_ALLOWED)
-        setAddress(
-            Uri.fromParts("tel", callerName, null),
-            TelecomManager.PRESENTATION_ALLOWED
-        )
+        // Адрес ставим tel:-URI ТОЛЬКО для реального телефонного номера. Для
+        // отображаемого имени («Родня» / имя из пуша) tel:-хендл рендерится на
+        // спаренных часах как фейковый «номер» — они выкидывают не-цифры из
+        // handle, поэтому UUID инициатора превращался в «21433289429097». Без
+        // адреса часы показывают callerDisplayName, что и нужно.
+        if (looksLikePhoneNumber(callerName)) {
+            setAddress(
+                Uri.fromParts("tel", callerName, null),
+                TelecomManager.PRESENTATION_ALLOWED
+            )
+        }
         setVideoState(
             if (isVideo) {
                 VideoProfile.STATE_BIDIRECTIONAL
@@ -312,9 +362,15 @@ private class RodnyaCallConnection(
             }
         )
         setRinging()
+        timeoutHandler.postDelayed(
+            ringTimeoutRunnable,
+            RodnyaTelecomBridge.RING_TIMEOUT_MS,
+        )
     }
 
     override fun onAnswer(videoState: Int) {
+        answered = true
+        timeoutHandler.removeCallbacks(ringTimeoutRunnable)
         RodnyaTelecomBridge.startMainActivityForAction(
             context,
             action = "accept",
@@ -352,7 +408,35 @@ private class RodnyaCallConnection(
         finish(DisconnectCause.LOCAL)
     }
 
+    private fun looksLikePhoneNumber(value: String): Boolean {
+        val trimmed = value.trim()
+        return trimmed.isNotEmpty() &&
+            trimmed.any { it.isDigit() } &&
+            trimmed.all {
+                it.isDigit() || it == '+' || it == '-' || it == ' ' ||
+                    it == '(' || it == ')'
+            }
+    }
+
     private fun finish(cause: Int) {
+        // Маршалим на main-looper: терминальный пуш (call_cancelled/
+        // call_ended) приходит на ФОНОВОМ потоке мессенджера и по цепочке
+        // dismissConnection → registry.dismiss → disconnectFromFlutter
+        // доходит сюда. Telecom-мутаторы Connection (setDisconnected/destroy)
+        // ждут main-поток, а гонка фонового finish с main-таймаутом/onAnswer
+        // могла дважды дёрнуть teardown. Единая точка сериализации: все пути
+        // finish() исполняются на одном (main) потоке.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            timeoutHandler.post { finish(cause) }
+            return
+        }
+        // Идемпотентность: повторный finish (таймаут + reject-гонка, двойной
+        // dismiss) не должен второй раз дёргать setDisconnected/destroy.
+        if (finished) {
+            return
+        }
+        finished = true
+        timeoutHandler.removeCallbacks(ringTimeoutRunnable)
         setDisconnected(DisconnectCause(cause))
         destroy()
         RodnyaCallRegistry.remove(callId)

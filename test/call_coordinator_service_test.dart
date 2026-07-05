@@ -265,6 +265,110 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService never surfaces the raw initiatorId as the '
+    'native caller name (watch «21433289429097» regression)',
+    () async {
+      final incomingCall = _buildCall(state: CallState.ringing);
+      final service = _CountingCallService(activeCall: null);
+      final androidCalls = _FakeAndroidIncomingCallService(null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        androidIncomingCallService: androidCalls,
+      );
+
+      await coordinator.ensureRuntimeReady();
+      await coordinator.activateCall(incomingCall);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(androidCalls.shownCallIds, contains(incomingCall.id));
+      // Without a VKPNS push name we must pass an empty string (native side
+      // shows its neutral «Родня» label), NEVER the initiatorId UUID.
+      expect(androidCalls.shownCallerNames, isNot(contains('user-2')));
+      expect(androidCalls.shownCallerNames.last, isEmpty);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService dismisses a superseded native incoming call '
+    'when a different call becomes current (orphan watch phantom)',
+    () async {
+      final callA = _buildCall(id: 'call-a', state: CallState.ringing);
+      final callB = _buildCall(
+        id: 'call-b',
+        state: CallState.ringing,
+        updatedAt: DateTime(2026, 4, 20, 10, 5),
+      );
+      final service = _CountingCallService(activeCall: null);
+      final androidCalls = _FakeAndroidIncomingCallService(null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        androidIncomingCallService: androidCalls,
+      );
+
+      await coordinator.ensureRuntimeReady();
+
+      await coordinator.activateCall(callA);
+      await Future<void>.delayed(Duration.zero);
+      expect(androidCalls.shownCallIds, contains('call-a'));
+      androidCalls.dismissedCallIds.clear();
+
+      // A different call rings — the earlier one is now orphaned and must be
+      // torn down natively (else its Telecom connection strands on the watch).
+      await coordinator.activateCall(callB);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(androidCalls.dismissedCallIds, contains('call-a'));
+      expect(androidCalls.shownCallIds, contains('call-b'));
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService dismisses native UI for a terminal snapshot of a '
+    'non-current call (ignore-gate would otherwise strand it)',
+    () async {
+      final current = _buildCall(id: 'call-a', state: CallState.ringing);
+      final service = _CountingCallService(activeCall: null);
+      final androidCalls = _FakeAndroidIncomingCallService(null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        androidIncomingCallService: androidCalls,
+      );
+
+      await coordinator.ensureRuntimeReady();
+      await coordinator.activateCall(current);
+      await Future<void>.delayed(Duration.zero);
+      androidCalls.dismissedCallIds.clear();
+
+      // A terminal snapshot arrives for a *different* call. The ignore-gate
+      // drops it, and the terminal branch returns early because it isn't
+      // _currentCall — but the native incoming UI must still be dismissed
+      // (this is the push-path Telecom connection the coordinator never
+      // tracked in its shown-set).
+      await coordinator.activateCall(
+        _buildCall(
+          id: 'call-b',
+          state: CallState.ended,
+          updatedAt: DateTime(2026, 4, 20, 10, 6),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(androidCalls.dismissedCallIds, contains('call-b'));
+      // The current call is untouched — it stays ringing.
+      expect(coordinator.currentCall?.id, 'call-a');
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService Fix A: un-mute updates microphoneEnabled '
     'через debugApplyMediaSync mirror того что _publishLocalMicrophone '
     'success path should leave',
@@ -1444,6 +1548,7 @@ class _FakeAndroidIncomingCallService extends AndroidIncomingCallService {
   int registerPhoneAccountCalls = 0;
   int consumePendingActionCalls = 0;
   final List<String> shownCallIds = <String>[];
+  final List<String> shownCallerNames = <String>[];
   final List<String> dismissedCallIds = <String>[];
 
   @override
@@ -1469,6 +1574,7 @@ class _FakeAndroidIncomingCallService extends AndroidIncomingCallService {
     String? chatId,
   }) async {
     shownCallIds.add(callId);
+    shownCallerNames.add(callerName);
     return true;
   }
 

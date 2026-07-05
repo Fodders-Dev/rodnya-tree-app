@@ -127,6 +127,11 @@ object RodnyaCallNotifier {
             .setOngoing(true)
             .setAutoCancel(false)
             .setOnlyAlertOnce(false)
+            // P0 teardown: ОС сама снимает ongoing-нотификацию с рингтоном по
+            // истечении ring-окна, даже если её никто не отменил (процесс
+            // убит, терминальный пуш не дошёл). Без этого рингтон/MODE_RINGTONE
+            // залипал → кнопки громкости телефона переставали работать.
+            .setTimeoutAfter(RodnyaTelecomBridge.RING_TIMEOUT_MS)
             .setSound(ringtone)
             .setVibrate(longArrayOf(0, 600, 400, 600))
             .setContentIntent(openPendingIntent)
@@ -162,6 +167,10 @@ object RodnyaCallNotifier {
 
         val notificationId = callId.hashCode() and 0x7fffffff
         manager.cancel(notificationId)
+        // P0 teardown: рвём и self-managed Telecom-соединение, а не только
+        // нотификацию. Иначе call_cancelled-пуш гасил рингтон, но фантомный
+        // вызов оставался на спаренных часах и держал MODE_RINGTONE.
+        RodnyaTelecomBridge.dismissConnection(context, callId)
 
         if (type == "call_ended") {
             return

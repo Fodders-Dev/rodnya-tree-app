@@ -265,6 +265,21 @@ class AudioRouteService extends ChangeNotifier {
     }
   }
 
+  /// P0 teardown: после Dart-рингера (audioplayers, MODE_RINGTONE) режим
+  /// залипает. Просим натив вернуть NORMAL — no-op при активной call-audio
+  /// сессии (guard на !active в нативе). Best-effort. No-op вне Android.
+  Future<void> resetRingtoneModeIfIdle() async {
+    final native = _nativeAudio;
+    if (native == null) {
+      return;
+    }
+    try {
+      await native.resetRingtoneModeIfIdle();
+    } catch (error) {
+      debugPrint('[call-audio] resetRingtoneModeIfIdle failed: $error');
+    }
+  }
+
   static bool _isNativeBridgeRoute(AudioRouteType type) {
     switch (type) {
       case AudioRouteType.speaker:

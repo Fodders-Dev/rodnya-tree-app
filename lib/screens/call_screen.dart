@@ -332,8 +332,24 @@ class _CallScreenState extends State<CallScreen> {
     _ringerTimer = null;
     final player = _ringerPlayer;
     _ringerPlayer = null;
-    unawaited(player?.stop().catchError((_) {}));
-    unawaited(player?.dispose().catchError((_) {}));
+    // audioplayers выставляет AudioManager.MODE_RINGTONE под входящий рингер
+    // (AndroidAudioMode.ringtone) и НЕ восстанавливает его на stop/dispose.
+    // Если звонок закончился на этапе звонка (никогда не было startCallAudio),
+    // режим RINGTONE залипал → кнопки громкости телефона переставали работать
+    // (фантомный вызов). Возвращаем NORMAL ПОСЛЕ полного teardown плеера;
+    // натив сам гардит на активную сессию (см. resetRingtoneModeIfIdle), так
+    // что переход ringing→active его не затронет.
+    unawaited(() async {
+      try {
+        await player?.stop();
+      } catch (_) {}
+      try {
+        await player?.dispose();
+      } catch (_) {}
+      try {
+        await _audioRouteService.resetRingtoneModeIfIdle();
+      } catch (_) {}
+    }());
   }
 
   /// One-shot SFX for call lifecycle transitions — `connect.wav` when
