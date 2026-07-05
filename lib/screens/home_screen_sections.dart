@@ -570,48 +570,63 @@ extension _HomeScreenSections on _HomeScreenState {
       return Padding(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
         child: GlassPanel(
-          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           borderRadius: BorderRadius.circular(20),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                state.icon,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      state.title,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      state.message,
-                      // 3 lines so the warm copy isn't clipped to «ко…»
-                      // (was maxLines: 2).
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (state.actionLabel != null) ...[
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: _handleFeedEmptyAction,
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    state.icon,
+                    color: theme.colorScheme.primary,
                   ),
-                  child: Text(state.actionLabel!),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          state.title,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          state.message,
+                          // 3 lines so the warm copy isn't clipped to «ко…»
+                          // (was maxLines: 2).
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              // Action на своей строке: длинный CTA («Добавить
+              // родственника») в inline-Row зажимал текстовую колонку в
+              // ниточку — «Начн/ите/своё/дере/во» на узких экранах. Отдельная
+              // строка снизу даёт заголовку/описанию всю ширину при любой
+              // длине метки.
+              if (state.actionLabel != null) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _handleFeedEmptyAction,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(state.actionLabel!),
+                  ),
                 ),
               ],
             ],
