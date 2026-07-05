@@ -575,6 +575,31 @@ class CallCoordinatorService extends ChangeNotifier
     return invite;
   }
 
+  /// GP3: add NEW chat members to the live call. Feature-detects the
+  /// [CallParticipantAdder] capability (only the live backend implements it)
+  /// so the base [CallServiceInterface] — and every fake — stays untouched.
+  /// Re-applies the grown roster to the current call so the UI updates.
+  Future<CallInvite> addCallParticipants(
+    String callId, {
+    required List<String> participantIds,
+  }) async {
+    final service = _callService;
+    if (service is CallParticipantAdder) {
+      final adder = service as CallParticipantAdder;
+      final invite = await adder.addCallParticipants(
+        callId,
+        participantIds: participantIds,
+      );
+      if (_currentCall?.id == invite.id) {
+        await _applyCall(invite);
+      }
+      return invite;
+    }
+    throw UnsupportedError(
+      'Добавление участников не поддерживается этим бэкендом',
+    );
+  }
+
   // Дебаунс lifecycle-действий (UX-аудит P1): double-tap по «Принять»/
   // «Завершить» на лагающем устройстве давал дубль state-dependent
   // API-вызова (повторный reject/cancel/hangUp по уже меняющемуся

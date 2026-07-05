@@ -43,3 +43,15 @@ abstract class CallServiceInterface {
 
   Future<CallInvite> hangUp(String callId);
 }
+
+/// GP3: opt-in capability for backends that support «add a NEW person
+/// mid-call» (POST /v1/calls/:id/add). Kept OFF [CallServiceInterface] so it
+/// doesn't force every implementer/fake to add a method; the coordinator
+/// feature-detects it (`service is CallParticipantAdder`). Only the live
+/// [CustomApiCallService] implements it.
+abstract class CallParticipantAdder {
+  Future<CallInvite> addCallParticipants(
+    String callId, {
+    required List<String> participantIds,
+  });
+}

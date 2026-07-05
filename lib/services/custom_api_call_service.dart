@@ -26,7 +26,8 @@ class CustomApiCallException implements UserFacingApiException {
   String toString() => message;
 }
 
-class CustomApiCallService implements CallServiceInterface {
+class CustomApiCallService
+    implements CallServiceInterface, CallParticipantAdder {
   CustomApiCallService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -153,6 +154,24 @@ class CustomApiCallService implements CallServiceInterface {
             normalizedParticipantIds.isNotEmpty)
           'participantIds': normalizedParticipantIds,
       },
+    );
+    return _parseCall(response);
+  }
+
+  @override
+  Future<CallInvite> addCallParticipants(
+    String callId, {
+    required List<String> participantIds,
+  }) async {
+    final normalizedParticipantIds = participantIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/calls/$callId/add',
+      body: {'participantIds': normalizedParticipantIds},
     );
     return _parseCall(response);
   }

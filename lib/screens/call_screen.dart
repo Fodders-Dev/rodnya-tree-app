@@ -106,6 +106,7 @@ class _CallScreenState extends State<CallScreen> {
       const <String, ChatParticipantSummary>{};
   String? _participantDetailsChatId;
   bool _isNudgingGroupParticipants = false;
+  bool _isAddingParticipant = false;
   static const double _pipWidth = 120;
   static const double _pipHeight = 180;
   // Drag-vs-tap disambiguation threshold для PIP gesture. Был 6.0 —
@@ -905,6 +906,108 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
+  // GP3: chat members not yet on this call — the candidates for «Добавить».
+  List<ChatParticipantSummary> get _addableParticipants {
+    final selfId = _currentUserId?.trim();
+    final inCall = _resolvedCall.participantIds.toSet();
+    return _callParticipantsById.values
+        .where((participant) =>
+            participant.userId.trim().isNotEmpty &&
+            !inCall.contains(participant.userId) &&
+            participant.userId != selfId)
+        .toList(growable: false);
+  }
+
+  Future<void> _openAddParticipantSheet() async {
+    if (_isAddingParticipant) {
+      return;
+    }
+    final addable = _addableParticipants;
+    if (addable.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Все участники чата уже в звонке.')),
+      );
+      return;
+    }
+    final pickedUserId = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Добавить в звонок',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+              ),
+            ),
+            for (final participant in addable)
+              ListTile(
+                leading: CircleAvatar(
+                  backgroundImage:
+                      buildAvatarImageProvider(participant.photoUrl),
+                  child: buildAvatarImageProvider(participant.photoUrl) == null
+                      ? Text(
+                          participant.displayName.trim().isNotEmpty
+                              ? participant.displayName.trim()[0].toUpperCase()
+                              : '?',
+                        )
+                      : null,
+                ),
+                title: Text(participant.displayName),
+                trailing: const Icon(Icons.person_add_alt_1),
+                onTap: () => Navigator.of(context).pop(participant.userId),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || pickedUserId == null || pickedUserId.isEmpty) {
+      return;
+    }
+    await _addParticipantsToCall(<String>[pickedUserId]);
+  }
+
+  Future<void> _addParticipantsToCall(List<String> participantIds) async {
+    if (_isAddingParticipant) {
+      return;
+    }
+    setState(() => _isAddingParticipant = true);
+    try {
+      await widget.coordinator.addCallParticipants(
+        _resolvedCall.id,
+        participantIds: participantIds,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Добавляем в звонок…')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(error, fallback: 'Не удалось добавить участника.'),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isAddingParticipant = false);
+      }
+    }
+  }
+
   List<RemoteParticipant> get _remoteParticipants =>
       widget.coordinator.room?.remoteParticipants.values.toList() ??
       const <RemoteParticipant>[];
@@ -1293,6 +1396,24 @@ class _CallScreenState extends State<CallScreen> {
                                           : _nudgeWaitingGroupParticipants,
                                   onNudgeParticipant: _nudgeGroupParticipant,
                                 ),
+                                // GP3: pull a new chat member into the live call.
+                                if (_resolvedCall.state == CallState.active &&
+                                    _addableParticipants.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  TextButton.icon(
+                                    onPressed: _isAddingParticipant
+                                        ? null
+                                        : _openAddParticipantSheet,
+                                    icon: const Icon(
+                                      Icons.person_add_alt_1,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Добавить участника'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.white,
+                                    ),
+                                  ),
+                                ],
                               ],
                               if (_resolvedCall.state == CallState.active) ...[
                                 const SizedBox(height: 12),
