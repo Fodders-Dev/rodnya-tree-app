@@ -123,16 +123,20 @@ class _CallScreenState extends State<CallScreen> {
   CallInvite get _resolvedCall => _call ?? widget.initialCall;
   bool get _isIncoming =>
       _currentUserId != null && _resolvedCall.isIncomingFor(_currentUserId!);
-  // P1: I belong to an ACTIVE call but have no session yet → I haven't
-  // joined. Show «Войти» so a late member can «залететь в группу» (the
-  // button was previously gated on state==ringing, so this never appeared).
+  // GP1: an ACTIVE call I'm viewing but have no session in yet → «Войти»
+  // for a late member to «залететь в группу». We DON'T gate on
+  // participantIds.contains(uid): the server `/join` is already
+  // membership-gated (any chat member may join, app.js:3346), so the old
+  // client check was STRICTER than the server — a chat member who wasn't on
+  // the original invite list never saw «Войти» even though joining would
+  // succeed. Optimistic-show + server validation (join failure surfaces a
+  // retriable snackbar). The initiator is excluded via isOutgoingFor.
   bool get _canJoinActive {
     final uid = _currentUserId;
     return uid != null &&
         _resolvedCall.state == CallState.active &&
         _resolvedCall.session == null &&
-        !_resolvedCall.isOutgoingFor(uid) &&
-        _resolvedCall.participantIds.contains(uid);
+        !_resolvedCall.isOutgoingFor(uid);
   }
 
   bool get _isVideoCall => _resolvedCall.mediaMode == CallMediaMode.video;
@@ -567,6 +571,12 @@ class _CallScreenState extends State<CallScreen> {
         SnackBar(
           content: Text(
             humanizeError(error, fallback: 'Не удалось войти в звонок.'),
+          ),
+          // GP1: join can transiently fail (token race, brief network
+          // blip) — a retry beats a dead-end snackbar.
+          action: SnackBarAction(
+            label: 'Ещё раз',
+            onPressed: _joinActiveCall,
           ),
         ),
       );
