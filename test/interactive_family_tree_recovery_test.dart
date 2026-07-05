@@ -79,4 +79,54 @@ void main() {
       expect(find.text('Вернуться к дереву'), findsNothing);
     },
   );
+
+  testWidgets(
+    'recovery pill does not outlive the tree: it dismisses when peopleData '
+    'drops to empty while the pill is showing',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.reset());
+
+      Widget build(List<Map<String, dynamic>> data) => MaterialApp(
+            home: Scaffold(
+              body: InteractiveFamilyTree(
+                peopleData: data,
+                relations: const <FamilyRelation>[],
+                onPersonTap: (_) {},
+                isEditMode: false,
+                onAddRelativeTapWithType: (_, __) {},
+                currentUserIsInTree: false,
+                onAddSelfTapWithType: (_, __) async {},
+                currentUserId: 'user-1',
+              ),
+            ),
+          );
+
+      await tester.pumpWidget(build(<Map<String, dynamic>>[
+        {'person': person('person-a', 'Анна', Gender.female),
+            'userProfile': null},
+        {'person': person('person-b', 'Борис', Gender.male),
+            'userProfile': null},
+      ]));
+      await tester.pumpAndSettle();
+
+      // Drive the tree fully off the viewport → pill shows after debounce.
+      final viewer =
+          tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+      viewer.transformationController!.value = Matrix4.identity()
+        ..translateByDouble(-8000.0, -8000.0, 0.0, 1.0)
+        ..scaleByDouble(0.08, 0.08, 1.0, 1.0);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Вернуться к дереву'), findsOneWidget);
+
+      // Data reloads to zero people (branch/filter/reload) while the pill is
+      // up. The pill must not float over the now-empty canvas — the empty
+      // layout branch clears _treeOffscreen and cancels the debounce.
+      await tester.pumpWidget(build(const <Map<String, dynamic>>[]));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Вернуться к дереву'), findsNothing);
+    },
+  );
 }

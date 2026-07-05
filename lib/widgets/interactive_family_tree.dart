@@ -925,11 +925,19 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   // Метод для расчета позиций узлов и связей
   void _calculateLayout() {
     if (widget.peopleData.isEmpty) {
+      // Дерево опустело: сбрасываем pill «Вернуться к дереву» и гасим
+      // in-flight debounce, иначе он останется висеть над пустым канвасом —
+      // _evaluateTreeOffscreen после этого рано выходит на treeSize==zero и
+      // уже не может снять флаг (единственный сброс — в _fitTreeToViewport,
+      // который тут не вызывается).
+      _offscreenDebounceTimer?.cancel();
+      _offscreenDebounceTimer = null;
       setState(() {
         nodePositions = {};
         _automaticNodePositions = {};
         connections = [];
         treeSize = Size.zero;
+        _treeOffscreen = false;
       });
       return;
     }
