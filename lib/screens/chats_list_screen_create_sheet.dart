@@ -108,6 +108,10 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
   }
 
   Future<void> _loadParticipants() async {
+    // Снимок вида ветки ДО await'ов: _relationLabel зовётся и до
+    // mounted-чека, а context.read на defunct-элементе бросает.
+    _isFriendsCircleSnapshot =
+        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
     try {
       final results = await Future.wait([
         _familyTreeService.getRelatives(widget.treeId),
@@ -156,6 +160,9 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
     }
   }
 
+  // Снимок «это круг друзей» — читается в _loadParticipants до await'ов.
+  bool _isFriendsCircleSnapshot = false;
+
   String _relationLabel(FamilyPerson person) {
     final relation = (person.relation ?? '').trim();
     if (relation.isNotEmpty) {
@@ -163,9 +170,7 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
     }
     // В круге друзей fallback «Родственник» врал (смоук 2026-07-04) —
     // у участников круга relation пустой, подпись должна быть «Друг».
-    final isFriendsCircle =
-        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
-    return isFriendsCircle ? 'Друг' : 'Родственник';
+    return _isFriendsCircleSnapshot ? 'Друг' : 'Родственник';
   }
 
   List<_BranchChatCandidate> _buildBranchCandidates(

@@ -60,6 +60,9 @@ class _CallScreenState extends State<CallScreen> {
   // Дебаунс «Завершить»: второй тап во время exit-анимации снимал бы
   // нижележащий роут вторым maybePop.
   bool _isFinishingCall = false;
+  // Дисмисс запрашиваем один раз: повторные notify-микротаски не должны
+  // дёргать navigator после того, как закрытие уже пошло.
+  bool _dismissRequested = false;
   // Видел ли листенер СВОЙ звонок в координаторе — гейт для дисмисса
   // по id-mismatch (см. _handleCoordinatorChanged).
   bool _coordinatorTrackedOurCall = false;
@@ -581,12 +584,19 @@ class _CallScreenState extends State<CallScreen> {
   /// (скаут 2026-07-04, stuck-path №1: _currentCall уже null, повторного
   /// notify не будет).
   void _dismissCallScreen() {
-    if (!mounted) {
+    if (!mounted || _dismissRequested) {
       return;
     }
     final navigator = Navigator.of(context);
     final ownRoute = ModalRoute.of(context);
-    if (ownRoute != null && !ownRoute.isCurrent) {
+    // Роут уже снят (exit-анимация, чужой pop): его нет в history —
+    // popUntil никогда не нашёл бы предикат и слил бы ВЕСЬ стек до
+    // первого роута (ревью батча). isActive == «ещё в history».
+    if (ownRoute == null || !ownRoute.isActive) {
+      return;
+    }
+    _dismissRequested = true;
+    if (!ownRoute.isCurrent) {
       navigator.popUntil((route) => route == ownRoute || route.isFirst);
     }
     navigator.maybePop();

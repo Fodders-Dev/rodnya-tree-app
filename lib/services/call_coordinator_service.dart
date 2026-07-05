@@ -592,18 +592,23 @@ class CallCoordinatorService extends ChangeNotifier
     if (inFlight != null && _acceptInFlightCallId == resolvedCallId) {
       return inFlight;
     }
+    late final Future<CallInvite> future;
     Future<CallInvite> run() async {
       try {
         final invite = await _callService.acceptCall(resolvedCallId);
         await _applyCall(invite);
         return invite;
       } finally {
-        _acceptInFlight = null;
-        _acceptInFlightCallId = null;
+        // Чистим memo ТОЛЬКО если он всё ещё наш: медленный accept
+        // звонка A не должен затирать memo уже стартовавшего B.
+        if (identical(_acceptInFlight, future)) {
+          _acceptInFlight = null;
+          _acceptInFlightCallId = null;
+        }
       }
     }
 
-    final future = run();
+    future = run();
     _acceptInFlight = future;
     _acceptInFlightCallId = resolvedCallId;
     return future;
@@ -621,18 +626,21 @@ class CallCoordinatorService extends ChangeNotifier
     if (inFlight != null && _joinInFlightCallId == resolvedCallId) {
       return inFlight;
     }
+    late final Future<CallInvite> future;
     Future<CallInvite> run() async {
       try {
         final invite = await _callService.joinCall(resolvedCallId);
         await _applyCall(invite);
         return invite;
       } finally {
-        _joinInFlight = null;
-        _joinInFlightCallId = null;
+        if (identical(_joinInFlight, future)) {
+          _joinInFlight = null;
+          _joinInFlightCallId = null;
+        }
       }
     }
 
-    final future = run();
+    future = run();
     _joinInFlight = future;
     _joinInFlightCallId = resolvedCallId;
     return future;
@@ -646,16 +654,19 @@ class CallCoordinatorService extends ChangeNotifier
         _finishInFlightCallId == resolvedForDedup) {
       return inFlight;
     }
+    late final Future<CallInvite?> future;
     Future<CallInvite?> run() async {
       try {
         return await _finishCallInner(callId);
       } finally {
-        _finishInFlight = null;
-        _finishInFlightCallId = null;
+        if (identical(_finishInFlight, future)) {
+          _finishInFlight = null;
+          _finishInFlightCallId = null;
+        }
       }
     }
 
-    final future = run();
+    future = run();
     if (resolvedForDedup != null) {
       _finishInFlight = future;
       _finishInFlightCallId = resolvedForDedup;
@@ -1360,8 +1371,12 @@ class CallCoordinatorService extends ChangeNotifier
       await listener.dispose();
       await room.dispose();
       _hasMediaPermissionIssue = _looksLikeMediaPermissionIssue(error);
+      // Mode-aware и здесь (ревью батча): аудио-звонок не должен пугать
+      // «или камере» и на connect-catch пути, не только на pre-flight.
       _connectionError = _hasMediaPermissionIssue
-          ? 'Нет доступа к микрофону или камере. Разрешите доступ в настройках приложения.'
+          ? (call.mediaMode.isVideo
+              ? 'Нет доступа к микрофону или камере. Разрешите доступ в настройках приложения.'
+              : 'Нет доступа к микрофону. Разрешите доступ в настройках приложения.')
           : 'Не удалось подключиться к звонку.';
       // Connection-level failure уже surface'ится через connectionError —
       // mic-specific signal на этом этапе redundant. Clear чтобы не
