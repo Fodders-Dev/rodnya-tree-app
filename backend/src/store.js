@@ -6044,6 +6044,15 @@ class FileStore {
     // graph is one step behind the legacy state.
     this._syncGraphFromLegacy(data);
     this._writeQueue = this._writeQueue.then(async () => {
+      // store-race guard: read the freshest persisted calls INSIDE this
+      // serialized write link (all prior writes have landed) and keep any
+      // terminal call terminal — see _preserveTerminalCalls.
+      try {
+        const currentRaw = await fs.readFile(this.dataPath, "utf8");
+        this._preserveTerminalCalls(data, JSON.parse(currentRaw)?.calls);
+      } catch (_) {
+        // First write / missing file — nothing persisted to preserve.
+      }
       const directoryPath = path.dirname(this.dataPath);
       const tempPath = path.join(
         directoryPath,
@@ -6054,6 +6063,43 @@ class FileStore {
       await fs.rename(tempPath, this.dataPath);
     });
     return this._writeQueue;
+  }
+
+  /**
+   * store-race guard: enforce the invariant that a terminal call never
+   * un-terminates. The whole-document store persists all of `data` on every
+   * write, so a write built on a STALE (pre-teardown) snapshot would otherwise
+   * resurrect a call that hangup / ring-timeout just ended — the lost-update
+   * the GP3 add-mid-call review flagged, and the top teardown-regression risk.
+   * `currentCalls` is the freshest persisted calls array (read inside the
+   * serialized write); any call terminal there is kept terminal in `data`.
+   * This is a CORRECT invariant (calls never un-end), not a merge heuristic.
+   * It does NOT address the broader whole-document lost-update for concurrent
+   * NON-terminal edits — that remains the store-wide atomicity task.
+   */
+  _preserveTerminalCalls(data, currentCalls) {
+    if (!Array.isArray(data?.calls) || data.calls.length === 0) {
+      return;
+    }
+    if (!Array.isArray(currentCalls) || currentCalls.length === 0) {
+      return;
+    }
+    const terminalById = new Map();
+    for (const call of currentCalls) {
+      if (call && isCallTerminalState(String(call.state || ""))) {
+        terminalById.set(String(call.id || ""), call);
+      }
+    }
+    if (terminalById.size === 0) {
+      return;
+    }
+    for (let index = 0; index < data.calls.length; index += 1) {
+      const call = data.calls[index];
+      const terminal = terminalById.get(String(call?.id || ""));
+      if (terminal && !isCallTerminalState(String(call?.state || ""))) {
+        data.calls[index] = terminal;
+      }
+    }
   }
 
   _rememberSession(session) {

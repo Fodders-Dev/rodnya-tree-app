@@ -1363,6 +1363,43 @@ test("group call: POST /add pulls a new chat member into a live call, and last-l
   }
 });
 
+test("store-race: a stale write cannot resurrect an ended call (terminal-call monotonicity)", async () => {
+  const g = await startGroupCallFixture("stalewrite");
+  try {
+    await callAction(g.ctx, g.startedCall.id, "accept", g.bob); // → active
+
+    // Capture a STALE snapshot of the whole store while the call is active —
+    // stands in for a concurrent writer that _read() before the teardown.
+    const staleDb = await g.ctx.store._read();
+    const staleCall = staleDb.calls.find((c) => c.id === g.startedCall.id);
+    assert.equal(staleCall.state, "active");
+
+    // End the call (last connected participant leaves).
+    await callAction(g.ctx, g.startedCall.id, "hangup", g.bob);
+    const finalHangup = await callAction(
+      g.ctx,
+      g.startedCall.id,
+      "hangup",
+      g.caller,
+    );
+    assert.equal((await finalHangup.json()).call.state, "ended");
+
+    // The lagging writer now commits its stale (active) snapshot — even
+    // touching the ended call. The terminal-call guard must keep it ended.
+    staleCall.updatedAt = new Date().toISOString();
+    await g.ctx.store._write(staleDb);
+
+    const finalCall = await g.ctx.store.findCall(g.startedCall.id);
+    assert.equal(
+      finalCall.state,
+      "ended",
+      "a stale write must not resurrect an ended call",
+    );
+  } finally {
+    await stopTestServer(g.ctx);
+  }
+});
+
 test("addCallParticipantSession is idempotent for the first joiner and never re-flips scalars", async () => {
   const g = await startGroupCallFixture("idem");
   try {

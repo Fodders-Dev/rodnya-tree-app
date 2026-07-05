@@ -1727,6 +1727,24 @@ class PostgresStore extends FileStore {
     }
     return this._enqueueWrite("_stateWriteQueue", async () => {
       await this.initialize();
+      // store-race guard: read the freshest persisted calls inside this
+      // serialized write link and keep any terminal call terminal, so a write
+      // built on a stale pre-teardown snapshot can't resurrect an ended call
+      // (inherited FileStore._preserveTerminalCalls; same invariant as file).
+      try {
+        const currentResult = await this._pool.query(
+          `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
+          [this._rowId],
+        );
+        const currentData = currentResult.rows?.[0]?.data;
+        const parsedCurrent =
+          typeof currentData === "string"
+            ? JSON.parse(currentData)
+            : currentData;
+        this._preserveTerminalCalls(data, parsedCurrent?.calls);
+      } catch (_) {
+        // First write / row absent — nothing persisted to preserve.
+      }
       const nextUsersHash = computeProjectionHash(data?.users);
       const nextSessionsHash = computeProjectionHash(data?.sessions);
       await this._pool.query(
