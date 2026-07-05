@@ -926,6 +926,24 @@ class _CallScreenState extends State<CallScreen> {
           .firstWhereOrNull((entry) => entry.source == TrackSource.camera);
       final track =
           participant.isCurrentUser ? localVideoTrack : publication?.track;
+      // GP4: mute + active-speaker per tile. Read at build — the
+      // coordinator's catch-all on<RoomEvent> re-notifies on TrackMuted/
+      // Unmuted and ActiveSpeakersChanged, so this reflects live state.
+      final bool isMuted;
+      final bool isSpeaking;
+      if (participant.isCurrentUser) {
+        isMuted = !widget.coordinator.microphoneEnabled;
+        isSpeaking =
+            widget.coordinator.room?.localParticipant?.isSpeaking ?? false;
+      } else if (remoteParticipant != null) {
+        final audioPublication =
+            remoteParticipant.audioTrackPublications.firstOrNull;
+        isMuted = audioPublication?.muted ?? false;
+        isSpeaking = remoteParticipant.isSpeaking;
+      } else {
+        isMuted = false;
+        isSpeaking = false;
+      }
       return _VideoTileData(
         track: track,
         label: participant.displayName,
@@ -934,6 +952,8 @@ class _CallScreenState extends State<CallScreen> {
         statusColor: _stateColorForGroupParticipant(participant.state),
         mirror: participant.isCurrentUser &&
             widget.coordinator.cameraPosition == CameraPosition.front,
+        isMuted: isMuted,
+        isSpeaking: isSpeaking,
       );
     }).toList(growable: false);
   }
@@ -1901,6 +1921,8 @@ class _VideoTileData {
     required this.statusColor,
     this.mirror = false,
     this.photoUrl,
+    this.isMuted = false,
+    this.isSpeaking = false,
   });
 
   final VideoTrack? track;
@@ -1909,6 +1931,10 @@ class _VideoTileData {
   final Color statusColor;
   final bool mirror;
   final String? photoUrl;
+  // GP4: mic muted → mic-off badge; active speaker → highlighted tile border.
+  // Camera-off is already conveyed by the avatar fallback (track == null).
+  final bool isMuted;
+  final bool isSpeaking;
 }
 
 enum _GroupCallParticipantConnectionState {
@@ -2257,7 +2283,15 @@ class _RemoteVideoTile extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.08),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          // GP4: active speaker → green highlighted border (2.5px). Inside
+          // the ClipRRect a border reads better than a shadow glow (shadows
+          // are clipped). Idle tiles keep the faint 1px hairline.
+          border: Border.all(
+            color: tile.isSpeaking
+                ? const Color(0xFF37B24D)
+                : Colors.white.withValues(alpha: 0.10),
+            width: tile.isSpeaking ? 2.5 : 1,
+          ),
         ),
         child: Stack(
           fit: StackFit.expand,
@@ -2321,14 +2355,28 @@ class _RemoteVideoTile extends StatelessWidget {
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  child: Text(
-                    tile.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // GP4: mic-off badge in front of the name when muted.
+                      if (tile.isMuted) ...[
+                        const Icon(
+                          Icons.mic_off_rounded,
+                          size: 13,
+                          color: Color(0xFFFF8787),
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      Text(
+                        tile.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
