@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
+import '../models/call_media_mode.dart';
 import '../models/family_tree.dart';
 import '../screens/auth_screen.dart';
 import '../screens/browse_tree_screen.dart';
@@ -289,6 +290,9 @@ class AppOverlayRouteModule {
           final otherUserId = state.uri.queryParameters['userId'];
           final relativeId = state.uri.queryParameters['relativeId'];
           final chatType = state.uri.queryParameters['type'] ?? 'direct';
+          // GP2: chats-list «Позвонить» action opens the chat with
+          // ?startCall=audio|video to auto-trigger the group-call flow.
+          final startCall = state.uri.queryParameters['startCall'];
 
           return RodnyaCustomTransitionPage(
             key: state.pageKey,
@@ -303,6 +307,9 @@ class AppOverlayRouteModule {
                   ? relativeId
                   : null,
               chatType: chatType,
+              autoStartCall: startCall == 'video'
+                  ? CallMediaMode.video
+                  : (startCall == 'audio' ? CallMediaMode.audio : null),
             ),
             transitionsBuilder: AppRouteTransitions.slide,
           );

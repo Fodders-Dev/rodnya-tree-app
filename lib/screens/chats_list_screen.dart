@@ -599,6 +599,25 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // GP2: group calls straight from the list — open the chat and
+            // auto-run its call flow (discovery → picker → start).
+            if (chat.isGroup) ...[
+              ListTile(
+                leading: const Icon(Icons.call_outlined),
+                title: const Text('Позвонить'),
+                subtitle: const Text('Групповой аудиозвонок участникам чата.'),
+                onTap: () =>
+                    Navigator.of(context).pop(_ChatListAction.callAudio),
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined),
+                title: const Text('Видеозвонок'),
+                subtitle: const Text('Групповой видеозвонок участникам чата.'),
+                onTap: () =>
+                    Navigator.of(context).pop(_ChatListAction.callVideo),
+              ),
+              const Divider(height: 1),
+            ],
             ListTile(
               leading: Icon(
                 isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
@@ -633,7 +652,33 @@ class _ChatsListScreenState extends State<ChatsListScreen>
       case _ChatListAction.unarchive:
         await _setChatArchived(chat, false);
         break;
+      case _ChatListAction.callAudio:
+        _startGroupCallFromList(chat, 'audio');
+        break;
+      case _ChatListAction.callVideo:
+        _startGroupCallFromList(chat, 'video');
+        break;
     }
+  }
+
+  // GP2: open the group chat via its route with ?startCall so ChatScreen
+  // auto-triggers the call once details load. Full-route (not the desktop
+  // pane) keeps a single code path across layouts and avoids stale
+  // one-shot state on the reused pane.
+  void _startGroupCallFromList(ChatPreview chat, String mode) {
+    final titleParam = Uri.encodeComponent(chat.title ?? 'Чат');
+    final typeParam = Uri.encodeComponent(chat.type);
+    final photoParam = (chat.photoUrl != null && chat.photoUrl!.isNotEmpty)
+        ? '&photo=${Uri.encodeComponent(chat.photoUrl!)}'
+        : '';
+    unawaited(
+      context
+          .push(
+            '/chats/view/${chat.chatId}?type=$typeParam&title=$titleParam'
+            '$photoParam&startCall=$mode',
+          )
+          .then((_) => unawaited(_loadAuxiliaryChatState())),
+    );
   }
 
   void _loadRelatives() async {
@@ -1809,4 +1854,4 @@ enum _ChatComposerMode { direct, group, branch, branches }
 
 enum _ChatsVisibilityFilter { all, unread, archived }
 
-enum _ChatListAction { archive, unarchive }
+enum _ChatListAction { archive, unarchive, callAudio, callVideo }

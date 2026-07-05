@@ -98,6 +98,7 @@ class ChatScreen extends StatefulWidget {
     this.embedded = false,
     this.onOpenDirectChat,
     this.clipboardImages,
+    this.autoStartCall,
   }) : assert(
           (chatId != null && chatId != '') ||
               (otherUserId != null && otherUserId != ''),
@@ -110,6 +111,9 @@ class ChatScreen extends StatefulWidget {
   final String? photoUrl;
   final String? relativeId;
   final String chatType;
+  // GP2: when opened from a chats-list «Позвонить» action, auto-trigger the
+  // group-call flow once chat details (candidates) have loaded.
+  final CallMediaMode? autoStartCall;
   final Future<List<XFile>> Function()? pickImages;
   final Future<XFile?> Function()? pickVideo;
   final ChatDraftStore? draftStore;
@@ -153,6 +157,10 @@ class _ChatScreenState extends State<ChatScreen> {
     '🙏',
     '🔥',
   ];
+
+  // GP2: guards the one-shot auto-start-call trigger (widget.autoStartCall)
+  // against _loadChatDetails running more than once (cache + API).
+  bool _autoStartCallConsumed = false;
 
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
@@ -1458,6 +1466,14 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         }
       });
+
+      // GP2: opened from a chats-list «Позвонить» action — candidates are
+      // now loaded, so fire the group-call flow exactly once (it runs the
+      // same discovery → picker → start path as the header call button).
+      if (widget.autoStartCall != null && !_autoStartCallConsumed && mounted) {
+        _autoStartCallConsumed = true;
+        unawaited(_startCallFromHeader(widget.autoStartCall!));
+      }
     } catch (_) {
       if (!mounted) {
         return;
