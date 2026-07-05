@@ -1802,6 +1802,68 @@ void main() {
     expect(find.byTooltip('К последним сообщениям'), findsNothing);
   });
 
+  testWidgets(
+      'G: бейдж «новые снизу» на jump-FAB — входящее при отскролле '
+      'считается, свои и возврат вниз сбрасывают', (tester) async {
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        const ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+        ),
+      ),
+    );
+
+    final history = List<ChatMessage>.generate(
+      24,
+      (index) => ChatMessage(
+        id: 'm-$index',
+        chatId: 'chat-1',
+        senderId: index.isEven ? 'user-1' : 'other-user',
+        text: 'Сообщение $index',
+        timestamp: DateTime(2026, 4, 11, 10, index),
+        isRead: true,
+        participants: const ['user-1', 'other-user'],
+        senderName: index.isEven ? 'Артем' : 'Собеседник',
+      ),
+    );
+    chatService.emitMessages(history);
+    await tester.pumpAndSettle();
+
+    // Отскроллились вверх — FAB виден, бейджа ещё нет.
+    await tester.drag(find.byType(ListView).first, const Offset(0, 500));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('К последним сообщениям'), findsOneWidget);
+    expect(find.byType(Badge), findsOneWidget);
+    expect((tester.widget<Badge>(find.byType(Badge))).isLabelVisible, isFalse);
+
+    // Пришло входящее, пока мы наверху → бейдж «1».
+    chatService.emitMessages([
+      ...history,
+      ChatMessage(
+        id: 'm-new-1',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Новое сообщение',
+        timestamp: DateTime(2026, 4, 11, 11, 0),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Собеседник',
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect((tester.widget<Badge>(find.byType(Badge))).isLabelVisible, isTrue);
+    expect(find.text('1'), findsOneWidget);
+
+    // Тап по FAB — вниз, бейдж и FAB исчезают.
+    await tester.tap(find.byTooltip('К последним сообщениям'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('К последним сообщениям'), findsNothing);
+  });
+
   testWidgets('ChatScreen lets user reply to a message with quote preview',
       (tester) async {
     final chatService = _FakeChatService();

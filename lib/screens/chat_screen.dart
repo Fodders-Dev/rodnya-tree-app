@@ -208,6 +208,18 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _showJumpToLatestButton = false;
   bool _didInitialUnreadJump = false;
   String? _unreadAnchorMessageId;
+  // Sticky unread (UX-аудит P1): сколько НОВЫХ входящих пришло снизу,
+  // пока юзер отскроллен вверх — бейдж на jump-FAB (Telegram-паттерн).
+  // Серверный unreadCount мёртв для этого: _markChatAsRead гасит его
+  // через секунды после прихода независимо от скролла — считаем
+  // клиентской сессией. Леджер прихода отдельный от
+  // _seenRemoteMessageIds (тот заполняется только для ПОСТРОЕННЫХ
+  // бабблов и пропускает всё за cacheExtent).
+  int _newBelowViewportCount = 0;
+  final Set<String> _arrivalLedgerIds = <String>{};
+  // Плавающий чип «N новых»: разделитель непрочитанного выше вьюпорта
+  // (включая случай за cacheExtent, где initial-jump молча не сработал).
+  bool _unreadDividerAboveViewport = false;
   ChatReplyReference? _selectedReply;
   _ForwardDraft? _selectedForward;
   _ForwardBatchDraft? _selectedForwardBatch;
@@ -1189,6 +1201,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _bootstrapError = null;
       _didInitialUnreadJump = false;
       _unreadAnchorMessageId = null;
+      _newBelowViewportCount = 0;
+      _arrivalLedgerIds.clear();
+      _unreadDividerAboveViewport = false;
     });
 
     try {
@@ -3190,9 +3205,68 @@ class _ChatScreenState extends State<ChatScreen> {
     if (shouldShow != _showJumpToLatestButton && mounted) {
       setState(() {
         _showJumpToLatestButton = shouldShow;
+        if (!shouldShow) {
+          // Дошли до низа — «новые снизу» прочитаны глазами.
+          _newBelowViewportCount = 0;
+        }
       });
     }
     _updateFloatingDayHeader();
+    _updateUnreadChipVisibility();
+  }
+
+  /// Чип «N новых» показывается, пока разделитель непрочитанного выше
+  /// вьюпорта. Если разделитель построен — сравниваем его глобальный dy
+  /// с верхом вьюпорта (reverse-список: старое сверху); если он за
+  /// cacheExtent (context == null) — fallback по времени: самый верхний
+  /// видимый баббл НОВЕЕ якоря ⇒ разделитель выше.
+  void _updateUnreadChipVisibility() {
+    if (!mounted) return;
+    final anchorId = _unreadAnchorMessageId;
+    bool above = false;
+    if (anchorId != null) {
+      final dividerContext = _unreadDividerKey.currentContext;
+      final dividerBox = dividerContext?.findRenderObject();
+      if (dividerBox is RenderBox && dividerBox.attached) {
+        final dy = dividerBox.localToGlobal(Offset.zero).dy;
+        final viewportTop = _messagesViewportTopEdge();
+        above = dy < viewportTop;
+      } else if (dividerContext == null) {
+        final anchorMessage = _findMessageById(anchorId);
+        final topmostVisible = _topmostVisibleMessage();
+        if (anchorMessage != null && topmostVisible != null) {
+          above = topmostVisible.timestamp.isAfter(anchorMessage.timestamp);
+        }
+      }
+    }
+    if (above != _unreadDividerAboveViewport) {
+      setState(() => _unreadDividerAboveViewport = above);
+    }
+  }
+
+  double _messagesViewportTopEdge() {
+    final box = context.findRenderObject();
+    if (box is RenderBox && box.attached) {
+      return box.localToGlobal(Offset.zero).dy;
+    }
+    return 0;
+  }
+
+  ChatMessage? _topmostVisibleMessage() {
+    ChatMessage? best;
+    double bestDy = double.infinity;
+    for (final entry in _remoteMessageKeys.entries) {
+      final renderObject = entry.value.currentContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) {
+        continue;
+      }
+      final dy = renderObject.localToGlobal(Offset.zero).dy;
+      if (dy >= -8 && dy < bestDy) {
+        bestDy = dy;
+        best = _findMessageById(entry.key);
+      }
+    }
+    return best;
   }
 
   /// Walks the live remote-bubble GlobalKeys and finds the one closest
@@ -3260,6 +3334,46 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _showJumpToLatestButton = false;
       _unreadAnchorMessageId = null;
+      _newBelowViewportCount = 0;
+      _unreadDividerAboveViewport = false;
+    });
+  }
+
+  /// Тап по чипу «N новых»: к разделителю непрочитанного. Если он
+  /// построен — плавный ensureVisible; если за cacheExtent — уезжаем к
+  /// старому краю и добираем ensureVisible после построения.
+  Future<void> _scrollToUnreadDivider() async {
+    final dividerContext = _unreadDividerKey.currentContext;
+    if (dividerContext != null) {
+      await Scrollable.ensureVisible(
+        dividerContext,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        alignment: 0.12,
+      );
+      return;
+    }
+    if (!_messagesScrollController.hasClients) {
+      return;
+    }
+    await _messagesScrollController.animateTo(
+      _messagesScrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final builtContext = _unreadDividerKey.currentContext;
+      if (builtContext != null) {
+        unawaited(
+          Scrollable.ensureVisible(
+            builtContext,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: 0.12,
+          ),
+        );
+      }
     });
   }
 
@@ -4176,7 +4290,21 @@ class _ChatScreenState extends State<ChatScreen> {
         // ones the bubble enter animation should fire on.
         if (!_remoteHistoryHydrated && remoteMessages.isNotEmpty) {
           _seenRemoteMessageIds.addAll(remoteMessages.map((m) => m.id));
+          _arrivalLedgerIds.addAll(remoteMessages.map((m) => m.id));
           _remoteHistoryHydrated = true;
+        } else if (_remoteHistoryHydrated) {
+          // Sticky unread: считаем НОВЫЕ входящие, пришедшие пока юзер
+          // отскроллен вверх — бейдж на jump-FAB. Мутация поля в build —
+          // установленный паттерн (_latestRemoteMessages строкой выше);
+          // FAB строится ниже в этом же проходе.
+          for (final message in remoteMessages) {
+            if (_arrivalLedgerIds.add(message.id) &&
+                message.senderId != _currentUserId &&
+                _messagesScrollController.hasClients &&
+                _messagesScrollController.offset > 120) {
+              _newBelowViewportCount += 1;
+            }
+          }
         }
         _schedulePinnedSync(remoteMessages);
         final currentChatId = _chatId;
@@ -4286,6 +4414,19 @@ class _ChatScreenState extends State<ChatScreen> {
             unreadAnchorMessageId != null &&
             remoteMessages
                 .any((message) => message.id == unreadAnchorMessageId);
+        // «N новых» для плавающего чипа: входящие от якоря (самое старое
+        // непрочитанное) до свежайшего. Список newest-first — это
+        // индексы 0..anchorIndex.
+        var unreadChipCount = 0;
+        if (hasUnreadDivider) {
+          final anchorIndex = remoteMessages
+              .indexWhere((message) => message.id == unreadAnchorMessageId);
+          for (var i = 0; i <= anchorIndex; i++) {
+            if (remoteMessages[i].senderId != _currentUserId) {
+              unreadChipCount += 1;
+            }
+          }
+        }
         final searchMatchCount = _searchMatchCount(
           filteredRemoteMessages,
           filteredOptimisticMessages,
@@ -4452,6 +4593,73 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
+            // Sticky unread: разделитель «Непрочитанные» ускроллен выше
+            // вьюпорта (или вовсе за cacheExtent) — плавающий чип
+            // «N новых» возвращает к нему одним тапом.
+            if (_unreadDividerAboveViewport &&
+                hasUnreadDivider &&
+                unreadChipCount > 0 &&
+                !hasActiveSearch)
+              Positioned(
+                top: 44,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      key: const ValueKey('unread-floating-chip'),
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: _scrollToUnreadDivider,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primaryContainer
+                              .withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.25),
+                            width: 0.6,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.keyboard_arrow_up_rounded,
+                              size: 16,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$unreadChipCount новых',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onPrimaryContainer,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             // Telegram-style entry: scale 0 → 1 with elastic overshoot
             // + fade. AnimatedSwitcher (vs AnimatedScale) actually
             // mounts / unmounts the FAB, so the existing test that
@@ -4471,12 +4679,19 @@ class _ChatScreenState extends State<ChatScreen> {
                   );
                 },
                 child: _showJumpToLatestButton
-                    ? FloatingActionButton.small(
+                    // Бейдж с числом новых снизу (Telegram). Key живёт на
+                    // Badge — AnimatedSwitcher диффит прямого ребёнка.
+                    ? Badge.count(
                         key: const ValueKey('jump-to-latest-fab'),
-                        heroTag: 'jump-to-latest',
-                        onPressed: _jumpToLatestMessages,
-                        tooltip: 'К последним сообщениям',
-                        child: const Icon(Icons.keyboard_arrow_down_rounded),
+                        count: _newBelowViewportCount,
+                        isLabelVisible: _newBelowViewportCount > 0,
+                        offset: const Offset(-2, 2),
+                        child: FloatingActionButton.small(
+                          heroTag: 'jump-to-latest',
+                          onPressed: _jumpToLatestMessages,
+                          tooltip: 'К последним сообщениям',
+                          child: const Icon(Icons.keyboard_arrow_down_rounded),
+                        ),
                       )
                     : const SizedBox.shrink(
                         key: ValueKey('jump-to-latest-empty')),
