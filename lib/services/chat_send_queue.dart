@@ -70,6 +70,17 @@ class ChatPendingMessage {
     final currentProgress = progress;
     final completed = currentProgress?.completed ?? 0;
     if (status == ChatPendingMessageStatus.failed) {
+      // Стадия sending — файлы УЖЕ загружены (сервис эмитит completed/
+      // total в POST-единицах 1/1, не в файловых): упал финальный POST,
+      // плитки все done, сообщение ретраится целиком кнопкой «Повторить».
+      // Иначе (uploading/preparing) — completed в файловых единицах:
+      // догруженные done, начиная с упавшего — failed.
+      if (currentProgress?.stage == ChatSendProgressStage.sending) {
+        return List<ChatAttachmentUploadStatus>.filled(
+          total,
+          ChatAttachmentUploadStatus.done,
+        );
+      }
       return List<ChatAttachmentUploadStatus>.generate(
         total,
         (i) => i < completed

@@ -308,6 +308,22 @@ void main() {
       expect(message.attachmentUploadStatuses, [d, f, f]);
     });
 
+    test(
+        'failed на финальном POST (stage sending, все файлы загружены) → '
+        'все плитки done, хвост НЕ красится ошибкой', () {
+      // Сервис эмитит sending в POST-единицах (completed:1/total:1) даже
+      // при 3 вложениях — раньше это красило плитки 1..N как failed.
+      final message = buildPending(
+        status: ChatPendingMessageStatus.failed,
+        progress: const ChatSendProgress(
+          stage: ChatSendProgressStage.sending,
+          completed: 1,
+          total: 1,
+        ),
+      );
+      expect(message.attachmentUploadStatuses, [d, d, d]);
+    });
+
     test('без вложений — пустой список', () {
       final message = buildPending(
         status: ChatPendingMessageStatus.pending,

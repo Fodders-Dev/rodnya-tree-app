@@ -217,9 +217,16 @@ class _ChatScreenState extends State<ChatScreen> {
   // бабблов и пропускает всё за cacheExtent).
   int _newBelowViewportCount = 0;
   final Set<String> _arrivalLedgerIds = <String>{};
+  // База «самое свежее сообщение, что мы видели» — чтобы старые
+  // сообщения, доехавшие смёрдженной страницей на реконнекте, не
+  // считались «новыми снизу» (ревью батча).
+  DateTime? _newestArrivalSeen;
   // Плавающий чип «N новых»: разделитель непрочитанного выше вьюпорта
   // (включая случай за cacheExtent, где initial-jump молча не сработал).
   bool _unreadDividerAboveViewport = false;
+  // Верхний видимый баббл — стэшится в _updateFloatingDayHeader, чтобы
+  // чип непрочитанного не обходил ключи повторно (ревью батча).
+  ChatMessage? _topmostVisibleRemoteMessage;
   ChatReplyReference? _selectedReply;
   _ForwardDraft? _selectedForward;
   _ForwardBatchDraft? _selectedForwardBatch;
@@ -404,6 +411,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _messagesScrollController.dispose();
     _messageController.dispose();
     _searchController.dispose();
+    // Обнуляем pointer-привязку ДО dispose нотифаера: палец мог остаться
+    // опущенным на записи (юзер свернул чат вторым пальцем), а
+    // persistent-Listener продолжает слать move/up на down-time hit-path
+    // и после unmount — ранний выход в _handleRecordingPointer* по
+    // null id не даст записать в disposed ValueNotifier (ревью батча).
+    _recordingPointerId = null;
+    _recordingPointerOrigin = null;
     _recordingDragDx.dispose();
     _messageFocusNode.dispose();
     _typingHeartbeatTimer?.cancel();
@@ -759,7 +773,9 @@ class _ChatScreenState extends State<ChatScreen> {
   /// отменяет, слайд-вверх фиксирует (hands-free). Работает на raw-указателе
   /// со стабильного слоя, поэтому не зависит от ребилда композер↔бар.
   void _handleRecordingPointerMove(PointerMoveEvent event) {
-    if (_recordingPointerId == null || event.pointer != _recordingPointerId) {
+    if (!mounted ||
+        _recordingPointerId == null ||
+        event.pointer != _recordingPointerId) {
       return;
     }
     if (_recordingController.state != ChatRecordingState.recording) {
@@ -781,7 +797,11 @@ class _ChatScreenState extends State<ChatScreen> {
       // Указатель больше не ведёт запись — отпускание не должно отправить.
       _recordingPointerId = null;
       _recordingPointerOrigin = null;
-      _recordingDragDx.value = 0;
+      // dx НЕ сбрасываем в 0: _cancelRecording асинхронно рвёт рекордер,
+      // бар живёт ещё кадры до смены state — при сбросе он мигал бы в
+      // rest-визуал (полная волна, простой крестик). Оставляем взведённое
+      // красное; следующая запись обнулит dx в longPressStart (ревью).
+      _recordingDragDx.value = -_recordingCancelThreshold;
       unawaited(_cancelRecording());
       return;
     }
@@ -803,7 +823,9 @@ class _ChatScreenState extends State<ChatScreen> {
   /// C3a/V1 (FR1): надёжный конец press-hold — отпускание пальца завершает
   /// и ОТПРАВЛЯЕТ запись, даже после ребилда композер→бар.
   void _handleRecordingPointerUp(PointerUpEvent event) {
-    if (_recordingPointerId == null || event.pointer != _recordingPointerId) {
+    if (!mounted ||
+        _recordingPointerId == null ||
+        event.pointer != _recordingPointerId) {
       return;
     }
     if (_recordingController.state == ChatRecordingState.recording) {
@@ -821,7 +843,9 @@ class _ChatScreenState extends State<ChatScreen> {
   /// FX1/C3a FR2: прерванный жест (систему перехватили / pointer cancel) —
   /// это НЕ отправка. Отменяем запись (discard), а не шлём голосовое.
   void _handleRecordingPointerCancel(PointerCancelEvent event) {
-    if (_recordingPointerId == null || event.pointer != _recordingPointerId) {
+    if (!mounted ||
+        _recordingPointerId == null ||
+        event.pointer != _recordingPointerId) {
       return;
     }
     if (_recordingController.state == ChatRecordingState.recording) {
@@ -1216,6 +1240,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _unreadAnchorMessageId = null;
       _newBelowViewportCount = 0;
       _arrivalLedgerIds.clear();
+      _newestArrivalSeen = null;
       _unreadDividerAboveViewport = false;
     });
 
@@ -3229,15 +3254,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Чип «N новых» показывается, пока разделитель непрочитанного выше
-  /// вьюпорта. Если разделитель построен — сравниваем его глобальный dy
-  /// с верхом вьюпорта (reverse-список: старое сверху); если он за
-  /// cacheExtent (context == null) — fallback по времени: самый верхний
-  /// видимый баббл НОВЕЕ якоря ⇒ разделитель выше.
+  /// вьюпорта И юзер отскроллен от низа. Если разделитель построен —
+  /// сравниваем его глобальный dy с верхом вьюпорта (reverse-список:
+  /// старое сверху); если он за cacheExtent (context == null) — fallback
+  /// по времени: самый верхний видимый баббл НОВЕЕ якоря ⇒ разделитель
+  /// выше. Гейт offset>120 не даёт чипу висеть, когда мы у низа и всё
+  /// увидели (ревью батча: иначе timestamp-fallback вечно true у низа).
   void _updateUnreadChipVisibility() {
     if (!mounted) return;
     final anchorId = _unreadAnchorMessageId;
     bool above = false;
-    if (anchorId != null) {
+    final scrolledUp = _messagesScrollController.hasClients &&
+        _messagesScrollController.offset > 120;
+    if (anchorId != null && scrolledUp) {
       final dividerContext = _unreadDividerKey.currentContext;
       final dividerBox = dividerContext?.findRenderObject();
       if (dividerBox is RenderBox && dividerBox.attached) {
@@ -3246,7 +3275,11 @@ class _ChatScreenState extends State<ChatScreen> {
         above = dy < viewportTop;
       } else if (dividerContext == null) {
         final anchorMessage = _findMessageById(anchorId);
-        final topmostVisible = _topmostVisibleMessage();
+        // Переиспользуем topmost из _updateFloatingDayHeader (в scroll-
+        // пути он свежий и обходит ключи ОДИН раз); в post-frame пути,
+        // где day-header не считался, добираем собственным обходом.
+        final topmostVisible =
+            _topmostVisibleRemoteMessage ?? _topmostVisibleMessage();
         if (anchorMessage != null && topmostVisible != null) {
           above = topmostVisible.timestamp.isAfter(anchorMessage.timestamp);
         }
@@ -3255,6 +3288,20 @@ class _ChatScreenState extends State<ChatScreen> {
     if (above != _unreadDividerAboveViewport) {
       setState(() => _unreadDividerAboveViewport = above);
     }
+  }
+
+  /// Пересчёт видимости чипа после кадра — нужен, когда состояние
+  /// изменилось БЕЗ скролла (открытие чата с большим завалом: initial-
+  /// jump молча не сработал за cacheExtent; приход снапшота сдвинул
+  /// якорь). Дедуп через флаг, чтобы не копить колбэки на каждый build.
+  bool _unreadChipRecomputeScheduled = false;
+  void _scheduleUnreadChipRecompute() {
+    if (_unreadChipRecomputeScheduled) return;
+    _unreadChipRecomputeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _unreadChipRecomputeScheduled = false;
+      _updateUnreadChipVisibility();
+    });
   }
 
   double _messagesViewportTopEdge() {
@@ -3290,6 +3337,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _updateFloatingDayHeader() {
     if (!mounted) return;
     DateTime? bestDay;
+    ChatMessage? bestMessage;
     double bestDy = double.infinity;
     for (final entry in _remoteMessageKeys.entries) {
       final ctx = entry.value.currentContext;
@@ -3304,9 +3352,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (pos.dy >= -8 && pos.dy < bestDy) {
         bestDy = pos.dy;
         final msg = _findMessageById(entry.key);
-        if (msg != null) bestDay = msg.timestamp;
+        if (msg != null) {
+          bestDay = msg.timestamp;
+          bestMessage = msg;
+        }
       }
     }
+    // Стэшим topmost — чип переиспользует его вместо второго обхода.
+    _topmostVisibleRemoteMessage = bestMessage;
     if (bestDay != null && bestDay != _floatingDayHeader) {
       setState(() => _floatingDayHeader = bestDay);
     }
@@ -3352,9 +3405,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  /// Тап по чипу «N новых»: к разделителю непрочитанного. Если он
-  /// построен — плавный ensureVisible; если за cacheExtent — уезжаем к
-  /// старому краю и добираем ensureVisible после построения.
+  /// Тап по чипу «N новых»: к разделителю непрочитанного. Построен —
+  /// плавный ensureVisible; за cacheExtent — через _focusMessageById по
+  /// id якоря (оценка оффсета по индексу + добор), а не прыжок в самое
+  /// начало истории maxScrollExtent, который уводил юзера мимо (ревью).
   Future<void> _scrollToUnreadDivider() async {
     final dividerContext = _unreadDividerKey.currentContext;
     if (dividerContext != null) {
@@ -3366,28 +3420,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    if (!_messagesScrollController.hasClients) {
+    final anchorId = _unreadAnchorMessageId;
+    if (anchorId == null) {
       return;
     }
-    await _messagesScrollController.animateTo(
-      _messagesScrollController.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final builtContext = _unreadDividerKey.currentContext;
-      if (builtContext != null) {
-        unawaited(
-          Scrollable.ensureVisible(
-            builtContext,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            alignment: 0.12,
-          ),
-        );
-      }
-    });
+    // Разделитель рендерится прямо перед якорным сообщением — скролл к
+    // якорю выводит и разделитель.
+    await _focusMessageById(anchorId);
   }
 
   void _updateUnreadAnchor(List<ChatMessage> remoteMessages) {
@@ -4377,6 +4416,15 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!_remoteHistoryHydrated && remoteMessages.isNotEmpty) {
           _seenRemoteMessageIds.addAll(remoteMessages.map((m) => m.id));
           _arrivalLedgerIds.addAll(remoteMessages.map((m) => m.id));
+          // База «самое свежее, что видели» — по ней отличаем ГЕНУИННО
+          // новое от старого, доехавшего смёрдженной страницей на
+          // реконнекте (иначе бейдж раздувался на старые сообщения).
+          for (final message in remoteMessages) {
+            final seen = _newestArrivalSeen;
+            if (seen == null || message.timestamp.isAfter(seen)) {
+              _newestArrivalSeen = message.timestamp;
+            }
+          }
           _remoteHistoryHydrated = true;
         } else if (_remoteHistoryHydrated) {
           // Sticky unread: считаем НОВЫЕ входящие, пришедшие пока юзер
@@ -4384,11 +4432,19 @@ class _ChatScreenState extends State<ChatScreen> {
           // установленный паттерн (_latestRemoteMessages строкой выше);
           // FAB строится ниже в этом же проходе.
           for (final message in remoteMessages) {
-            if (_arrivalLedgerIds.add(message.id) &&
+            final isFresh = _arrivalLedgerIds.add(message.id);
+            final seen = _newestArrivalSeen;
+            final isNewerThanBaseline =
+                seen == null || message.timestamp.isAfter(seen);
+            if (isFresh &&
+                isNewerThanBaseline &&
                 message.senderId != _currentUserId &&
                 _messagesScrollController.hasClients &&
                 _messagesScrollController.offset > 120) {
               _newBelowViewportCount += 1;
+            }
+            if (isNewerThanBaseline) {
+              _newestArrivalSeen = message.timestamp;
             }
           }
         }
@@ -4485,6 +4541,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
         if (!hasActiveSearch) {
           _scheduleUnreadJumpIfNeeded();
+          // Чип «N новых» появляется/обновляется и без скролла — когда
+          // снапшот сдвинул якорь или чат открылся с завалом за
+          // cacheExtent (там initial-jump молча не срабатывает).
+          _scheduleUnreadChipRecompute();
         }
         String? latestOutgoingMessageId;
         if (!widget.isGroup) {
@@ -8421,8 +8481,10 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   // Вся строка — таргет для «в личку» (иконки справа
-                  // были единственной, слишком мелкой целью).
-                  onTap: isCurrentUser || _isSaving
+                  // были единственной, слишком мелкой целью). Только в
+                  // группе: в личном чате тап по собеседнику открыл бы
+                  // дубль того же чата (ревью батча).
+                  onTap: isCurrentUser || _isSaving || !_details.isGroup
                       ? null
                       : () => widget.onOpenDirectChat(participant),
                   leading: CircleAvatar(
