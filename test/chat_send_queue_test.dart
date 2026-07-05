@@ -147,7 +147,9 @@ void main() {
     // если ACK первой попытки потерялся по дороге.
     expect(chatService.sentRequests, hasLength(2));
     expect(
-      chatService.sentRequests.map((request) => request.clientMessageId).toSet(),
+      chatService.sentRequests
+          .map((request) => request.clientMessageId)
+          .toSet(),
       {message.localId},
     );
   });
@@ -224,6 +226,95 @@ void main() {
     ]);
 
     expect(queue.messagesFor('chat-1'), isEmpty);
+  });
+
+  group('attachmentUploadStatuses (пофайловый прогресс, UX-аудит P1)', () {
+    ChatPendingMessage buildPending({
+      required ChatPendingMessageStatus status,
+      ChatSendProgress? progress,
+      int attachmentCount = 3,
+    }) {
+      return ChatPendingMessage(
+        localId: 'local-1',
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: '',
+        timestamp: DateTime.utc(2026, 7, 5, 12),
+        attachments: List<XFile>.generate(
+          attachmentCount,
+          (i) => XFile('C:/tmp/img_$i.jpg'),
+        ),
+        forwardedAttachments: const <ChatAttachment>[],
+        status: status,
+        progress: progress,
+      );
+    }
+
+    const q = ChatAttachmentUploadStatus.queued;
+    const u = ChatAttachmentUploadStatus.uploading;
+    const d = ChatAttachmentUploadStatus.done;
+    const f = ChatAttachmentUploadStatus.failed;
+
+    test('preparing → все queued', () {
+      final message = buildPending(
+        status: ChatPendingMessageStatus.pending,
+        progress: const ChatSendProgress(
+          stage: ChatSendProgressStage.preparing,
+          completed: 0,
+          total: 3,
+        ),
+      );
+      expect(message.attachmentUploadStatuses, [q, q, q]);
+    });
+
+    test('uploading посреди пачки: done до completed, uploading на нём', () {
+      final message = buildPending(
+        status: ChatPendingMessageStatus.pending,
+        progress: const ChatSendProgress(
+          stage: ChatSendProgressStage.uploading,
+          completed: 1,
+          total: 3,
+        ),
+      );
+      expect(message.attachmentUploadStatuses, [d, u, q]);
+    });
+
+    test('sending → все done (файлы загружены, идёт финальный POST)', () {
+      final message = buildPending(
+        status: ChatPendingMessageStatus.pending,
+        progress: const ChatSendProgress(
+          stage: ChatSendProgressStage.sending,
+          completed: 3,
+          total: 3,
+        ),
+      );
+      expect(message.attachmentUploadStatuses, [d, d, d]);
+    });
+
+    test('sent → все done', () {
+      final message = buildPending(status: ChatPendingMessageStatus.sent);
+      expect(message.attachmentUploadStatuses, [d, d, d]);
+    });
+
+    test('failed с частичной загрузкой: догруженные done, хвост failed', () {
+      final message = buildPending(
+        status: ChatPendingMessageStatus.failed,
+        progress: const ChatSendProgress(
+          stage: ChatSendProgressStage.uploading,
+          completed: 1,
+          total: 3,
+        ),
+      );
+      expect(message.attachmentUploadStatuses, [d, f, f]);
+    });
+
+    test('без вложений — пустой список', () {
+      final message = buildPending(
+        status: ChatPendingMessageStatus.pending,
+        attachmentCount: 0,
+      );
+      expect(message.attachmentUploadStatuses, isEmpty);
+    });
   });
 }
 

@@ -6111,9 +6111,6 @@ class _ChatScreenState extends State<ChatScreen> {
         DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp));
     final theme = Theme.of(context);
     final statusMeta = _statusMetaForOutgoingMessage(theme, message);
-    final progressValue = message.progress?.value;
-    final showProgressBar = message.status == _OutgoingMessageStatus.pending &&
-        message.attachments.isNotEmpty;
     final bubbleKey = ValueKey<String>('outgoing-bubble-${message.localId}');
 
     // Telegram-style send animation: the optimistic bubble slides up
@@ -6181,6 +6178,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     isDelivered: false,
                     remoteAttachments: message.forwardedAttachments,
                     localAttachments: message.attachments,
+                    localAttachmentStatuses: message.attachmentUploadStatuses,
                     replyTo: message.replyTo,
                     onReplyTap: message.replyTo == null
                         ? null
@@ -6258,13 +6256,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ],
               ),
-              if (showProgressBar) ...[
-                const SizedBox(height: 4),
-                SizedBox(
-                  width: 140,
-                  child: LinearProgressIndicator(value: progressValue),
-                ),
-              ],
+              // Общий LinearProgressIndicator заменён пофайловыми
+              // оверлеями на плитках (_LocalMediaGrid) — текстовый
+              // статус «Загрузка вложений N/M» остаётся: он единственный
+              // сигнал для файлов за «+N» и для аудио/кружков.
             ],
           ),
         ),
@@ -9338,6 +9333,7 @@ class _ChatBubble extends StatelessWidget {
     this.groupedWithPrev = false,
     this.remoteAttachments = const <ChatAttachment>[],
     this.localAttachments = const <XFile>[],
+    this.localAttachmentStatuses,
     this.replyTo,
     this.onReplyTap,
     this.reactionGroups = const <_ReactionGroup>[],
@@ -9362,6 +9358,11 @@ class _ChatBubble extends StatelessWidget {
   final bool groupedWithPrev;
   final List<ChatAttachment> remoteAttachments;
   final List<XFile> localAttachments;
+
+  /// Пофайловые статусы загрузки (только исходящий optimistic-баббл;
+  /// null у remote-сообщений — оверлеев нет). Индексы соответствуют
+  /// [localAttachments].
+  final List<ChatAttachmentUploadStatus>? localAttachmentStatuses;
   final ChatReplyReference? replyTo;
   final VoidCallback? onReplyTap;
   final List<_ReactionGroup> reactionGroups;
@@ -9826,19 +9827,27 @@ class _ChatBubble extends StatelessWidget {
   }
 
   Widget _buildLocalAttachments(BuildContext context) {
+    // Пары (файл, статус) собираем ДО фильтраций — сплиты по типам
+    // теряют исходные индексы, а статусы идут по порядку attachments.
+    final statuses = localAttachmentStatuses;
     final audio = localAttachments
         .where((f) => _attachmentKindFromXFile(f) == _ChatAttachmentKind.audio)
         .toList();
     final videoNotes = localAttachments
         .where((file) => _isVideoNoteFileName(file.name))
         .toList();
-    final visuals = localAttachments
-        .where(
-          (file) =>
-              _attachmentKindFromXFile(file) != _ChatAttachmentKind.audio &&
-              !_isVideoNoteFileName(file.name),
-        )
-        .toList();
+    final visuals = <XFile>[];
+    final visualStatuses = <ChatAttachmentUploadStatus>[];
+    for (var i = 0; i < localAttachments.length; i++) {
+      final file = localAttachments[i];
+      if (_attachmentKindFromXFile(file) != _ChatAttachmentKind.audio &&
+          !_isVideoNoteFileName(file.name)) {
+        visuals.add(file);
+        if (statuses != null && i < statuses.length) {
+          visualStatuses.add(statuses[i]);
+        }
+      }
+    }
 
     return Column(
       crossAxisAlignment:
@@ -9883,6 +9892,8 @@ class _ChatBubble extends StatelessWidget {
         if (visuals.isNotEmpty)
           _LocalMediaGrid(
             files: visuals,
+            statuses:
+                visualStatuses.length == visuals.length ? visualStatuses : null,
             onOpenAttachment: onOpenLocalAttachment,
           ),
       ],

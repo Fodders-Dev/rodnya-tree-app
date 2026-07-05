@@ -716,10 +716,15 @@ class _RemoteMediaGrid extends StatelessWidget {
 class _LocalMediaGrid extends StatelessWidget {
   const _LocalMediaGrid({
     required this.files,
+    this.statuses,
     this.onOpenAttachment,
   });
 
   final List<XFile> files;
+
+  /// Пофайловые статусы загрузки (UX-аудит P1): совпадают по индексам
+  /// с [files]; null → без оверлеев (превью в композере и т.п.).
+  final List<ChatAttachmentUploadStatus>? statuses;
   final void Function(List<XFile> files, XFile file)? onOpenAttachment;
 
   // Mirror of _RemoteMediaGrid for not-yet-uploaded local files. Same
@@ -740,10 +745,63 @@ class _LocalMediaGrid extends StatelessWidget {
       file: files[index],
       onTap: onOpenAttachment == null ? null : () => _open(index),
     );
+    final uploadOverlay = _uploadOverlayFor(index);
+    if (uploadOverlay != null) {
+      tile = Stack(fit: StackFit.expand, children: [tile, uploadOverlay]);
+    }
     if (overlay != null) {
       tile = Stack(fit: StackFit.expand, children: [tile, overlay]);
     }
     return ClipRRect(borderRadius: BorderRadius.circular(_radius), child: tile);
+  }
+
+  /// Оверлей состояния загрузки: queued — притемнение, uploading —
+  /// притемнение + спиннер, done — чисто, failed — иконка ошибки.
+  Widget? _uploadOverlayFor(int index) {
+    final list = statuses;
+    if (list == null || index >= list.length) {
+      return null;
+    }
+    final status = list[index];
+    Widget? content;
+    switch (status) {
+      case ChatAttachmentUploadStatus.done:
+        return null;
+      case ChatAttachmentUploadStatus.queued:
+        content = null;
+        break;
+      case ChatAttachmentUploadStatus.uploading:
+        content = const SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(
+            key: Key('attachment-uploading-spinner'),
+            strokeWidth: 2.5,
+            color: Colors.white,
+          ),
+        );
+        break;
+      case ChatAttachmentUploadStatus.failed:
+        content = const Icon(
+          Icons.error_outline_rounded,
+          key: Key('attachment-failed-icon'),
+          color: Colors.white,
+          size: 28,
+        );
+        break;
+    }
+    return IgnorePointer(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        child: ColoredBox(
+          key: ValueKey(status),
+          color: Colors.black.withValues(
+            alpha: status == ChatAttachmentUploadStatus.queued ? 0.25 : 0.35,
+          ),
+          child: content == null ? null : Center(child: content),
+        ),
+      ),
+    );
   }
 
   Widget _moreOverlay(int extraCount) {

@@ -15,6 +15,12 @@ import 'custom_api_auth_service.dart';
 
 enum ChatPendingMessageStatus { pending, sent, failed }
 
+/// Пофайловый статус загрузки вложения исходящего сообщения —
+/// деривация из (status, progress): загрузка идёт строго последовательно
+/// в порядке attachments, completed растёт по одному (UX-аудит P1:
+/// вместо одного общего бара «2/5» — состояние на каждом превью).
+enum ChatAttachmentUploadStatus { queued, uploading, done, failed }
+
 class ChatPendingMessage {
   const ChatPendingMessage({
     required this.localId,
@@ -43,6 +49,57 @@ class ChatPendingMessage {
   final ChatSendProgress? progress;
   final String? errorText;
   final int? expiresInSeconds;
+
+  /// Статусы загрузки по каждому вложению (длина == attachments.length).
+  /// Правила: sent → все done; failed → i < completed done, остальные
+  /// failed (упавший файл ≈ первый не-загруженный); pending+preparing →
+  /// все queued; pending+uploading → i < completed done, i == completed
+  /// uploading, дальше queued; pending+sending (или без progress при
+  /// вложениях — уже финальный POST) → все done.
+  List<ChatAttachmentUploadStatus> get attachmentUploadStatuses {
+    final total = attachments.length;
+    if (total == 0) {
+      return const <ChatAttachmentUploadStatus>[];
+    }
+    if (status == ChatPendingMessageStatus.sent) {
+      return List<ChatAttachmentUploadStatus>.filled(
+        total,
+        ChatAttachmentUploadStatus.done,
+      );
+    }
+    final currentProgress = progress;
+    final completed = currentProgress?.completed ?? 0;
+    if (status == ChatPendingMessageStatus.failed) {
+      return List<ChatAttachmentUploadStatus>.generate(
+        total,
+        (i) => i < completed
+            ? ChatAttachmentUploadStatus.done
+            : ChatAttachmentUploadStatus.failed,
+      );
+    }
+    switch (currentProgress?.stage) {
+      case ChatSendProgressStage.preparing:
+        return List<ChatAttachmentUploadStatus>.filled(
+          total,
+          ChatAttachmentUploadStatus.queued,
+        );
+      case ChatSendProgressStage.uploading:
+        return List<ChatAttachmentUploadStatus>.generate(
+          total,
+          (i) => i < completed
+              ? ChatAttachmentUploadStatus.done
+              : (i == completed
+                  ? ChatAttachmentUploadStatus.uploading
+                  : ChatAttachmentUploadStatus.queued),
+        );
+      case ChatSendProgressStage.sending:
+      case null:
+        return List<ChatAttachmentUploadStatus>.filled(
+          total,
+          ChatAttachmentUploadStatus.done,
+        );
+    }
+  }
 
   ChatPendingMessage copyWith({
     ChatPendingMessageStatus? status,
