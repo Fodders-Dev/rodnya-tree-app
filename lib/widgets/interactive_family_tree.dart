@@ -382,6 +382,14 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   bool _zoomHudVisible = false;
   bool _zoomHudReady = false;
   Timer? _zoomHudTimer;
+  // L (lost-user recovery): with constrained:false + a huge boundaryMargin, a
+  // tiny minScale blob can be dragged fully off every viewport edge into blank
+  // canvas with no landmark. When that happens, show a floating «Вернуться к
+  // дереву» pill → _fitTreeToViewport(). Additive overlay only — no pan/zoom/
+  // layout config is touched. Debounced so a quick pan past the edge and back
+  // doesn't flash it.
+  bool _treeOffscreen = false;
+  Timer? _offscreenDebounceTimer;
   String? _draggingPersonId;
   String? _hoveredPersonId;
   // Floating zoom dock starts collapsed on compact viewports so it
@@ -648,6 +656,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     super.initState();
     _selectedEditPersonId = widget.selectedEditPersonId;
     _transformationController.addListener(_handleTransformChanged);
+    // Separate listener (not gated by the scale-delta guard) so translation-
+    // only pans are seen for the off-screen recovery pill.
+    _transformationController.addListener(_evaluateTreeOffscreen);
     _calculateLayout(); // Вызываем расчет layout
     _activePathPersonIds = _computeActivePath(widget.selectedPersonId);
   }
@@ -781,7 +792,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   @override
   void dispose() {
     _zoomHudTimer?.cancel();
+    _offscreenDebounceTimer?.cancel();
     _transformationController.removeListener(_handleTransformChanged);
+    _transformationController.removeListener(_evaluateTreeOffscreen);
     _transformationController.dispose();
     _connectModeFocusNode.dispose();
     super.dispose();
@@ -801,6 +814,55 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     // listener fires synchronously).
     if (_zoomHudReady) {
       _showZoomHud('${(scale * 100).round()}%');
+    }
+  }
+
+  /// L (lost-user recovery): detect the tree drifting fully off the viewport
+  /// and toggle the floating «Вернуться к дереву» pill. Runs on EVERY transform
+  /// tick (translation-only pans included). Pure geometry off the cached
+  /// treeSize + viewport + matrix — no fit math, no layout. Debounced ~220ms
+  /// so a quick pan across the edge and back doesn't flash the pill.
+  void _evaluateTreeOffscreen() {
+    if (!mounted ||
+        !_hasAppliedViewportFit ||
+        _viewportSize == null ||
+        treeSize == Size.zero) {
+      return;
+    }
+    final viewport = _viewportSize!;
+    final matrix = _transformationController.value;
+    final scale = matrix.getMaxScaleOnAxis();
+    final translation = matrix.getTranslation();
+    final treeRect = Rect.fromLTWH(
+      translation.x,
+      translation.y,
+      treeSize.width * scale,
+      treeSize.height * scale,
+    );
+    // Require at least a 24px sliver on screen — «barely a corner peeking»
+    // still counts as lost.
+    final viewportRect = (Offset.zero & viewport).deflate(24);
+    final offscreen = !treeRect.overlaps(viewportRect);
+    if (offscreen == _treeOffscreen) {
+      // Already in the target state — cancel any pending flip the other way.
+      _offscreenDebounceTimer?.cancel();
+      _offscreenDebounceTimer = null;
+      return;
+    }
+    _offscreenDebounceTimer?.cancel();
+    _offscreenDebounceTimer = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted || offscreen == _treeOffscreen) return;
+      setState(() => _treeOffscreen = offscreen);
+    });
+  }
+
+  /// Dismiss the recovery pill immediately (the tree is back in view). Called
+  /// by the recovery action itself so it doesn't linger for another debounce.
+  void _clearTreeOffscreen() {
+    _offscreenDebounceTimer?.cancel();
+    _offscreenDebounceTimer = null;
+    if (_treeOffscreen && mounted) {
+      setState(() => _treeOffscreen = false);
     }
   }
 
@@ -2890,6 +2952,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     _transformationController.value = vector_math.Matrix4.identity()
       ..translateByDouble(translateX, translateY, 0, 1)
       ..scaleByDouble(safeScale, safeScale, 1, 1);
+    _clearTreeOffscreen();
     if (_zoomHudReady) _showZoomHud('Вписано');
   }
 

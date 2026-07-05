@@ -73,6 +73,16 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
                       : 16,
                   child: Center(child: _buildConnectingPill()),
                 ),
+              // L (lost-user recovery): floating pill shown only when the tree
+              // has drifted fully off the viewport. Tap fits it back into view.
+              // Sits just above the bottom zoom indicator so they don't collide.
+              if (_treeOffscreen)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 56,
+                  child: Center(child: _buildReturnToTreePill()),
+                ),
             ],
           );
         },
@@ -272,6 +282,53 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
 
   // Top-of-canvas pill shown while a connect drag is in flight or
   // the relation-type picker is open. Tap the X to abort.
+  // L (lost-user recovery): the «Вернуться к дереву» pill. Tappable (NOT
+  // wrapped in IgnorePointer, unlike the zoom HUD) → _fitTreeToViewport().
+  Widget _buildReturnToTreePill() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: _fitTreeToViewport,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.filter_center_focus,
+                color: scheme.onPrimary,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Вернуться к дереву',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildConnectingPill() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
