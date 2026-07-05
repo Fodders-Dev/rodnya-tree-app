@@ -906,6 +906,26 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _startCallFromHeader(CallMediaMode mediaMode) async {
+    // GP2 discovery: if a call is already live in this chat, JOIN it instead
+    // of starting a duplicate. Opening the CallScreen surfaces «Войти» (the
+    // GP1-loosened gate) so a late member joins in one more tap rather than
+    // spawning a second room the others aren't in.
+    final chatId = _chatId;
+    if (chatId != null && chatId.isNotEmpty) {
+      try {
+        final active = await _callCoordinator.getActiveCall(chatId: chatId);
+        if (!mounted) {
+          return;
+        }
+        if (active != null && !active.state.isTerminal) {
+          await _callCoordinator.activateCall(active);
+          return;
+        }
+      } catch (_) {
+        // Best-effort discovery — fall through to starting a fresh call.
+      }
+    }
+
     if (!widget.isGroup) {
       await _startCall(mediaMode);
       return;
