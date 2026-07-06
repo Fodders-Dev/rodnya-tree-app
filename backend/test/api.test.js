@@ -1463,6 +1463,35 @@ test("group call: a non-invited chat member discovers and «залетает» (
   }
 });
 
+test("store-race: concurrent call mutations don't lose updates (atomic _mutate)", async () => {
+  const g = await startGroupCallFixture("concurrentadd");
+  try {
+    await callAction(g.ctx, g.startedCall.id, "accept", g.bob); // → active
+
+    // Three DISTINCT users added to the SAME call, fully concurrently. With a
+    // non-atomic read-modify-write (the pre-_mutate bug), all three read the
+    // same snapshot and the last _write clobbers the others → only ONE lands.
+    // _mutate serializes the whole read-modify-write, so all three survive.
+    const u1 = await registerTestUser(g.ctx, "cadd-u1@rodnya.app", "U1");
+    const u2 = await registerTestUser(g.ctx, "cadd-u2@rodnya.app", "U2");
+    const u3 = await registerTestUser(g.ctx, "cadd-u3@rodnya.app", "U3");
+
+    await Promise.all([
+      g.ctx.store.addCallParticipants({callId: g.startedCall.id, userIds: [u1.user.id]}),
+      g.ctx.store.addCallParticipants({callId: g.startedCall.id, userIds: [u2.user.id]}),
+      g.ctx.store.addCallParticipants({callId: g.startedCall.id, userIds: [u3.user.id]}),
+    ]);
+
+    const stored = await g.ctx.store.findCall(g.startedCall.id);
+    const ids = stored.participantIds;
+    assert.ok(ids.includes(u1.user.id), "u1 landed");
+    assert.ok(ids.includes(u2.user.id), "u2 landed");
+    assert.ok(ids.includes(u3.user.id), "u3 landed — no lost update under concurrency");
+  } finally {
+    await stopTestServer(g.ctx);
+  }
+});
+
 test("store-race: a stale write cannot resurrect an ended call (terminal-call monotonicity)", async () => {
   const g = await startGroupCallFixture("stalewrite");
   try {

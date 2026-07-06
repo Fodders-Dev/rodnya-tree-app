@@ -5954,6 +5954,10 @@ class FileStore {
     this.storageMode = "file-store";
     this.storageTarget = dataPath;
     this._writeQueue = Promise.resolve();
+    // Serializes the WHOLE read-modify-write of every _mutate() call so no two
+    // mutations interleave (store-wide lost-update fix). Distinct from
+    // _writeQueue, which only serializes the persist half.
+    this._mutateQueue = Promise.resolve();
     this._sessionTouchCache = new Map();
     this._sessionCache = new Map();
     this._userCache = new Map();
@@ -6063,6 +6067,42 @@ class FileStore {
       await fs.rename(tempPath, this.dataPath);
     });
     return this._writeQueue;
+  }
+
+  // Atomic read-modify-write. Serializes the ENTIRE read → mutate → write of
+  // every mutation through a dedicated lock (_mutateQueue) so two concurrent
+  // mutations can never interleave — closing the whole-document lost-update
+  // where a stale snapshot's write clobbers a field it never saw (the
+  // store-wide race the per-field _preserveTerminalCalls guard only patched for
+  // terminal calls). It REUSES _read()/_write() (so PostgresStore inherits it
+  // unchanged, with its own overrides handling snapshot/projection/cache), and
+  // simply prevents interleaving:
+  //   - the lock guarantees this mutation's _read() sees the previous
+  //     mutation's already-persisted _write();
+  //   - _read()/_write() await _writeQueue/_stateWriteQueue, NOT _mutateQueue,
+  //     so there is no circular wait / deadlock.
+  // `applyFn(data)` mutates `data` in place and returns the method's result. It
+  // MUST be pure in-memory — it must NOT call _read/_write/_mutate itself. If
+  // it throws, nothing is persisted (the write is skipped) and the error
+  // propagates to the caller; the fresh read on the next mutation discards the
+  // aborted in-memory changes.
+  async _mutate(applyFn) {
+    if (!this._mutateQueue) {
+      this._mutateQueue = Promise.resolve();
+    }
+    const run = this._mutateQueue.then(async () => {
+      const data = await this._read();
+      const result = await applyFn(data);
+      await this._write(data);
+      return result;
+    });
+    // Keep the lock chained even if applyFn/persist rejects, so later mutations
+    // serialize after this link instead of inheriting a rejected promise.
+    this._mutateQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   /**
@@ -19202,69 +19242,69 @@ class FileStore {
     mediaMode,
     originatedBySessionId = null,
   }) {
-    const db = await this._read();
-    const chat = this._resolveChat(db, chatId);
-    if (!chat) {
-      return null;
-    }
+    return this._mutate((db) => {
+      const chat = this._resolveChat(db, chatId);
+      if (!chat) {
+        return null;
+      }
 
-    const chatParticipantIds = normalizeParticipantIds(chat.participantIds || []);
-    const participantIds = normalizeParticipantIds(
-      Array.isArray(requestedParticipantIds) && requestedParticipantIds.length > 0
-        ? requestedParticipantIds
-        : chatParticipantIds,
-    );
-    if (
-      !participantIds.includes(initiatorId) ||
-      participantIds.some((participantId) => !chatParticipantIds.includes(participantId))
-    ) {
-      return false;
-    }
-    if (chat.type === "direct" && participantIds.length !== 2) {
-      return false;
-    }
-    if ((chat.type === "group" || chat.type === "branch") && participantIds.length < 2) {
-      return false;
-    }
-    if (chat.type !== "direct" && chat.type !== "group" && chat.type !== "branch") {
-      return false;
-    }
+      const chatParticipantIds = normalizeParticipantIds(chat.participantIds || []);
+      const participantIds = normalizeParticipantIds(
+        Array.isArray(requestedParticipantIds) && requestedParticipantIds.length > 0
+          ? requestedParticipantIds
+          : chatParticipantIds,
+      );
+      if (
+        !participantIds.includes(initiatorId) ||
+        participantIds.some((participantId) => !chatParticipantIds.includes(participantId))
+      ) {
+        return false;
+      }
+      if (chat.type === "direct" && participantIds.length !== 2) {
+        return false;
+      }
+      if ((chat.type === "group" || chat.type === "branch") && participantIds.length < 2) {
+        return false;
+      }
+      if (chat.type !== "direct" && chat.type !== "group" && chat.type !== "branch") {
+        return false;
+      }
 
-    const normalizedRecipientId =
-      normalizeNullableString(recipientId) ||
-      participantIds.find((participantId) => participantId !== initiatorId) ||
-      "";
-    if (!normalizedRecipientId || !participantIds.includes(normalizedRecipientId)) {
-      return false;
-    }
+      const normalizedRecipientId =
+        normalizeNullableString(recipientId) ||
+        participantIds.find((participantId) => participantId !== initiatorId) ||
+        "";
+      if (!normalizedRecipientId || !participantIds.includes(normalizedRecipientId)) {
+        return false;
+      }
 
-    const hasBusyCall = db.calls
-      .map((entry) => normalizeStoredCall(entry))
-      .filter(Boolean)
-      .some((call) => {
-        if (!isCallBusyState(call.state)) {
-          return false;
-        }
-        return (
-          call.participantIds.includes(initiatorId) ||
-          call.participantIds.includes(recipientId)
-        );
+      const hasBusyCall = db.calls
+        .map((entry) => normalizeStoredCall(entry))
+        .filter(Boolean)
+        .some((call) => {
+          if (!isCallBusyState(call.state)) {
+            return false;
+          }
+          return (
+            call.participantIds.includes(initiatorId) ||
+            call.participantIds.includes(recipientId)
+          );
+        });
+      if (hasBusyCall) {
+        return "BUSY";
+      }
+
+      const call = createCallRecord({
+        chatId,
+        initiatorId,
+        recipientId: normalizedRecipientId,
+        participantIds,
+        mediaMode,
+        originatedBySessionId,
       });
-    if (hasBusyCall) {
-      return "BUSY";
-    }
-
-    const call = createCallRecord({
-      chatId,
-      initiatorId,
-      recipientId: normalizedRecipientId,
-      participantIds,
-      mediaMode,
-      originatedBySessionId,
+      db.calls.push(call);
+      return structuredClone(call);
     });
-    db.calls.push(call);
-    await this._write(db);
-    return structuredClone(call);
   }
 
   async findCall(callId) {
@@ -19364,43 +19404,43 @@ class FileStore {
     sessionByUserId,
     acceptedBySessionId = null,
   }) {
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
-    if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
-      return false;
-    }
-    if (call.state !== "ringing") {
-      return undefined;
-    }
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
+      }
+      if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
+        return false;
+      }
+      if (call.state !== "ringing") {
+        return undefined;
+      }
 
-    const timestamp = nowIso();
-    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
-    storedCall.state = "active";
-    storedCall.roomName = normalizeNullableString(roomName);
-    storedCall.sessionByUserId = normalizeCallSessionMap(sessionByUserId);
-    // First joiner populates the N-way map; the scalars stay filled too for
-    // back-compat (in-flight records + old clients that read acceptedBy*).
-    storedCall.joinedSessionByUserId = normalizeJoinedSessionMap({
-      [userId]: acceptedBySessionId,
+      const timestamp = nowIso();
+      storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+      storedCall.state = "active";
+      storedCall.roomName = normalizeNullableString(roomName);
+      storedCall.sessionByUserId = normalizeCallSessionMap(sessionByUserId);
+      // First joiner populates the N-way map; the scalars stay filled too for
+      // back-compat (in-flight records + old clients that read acceptedBy*).
+      storedCall.joinedSessionByUserId = normalizeJoinedSessionMap({
+        [userId]: acceptedBySessionId,
+      });
+      storedCall.acceptedByUserId = userId;
+      storedCall.acceptedBySessionId = normalizeNullableString(acceptedBySessionId);
+      storedCall.acceptedAt = timestamp;
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = null;
+      storedCall.endedReason = null;
+      storedCall.metrics.acceptLatencyMs = Math.max(
+        0,
+        new Date(timestamp).getTime() - new Date(call.createdAt).getTime(),
+      );
+      storedCall.metrics.connectedParticipantIds = [];
+      storedCall.metrics.lastWebhookEvent = null;
+      return structuredClone(normalizeStoredCall(storedCall));
     });
-    storedCall.acceptedByUserId = userId;
-    storedCall.acceptedBySessionId = normalizeNullableString(acceptedBySessionId);
-    storedCall.acceptedAt = timestamp;
-    storedCall.updatedAt = timestamp;
-    storedCall.endedAt = null;
-    storedCall.endedReason = null;
-    storedCall.metrics.acceptLatencyMs = Math.max(
-      0,
-      new Date(timestamp).getTime() - new Date(call.createdAt).getTime(),
-    );
-    storedCall.metrics.connectedParticipantIds = [];
-    storedCall.metrics.lastWebhookEvent = null;
-    await this._write(db);
-    return structuredClone(normalizeStoredCall(storedCall));
   }
 
   // Group late-join: merge a participant's freshly-minted session into the
@@ -19409,205 +19449,204 @@ class FileStore {
   // ringing -> active (filling the scalar back-compat fields). Idempotent per
   // (user, session): re-adding the same pair just re-writes the same values.
   async addCallParticipantSession({callId, userId, sessionId, session}) {
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
-    const normalizedUserId = String(userId || "").trim();
-    if (!normalizedUserId || !call.participantIds.includes(normalizedUserId)) {
-      return false;
-    }
-    if (isCallTerminalState(call.state)) {
-      return undefined;
-    }
-
-    const timestamp = nowIso();
-    const normalizedSessionId = normalizeNullableString(sessionId);
-    const normalizedSession = normalizeCallSession(session);
-
-    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
-    storedCall.sessionByUserId = normalizeCallSessionMap(storedCall.sessionByUserId);
-    storedCall.joinedSessionByUserId = normalizeJoinedSessionMap(
-      storedCall.joinedSessionByUserId,
-    );
-
-    if (normalizedSession) {
-      storedCall.sessionByUserId[normalizedUserId] = normalizedSession;
-      if (!normalizeNullableString(storedCall.roomName)) {
-        storedCall.roomName = normalizedSession.roomName;
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
       }
-    }
-    if (normalizedSessionId) {
-      storedCall.joinedSessionByUserId[normalizedUserId] = normalizedSessionId;
-    }
-
-    if (call.state === "ringing") {
-      // First joiner makes the call active. Scalars are set once (the first
-      // joiner wins) so old clients still resolve the owning session.
-      storedCall.state = "active";
-      storedCall.acceptedAt = storedCall.acceptedAt || timestamp;
-      storedCall.endedAt = null;
-      storedCall.endedReason = null;
-      if (!normalizeNullableString(storedCall.acceptedByUserId)) {
-        storedCall.acceptedByUserId = normalizedUserId;
-        storedCall.acceptedBySessionId = normalizedSessionId;
+      const normalizedUserId = String(userId || "").trim();
+      if (!normalizedUserId || !call.participantIds.includes(normalizedUserId)) {
+        return false;
       }
-      if (
-        storedCall.metrics.acceptLatencyMs === null ||
-        storedCall.metrics.acceptLatencyMs === undefined
-      ) {
-        storedCall.metrics.acceptLatencyMs = Math.max(
-          0,
-          new Date(timestamp).getTime() - new Date(call.createdAt).getTime(),
-        );
+      if (isCallTerminalState(call.state)) {
+        return undefined;
       }
-    }
 
-    storedCall.updatedAt = timestamp;
-    await this._write(db);
-    return structuredClone(normalizeStoredCall(storedCall));
+      const timestamp = nowIso();
+      const normalizedSessionId = normalizeNullableString(sessionId);
+      const normalizedSession = normalizeCallSession(session);
+
+      storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+      storedCall.sessionByUserId = normalizeCallSessionMap(storedCall.sessionByUserId);
+      storedCall.joinedSessionByUserId = normalizeJoinedSessionMap(
+        storedCall.joinedSessionByUserId,
+      );
+
+      if (normalizedSession) {
+        storedCall.sessionByUserId[normalizedUserId] = normalizedSession;
+        if (!normalizeNullableString(storedCall.roomName)) {
+          storedCall.roomName = normalizedSession.roomName;
+        }
+      }
+      if (normalizedSessionId) {
+        storedCall.joinedSessionByUserId[normalizedUserId] = normalizedSessionId;
+      }
+
+      if (call.state === "ringing") {
+        // First joiner makes the call active. Scalars are set once (the first
+        // joiner wins) so old clients still resolve the owning session.
+        storedCall.state = "active";
+        storedCall.acceptedAt = storedCall.acceptedAt || timestamp;
+        storedCall.endedAt = null;
+        storedCall.endedReason = null;
+        if (!normalizeNullableString(storedCall.acceptedByUserId)) {
+          storedCall.acceptedByUserId = normalizedUserId;
+          storedCall.acceptedBySessionId = normalizedSessionId;
+        }
+        if (
+          storedCall.metrics.acceptLatencyMs === null ||
+          storedCall.metrics.acceptLatencyMs === undefined
+        ) {
+          storedCall.metrics.acceptLatencyMs = Math.max(
+            0,
+            new Date(timestamp).getTime() - new Date(call.createdAt).getTime(),
+          );
+        }
+      }
+
+      storedCall.updatedAt = timestamp;
+      return structuredClone(normalizeStoredCall(storedCall));
+    });
   }
 
   async markCallRoomJoinFailure({callId, reason = null}) {
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
+      }
 
-    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
-    storedCall.metrics.roomJoinFailureCount += 1;
-    storedCall.metrics.lastRoomJoinFailureReason = normalizeNullableString(reason);
-    storedCall.updatedAt = nowIso();
-    await this._write(db);
-    return structuredClone(normalizeStoredCall(storedCall));
+      storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+      storedCall.metrics.roomJoinFailureCount += 1;
+      storedCall.metrics.lastRoomJoinFailureReason = normalizeNullableString(reason);
+      storedCall.updatedAt = nowIso();
+      return structuredClone(normalizeStoredCall(storedCall));
+    });
   }
 
   async rejectCall({callId, userId}) {
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
-    if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
-      return false;
-    }
-    if (call.state !== "ringing") {
-      return undefined;
-    }
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
+      }
+      if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
+        return false;
+      }
+      if (call.state !== "ringing") {
+        return undefined;
+      }
 
-    const timestamp = nowIso();
-    storedCall.state = "rejected";
-    storedCall.updatedAt = timestamp;
-    storedCall.endedAt = timestamp;
-    storedCall.endedReason = "rejected";
-    await this._write(db);
-    return structuredClone(normalizeStoredCall(storedCall));
+      const timestamp = nowIso();
+      storedCall.state = "rejected";
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = timestamp;
+      storedCall.endedReason = "rejected";
+      return structuredClone(normalizeStoredCall(storedCall));
+    });
   }
 
   async cancelCall({callId, userId}) {
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
-    if (call.initiatorId !== userId) {
-      return false;
-    }
-    if (call.state !== "ringing") {
-      return undefined;
-    }
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
+      }
+      if (call.initiatorId !== userId) {
+        return false;
+      }
+      if (call.state !== "ringing") {
+        return undefined;
+      }
 
-    const timestamp = nowIso();
-    storedCall.state = "cancelled";
-    storedCall.updatedAt = timestamp;
-    storedCall.endedAt = timestamp;
-    storedCall.endedReason = "cancelled";
-    await this._write(db);
-    return structuredClone(normalizeStoredCall(storedCall));
+      const timestamp = nowIso();
+      storedCall.state = "cancelled";
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = timestamp;
+      storedCall.endedReason = "cancelled";
+      return structuredClone(normalizeStoredCall(storedCall));
+    });
   }
 
   async markCallMissed({callId, reason = "missed"}) {
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
-    if (call.state !== "ringing") {
-      return undefined;
-    }
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
+      }
+      if (call.state !== "ringing") {
+        return undefined;
+      }
 
-    const timestamp = nowIso();
-    storedCall.state = "missed";
-    storedCall.updatedAt = timestamp;
-    storedCall.endedAt = timestamp;
-    storedCall.endedReason = normalizeNullableString(reason) || "missed";
-    await this._write(db);
-    return structuredClone(normalizeStoredCall(storedCall));
+      const timestamp = nowIso();
+      storedCall.state = "missed";
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = timestamp;
+      storedCall.endedReason = normalizeNullableString(reason) || "missed";
+      return structuredClone(normalizeStoredCall(storedCall));
+    });
   }
 
   async hangupCall({callId, userId}) {
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
-    if (!call.participantIds.includes(userId)) {
-      return false;
-    }
-    if (call.state !== "active") {
-      return undefined;
-    }
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
+      }
+      if (!call.participantIds.includes(userId)) {
+        return false;
+      }
+      if (call.state !== "active") {
+        return undefined;
+      }
 
-    const timestamp = nowIso();
-    const normalizedUserId = String(userId || "").trim();
-    storedCall.sessionByUserId = normalizeCallSessionMap(storedCall.sessionByUserId);
-    storedCall.joinedSessionByUserId = normalizeJoinedSessionMap(
-      storedCall.joinedSessionByUserId,
-    );
+      const timestamp = nowIso();
+      const normalizedUserId = String(userId || "").trim();
+      storedCall.sessionByUserId = normalizeCallSessionMap(storedCall.sessionByUserId);
+      storedCall.joinedSessionByUserId = normalizeJoinedSessionMap(
+        storedCall.joinedSessionByUserId,
+      );
 
-    // Group call: one participant leaving is NOT the end — drop their session
-    // and keep the call active while anyone else is still connected. Mirrors
-    // the webhook participant_left path. The 1:1 case (≤2 participants) ends
-    // the call as before. ended only when the LAST participant leaves.
-    if (call.participantIds.length > 2) {
-      delete storedCall.joinedSessionByUserId[normalizedUserId];
-      delete storedCall.sessionByUserId[normalizedUserId];
-      // Hand the scalar back-compat fields off to a remaining joiner so old
-      // clients still resolve an owning session (or clear them if none left).
-      if (normalizeNullableString(storedCall.acceptedByUserId) === normalizedUserId) {
-        const remainingJoiner = Object.keys(storedCall.joinedSessionByUserId)[0];
-        if (remainingJoiner) {
-          storedCall.acceptedByUserId = remainingJoiner;
-          storedCall.acceptedBySessionId =
-            storedCall.joinedSessionByUserId[remainingJoiner];
-        } else {
-          storedCall.acceptedByUserId = null;
-          storedCall.acceptedBySessionId = null;
+      // Group call: one participant leaving is NOT the end — drop their session
+      // and keep the call active while anyone else is still connected. Mirrors
+      // the webhook participant_left path. The 1:1 case (≤2 participants) ends
+      // the call as before. ended only when the LAST participant leaves.
+      if (call.participantIds.length > 2) {
+        delete storedCall.joinedSessionByUserId[normalizedUserId];
+        delete storedCall.sessionByUserId[normalizedUserId];
+        // Hand the scalar back-compat fields off to a remaining joiner so old
+        // clients still resolve an owning session (or clear them if none left).
+        if (normalizeNullableString(storedCall.acceptedByUserId) === normalizedUserId) {
+          const remainingJoiner = Object.keys(storedCall.joinedSessionByUserId)[0];
+          if (remainingJoiner) {
+            storedCall.acceptedByUserId = remainingJoiner;
+            storedCall.acceptedBySessionId =
+              storedCall.joinedSessionByUserId[remainingJoiner];
+          } else {
+            storedCall.acceptedByUserId = null;
+            storedCall.acceptedBySessionId = null;
+          }
+        }
+        const someoneStillConnected =
+          Object.keys(storedCall.sessionByUserId).length > 0;
+        if (someoneStillConnected) {
+          storedCall.updatedAt = timestamp;
+          return structuredClone(normalizeStoredCall(storedCall));
         }
       }
-      const someoneStillConnected =
-        Object.keys(storedCall.sessionByUserId).length > 0;
-      if (someoneStillConnected) {
-        storedCall.updatedAt = timestamp;
-        await this._write(db);
-        return structuredClone(normalizeStoredCall(storedCall));
-      }
-    }
 
-    storedCall.state = "ended";
-    storedCall.updatedAt = timestamp;
-    storedCall.endedAt = timestamp;
-    storedCall.endedReason = "hangup";
-    await this._write(db);
-    return structuredClone(normalizeStoredCall(storedCall));
+      storedCall.state = "ended";
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = timestamp;
+      storedCall.endedReason = "hangup";
+      return structuredClone(normalizeStoredCall(storedCall));
+    });
   }
 
   // GP3: grow a live call's invite list (add-mid-call). Chat-membership of the
@@ -19617,31 +19656,31 @@ class FileStore {
   // (someoneStillConnected) is unaffected: the call still ends only when the
   // last JOINED participant leaves, never because the roster grew.
   async addCallParticipants({callId, userIds}) {
-    const db = await this._read();
-    const storedCall = db.calls.find(
-      (entry) => String(entry?.id || "") === callId,
-    );
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call) {
-      return null;
-    }
-    if (call.state !== "active" && call.state !== "ringing") {
-      return undefined;
-    }
-    const existing = normalizeParticipantIds(storedCall.participantIds || []);
-    const additions = normalizeParticipantIds(userIds || []).filter(
-      (participantId) => !existing.includes(participantId),
-    );
-    if (additions.length === 0) {
-      return false;
-    }
-    storedCall.participantIds = [...existing, ...additions];
-    storedCall.updatedAt = nowIso();
-    await this._write(db);
-    return {
-      call: structuredClone(normalizeStoredCall(storedCall)),
-      addedUserIds: additions,
-    };
+    return this._mutate((db) => {
+      const storedCall = db.calls.find(
+        (entry) => String(entry?.id || "") === callId,
+      );
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call) {
+        return null;
+      }
+      if (call.state !== "active" && call.state !== "ringing") {
+        return undefined;
+      }
+      const existing = normalizeParticipantIds(storedCall.participantIds || []);
+      const additions = normalizeParticipantIds(userIds || []).filter(
+        (participantId) => !existing.includes(participantId),
+      );
+      if (additions.length === 0) {
+        return false;
+      }
+      storedCall.participantIds = [...existing, ...additions];
+      storedCall.updatedAt = nowIso();
+      return {
+        call: structuredClone(normalizeStoredCall(storedCall)),
+        addedUserIds: additions,
+      };
+    });
   }
 
   async applyCallWebhook({roomName, event, participantIdentity = null}) {
@@ -19650,80 +19689,76 @@ class FileStore {
       return null;
     }
 
-    const db = await this._read();
-    const storedCall = db.calls.find((entry) => {
-      return normalizeNullableString(entry?.roomName) === normalizedRoomName;
-    });
-    const call = normalizeStoredCall(storedCall);
-    if (!storedCall || !call || isCallTerminalState(call.state)) {
-      return call ? structuredClone(call) : null;
-    }
+    return this._mutate((db) => {
+      const storedCall = db.calls.find((entry) => {
+        return normalizeNullableString(entry?.roomName) === normalizedRoomName;
+      });
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call || isCallTerminalState(call.state)) {
+        return call ? structuredClone(call) : null;
+      }
 
-    const normalizedEvent = String(event || "").trim();
-    const normalizedParticipantIdentity = String(participantIdentity || "").trim();
-    const timestamp = nowIso();
-    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
-    storedCall.metrics.lastWebhookEvent = normalizedEvent || null;
+      const normalizedEvent = String(event || "").trim();
+      const normalizedParticipantIdentity = String(participantIdentity || "").trim();
+      const timestamp = nowIso();
+      storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+      storedCall.metrics.lastWebhookEvent = normalizedEvent || null;
 
-    if (normalizedEvent === "participant_joined" && call.state === "active") {
-      if (normalizedParticipantIdentity) {
-        const wasConnected = storedCall.metrics.connectedParticipantIds.includes(
-          normalizedParticipantIdentity,
-        );
-        if (wasConnected) {
-          storedCall.metrics.reconnectCount += 1;
-        } else {
-          storedCall.metrics.connectedParticipantIds = normalizeParticipantIds([
-            ...storedCall.metrics.connectedParticipantIds,
+      if (normalizedEvent === "participant_joined" && call.state === "active") {
+        if (normalizedParticipantIdentity) {
+          const wasConnected = storedCall.metrics.connectedParticipantIds.includes(
             normalizedParticipantIdentity,
-          ]);
-        }
-      }
-      storedCall.updatedAt = timestamp;
-      await this._write(db);
-      return structuredClone(normalizeStoredCall(storedCall));
-    }
-
-    if (normalizedEvent === "participant_connection_aborted" && call.state === "ringing") {
-      storedCall.state = "missed";
-      storedCall.updatedAt = timestamp;
-      storedCall.endedAt = timestamp;
-      storedCall.endedReason = normalizedParticipantIdentity || "missed";
-      await this._write(db);
-      return structuredClone(normalizeStoredCall(storedCall));
-    }
-
-    if (normalizedEvent === "participant_left" || normalizedEvent === "room_finished") {
-      if (normalizedParticipantIdentity) {
-        storedCall.metrics.connectedParticipantIds =
-          storedCall.metrics.connectedParticipantIds.filter(
-            (value) => value !== normalizedParticipantIdentity,
           );
-      }
-      if (
-        normalizedEvent === "participant_left" &&
-        call.participantIds.length > 2 &&
-        storedCall.metrics.connectedParticipantIds.length > 0
-      ) {
+          if (wasConnected) {
+            storedCall.metrics.reconnectCount += 1;
+          } else {
+            storedCall.metrics.connectedParticipantIds = normalizeParticipantIds([
+              ...storedCall.metrics.connectedParticipantIds,
+              normalizedParticipantIdentity,
+            ]);
+          }
+        }
         storedCall.updatedAt = timestamp;
-        await this._write(db);
         return structuredClone(normalizeStoredCall(storedCall));
       }
-      storedCall.state = "ended";
-      storedCall.updatedAt = timestamp;
-      storedCall.endedAt = timestamp;
-      storedCall.endedReason = normalizedParticipantIdentity || normalizedEvent;
-      await this._write(db);
-      return structuredClone(normalizeStoredCall(storedCall));
-    }
 
-    if (normalizedEvent) {
-      storedCall.updatedAt = timestamp;
-      await this._write(db);
-      return structuredClone(normalizeStoredCall(storedCall));
-    }
+      if (normalizedEvent === "participant_connection_aborted" && call.state === "ringing") {
+        storedCall.state = "missed";
+        storedCall.updatedAt = timestamp;
+        storedCall.endedAt = timestamp;
+        storedCall.endedReason = normalizedParticipantIdentity || "missed";
+        return structuredClone(normalizeStoredCall(storedCall));
+      }
 
-    return structuredClone(call);
+      if (normalizedEvent === "participant_left" || normalizedEvent === "room_finished") {
+        if (normalizedParticipantIdentity) {
+          storedCall.metrics.connectedParticipantIds =
+            storedCall.metrics.connectedParticipantIds.filter(
+              (value) => value !== normalizedParticipantIdentity,
+            );
+        }
+        if (
+          normalizedEvent === "participant_left" &&
+          call.participantIds.length > 2 &&
+          storedCall.metrics.connectedParticipantIds.length > 0
+        ) {
+          storedCall.updatedAt = timestamp;
+          return structuredClone(normalizeStoredCall(storedCall));
+        }
+        storedCall.state = "ended";
+        storedCall.updatedAt = timestamp;
+        storedCall.endedAt = timestamp;
+        storedCall.endedReason = normalizedParticipantIdentity || normalizedEvent;
+        return structuredClone(normalizeStoredCall(storedCall));
+      }
+
+      if (normalizedEvent) {
+        storedCall.updatedAt = timestamp;
+        return structuredClone(normalizeStoredCall(storedCall));
+      }
+
+      return structuredClone(call);
+    });
   }
 
   async listChatPreviews(userId) {
