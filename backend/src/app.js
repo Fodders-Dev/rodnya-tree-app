@@ -2105,6 +2105,36 @@ function createApp({
     return call;
   }
 
+  // Group late-join access: unlike requireCallAccess (participantIds only), a
+  // caller may "залететь" into a live call when they are a member of the call's
+  // CHAT even if they weren't pre-invited. Deliberately SCOPED to POST /join +
+  // discovery — the strict participantIds gate stays on /reject //cancel
+  // //nudge //add //hangup so a non-participant can never act on someone else's
+  // call. Chat membership is read from the authoritative chat record, never
+  // from client input.
+  async function requireCallJoinAccess(req, res, callId) {
+    const call = await findFreshCall(callId, {
+      viewerUserId: req.auth.user.id,
+    });
+    if (!call) {
+      res.status(404).json({message: "Звонок не найден"});
+      return null;
+    }
+    const userId = req.auth.user.id;
+    if ((call.participantIds || []).includes(userId)) {
+      return call;
+    }
+    const chat = await store.findChat(call.chatId);
+    const chatMembers = Array.isArray(chat?.participantIds)
+      ? chat.participantIds
+      : [];
+    if (chatMembers.includes(userId)) {
+      return call;
+    }
+    res.status(403).json({message: "Доступ к звонку запрещён"});
+    return null;
+  }
+
   function requireAdmin(req, res) {
     const adminEmails = Array.isArray(config.adminEmails) ? config.adminEmails : [];
     const currentEmail = String(req.auth?.user?.email || "").trim().toLowerCase();
@@ -2178,10 +2208,38 @@ function createApp({
   // (callers check) and the call is non-terminal.
   async function joinActiveCall(req, res, call) {
     const roomName = call.roomName || `call_${call.id}`;
-    const callParticipantIds = normalizeParticipantIds(call.participantIds || []);
     const callerId = req.auth.user.id;
     const callerSessionId = req.auth.sessionPublicId;
     try {
+      // A non-invited chat member "залетает": put them on the roster first —
+      // addCallParticipantSession (and later hangupCall) both require the
+      // caller to be in participantIds. addCallParticipants only GROWS the
+      // list, so a pre-invited joiner or a same-device rejoin is a no-op here.
+      // addCallParticipantSession re-reads fresh, so it stays correct even if
+      // this local `call` snapshot raced a concurrent add.
+      let activeCall = call;
+      if (
+        !normalizeParticipantIds(call.participantIds || []).includes(callerId)
+      ) {
+        const grown = await store.addCallParticipants({
+          callId: call.id,
+          userIds: [callerId],
+        });
+        if (grown === null) {
+          res.status(404).json({message: "Звонок не найден"});
+          return;
+        }
+        if (grown === undefined) {
+          res.status(409).json({message: "Звонок уже недоступен"});
+          return;
+        }
+        if (grown && grown.call) {
+          activeCall = grown.call;
+        }
+      }
+      const callParticipantIds = normalizeParticipantIds(
+        activeCall.participantIds || [],
+      );
       await resolvedLiveKitService.ensureRoom(roomName, {
         maxParticipants: Math.max(
           callParticipantIds.length,
@@ -2189,7 +2247,7 @@ function createApp({
         ),
       });
       const sessionByUserId = await createCallSessionsForParticipants({
-        call,
+        call: activeCall,
         roomName,
         participantIds: [callerId],
         ownerSessionByUserId: {[callerId]: callerSessionId},
@@ -3151,10 +3209,41 @@ function createApp({
 
   app.get("/v1/calls/active", requireAuth, async (req, res) => {
     const chatId = String(req.query?.chatId || "").trim();
-    const activeCall = await findFreshActiveCall({
+    let activeCall = await findFreshActiveCall({
       userId: req.auth.user.id,
       chatId: chatId || null,
     });
+    // Discovery for group late-join: a chat member who is NOT on the call's
+    // roster can still SEE the chat's active call (session:null) so they can
+    // then "залететь" via POST /join. Busy-state (findActiveCall above) stays
+    // strict; this only widens READ visibility, and only when gated on
+    // authoritative chat membership.
+    if (!activeCall && chatId) {
+      const chat = await store.findChat(chatId);
+      const chatMembers = Array.isArray(chat?.participantIds)
+        ? chat.participantIds
+        : [];
+      if (chatMembers.includes(req.auth.user.id)) {
+        const chatCall = await store.findActiveCallForChat(chatId);
+        if (chatCall) {
+          const fresh =
+            (await expireRingingCallIfNeeded(chatCall, {
+              reason: "missed",
+              eventType: "invite.missed",
+              extra: {
+                viewerUserId: req.auth.user.id,
+                chatId,
+                source: "discovery_join",
+              },
+            })) || chatCall;
+          // Only surface a still-live call (a ringing one may have just
+          // expired to "missed" above).
+          if (fresh.state === "active" || fresh.state === "ringing") {
+            activeCall = fresh;
+          }
+        }
+      }
+    }
     res.json({
       call: activeCall
         ? mapCallRecord(activeCall, {
@@ -3460,16 +3549,18 @@ function createApp({
     }
   });
 
-  // Group late-join: any member can "залететь" into a live call. Unlike
-  // /accept (invited-recipient only), /join is membership-gated and works for
-  // any participant — including the initiator joining from another device.
+  // Group late-join: any CHAT member can "залететь" into a live call. Unlike
+  // /accept (invited-recipient only), /join is chat-membership-gated
+  // (requireCallJoinAccess) and works for any participant — a pre-invited
+  // member, a non-invited chat member, or the initiator joining from another
+  // device. joinActiveCall puts a non-invited joiner on the roster first.
   app.post("/v1/calls/:callId/join", requireAuth, async (req, res) => {
     if (!resolvedLiveKitService.isConfigured) {
       res.status(503).json({message: "Звонки пока не настроены на сервере"});
       return;
     }
 
-    const call = await requireCallAccess(req, res, req.params.callId);
+    const call = await requireCallJoinAccess(req, res, req.params.callId);
     if (!call) {
       return;
     }

@@ -124,14 +124,15 @@ class _CallScreenState extends State<CallScreen> {
   CallInvite get _resolvedCall => _call ?? widget.initialCall;
   bool get _isIncoming =>
       _currentUserId != null && _resolvedCall.isIncomingFor(_currentUserId!);
-  // GP1: an ACTIVE call I'm viewing but have no session in yet → «Войти»
+  // GP1/GP5: an ACTIVE call I'm viewing but have no session in yet → «Войти»
   // for a late member to «залететь в группу». We DON'T gate on
-  // participantIds.contains(uid): the server `/join` is already
-  // membership-gated (any chat member may join, app.js:3346), so the old
-  // client check was STRICTER than the server — a chat member who wasn't on
-  // the original invite list never saw «Войти» even though joining would
-  // succeed. Optimistic-show + server validation (join failure surfaces a
-  // retriable snackbar). The initiator is excluded via isOutgoingFor.
+  // participantIds.contains(uid): the server `/join` is chat-membership-gated
+  // (requireCallJoinAccess — any member of the call's chat may join, and a
+  // non-invited joiner is added to the roster server-side in joinActiveCall),
+  // so the old client check was STRICTER than the server and hid «Войти» from
+  // chat members who weren't on the original invite list. Optimistic-show +
+  // server validation (a join failure surfaces a retriable snackbar). The
+  // initiator is excluded via isOutgoingFor.
   bool get _canJoinActive {
     final uid = _currentUserId;
     return uid != null &&

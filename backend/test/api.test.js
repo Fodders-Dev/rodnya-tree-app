@@ -1363,6 +1363,106 @@ test("group call: POST /add pulls a new chat member into a live call, and last-l
   }
 });
 
+test("group call: a non-invited chat member discovers and «залетает» (join); a non-member is 403'd", async () => {
+  const {fakeLiveKitService} = instrumentedGroupCallLiveKit();
+  const ctx = await startConfiguredTestServer({liveKitService: fakeLiveKitService});
+  try {
+    const caller = await registerTestUser(ctx, "join5-caller@rodnya.app", "Caller");
+    const bob = await registerTestUser(ctx, "join5-bob@rodnya.app", "Bob");
+    const carol = await registerTestUser(ctx, "join5-carol@rodnya.app", "Carol");
+    // Dave is NOT a member of the group — the negative case.
+    const dave = await registerTestUser(ctx, "join5-dave@rodnya.app", "Dave");
+    // Group [caller, bob, carol]; start the call with ONLY bob so carol is a
+    // chat member who is NOT on the call roster (the «залететь» target).
+    const groupRes = await fetch(`${ctx.baseUrl}/v1/chats/groups`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Созвон",
+        participantIds: [bob.user.id, carol.user.id],
+      }),
+    });
+    assert.equal(groupRes.status, 201);
+    const group = await groupRes.json();
+    const startRes = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId: group.chat.id,
+        mediaMode: "audio",
+        participantIds: [bob.user.id],
+      }),
+    });
+    assert.equal(startRes.status, 201);
+    const startedCall = (await startRes.json()).call;
+    assert.ok(
+      !startedCall.participantIds.includes(carol.user.id),
+      "carol starts OFF the call roster",
+    );
+
+    await callAction(ctx, startedCall.id, "accept", bob); // → active
+
+    // Discovery: carol (chat member, NOT on roster) can now SEE the call —
+    // session:null until she joins.
+    const carolActive = await fetch(
+      `${ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(group.chat.id)}`,
+      {headers: {authorization: `Bearer ${carol.accessToken}`}},
+    );
+    const carolActiveCall = (await carolActive.json()).call;
+    assert.ok(carolActiveCall, "non-invited chat member discovers the active call");
+    assert.equal(carolActiveCall.id, startedCall.id);
+    assert.equal(carolActiveCall.session, null, "discovery gives no session pre-join");
+
+    // A non-member (dave) must NOT discover it.
+    const daveActive = await fetch(
+      `${ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(group.chat.id)}`,
+      {headers: {authorization: `Bearer ${dave.accessToken}`}},
+    );
+    assert.equal(
+      (await daveActive.json()).call,
+      null,
+      "a non-member cannot discover the chat's call",
+    );
+
+    // Carol «залетает» → 200, gets a real session, and lands on the roster.
+    const carolJoin = await callAction(ctx, startedCall.id, "join", carol);
+    assert.equal(carolJoin.status, 200);
+    const carolJoined = (await carolJoin.json()).call;
+    assert.ok(carolJoined.session, "join mints carol a real session");
+    assert.ok(carolJoined.session.token);
+    assert.ok(
+      carolJoined.session.participantIdentity.startsWith(`${carol.user.id}#`),
+    );
+    assert.ok(
+      carolJoined.participantIds.includes(carol.user.id),
+      "join adds the non-invited member to the roster (so hangup/session work)",
+    );
+    assert.equal(carolJoined.state, "active");
+
+    // A non-member (dave) is refused with 403 — not a silent duplicate/404.
+    const daveJoin = await callAction(ctx, startedCall.id, "join", dave);
+    assert.equal(daveJoin.status, 403, "non-member join is forbidden");
+
+    // Being on the roster, carol can now hang up; the group stays alive while
+    // the initiator + bob remain.
+    const carolHangup = await callAction(ctx, startedCall.id, "hangup", carol);
+    assert.equal(carolHangup.status, 200);
+    assert.equal(
+      (await carolHangup.json()).call.state,
+      "active",
+      "group stays active after the joined member leaves",
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("store-race: a stale write cannot resurrect an ended call (terminal-call monotonicity)", async () => {
   const g = await startGroupCallFixture("stalewrite");
   try {

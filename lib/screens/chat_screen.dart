@@ -914,10 +914,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _startCallFromHeader(CallMediaMode mediaMode) async {
-    // GP2 discovery: if a call is already live in this chat, JOIN it instead
-    // of starting a duplicate. Opening the CallScreen surfaces «Войти» (the
-    // GP1-loosened gate) so a late member joins in one more tap rather than
-    // spawning a second room the others aren't in.
+    // GP2/GP5 discovery: if a call is already live in this chat, JOIN it
+    // instead of starting a duplicate. requestForegroundPresentation surfaces
+    // the CallScreen with «Войти» (chat-membership-gated /join) even if the
+    // user had minimized this call — so a late member joins in one more tap
+    // rather than spawning a second room the others aren't in.
     final chatId = _chatId;
     if (chatId != null && chatId.isNotEmpty) {
       try {
@@ -926,11 +927,24 @@ class _ChatScreenState extends State<ChatScreen> {
           return;
         }
         if (active != null && !active.state.isTerminal) {
-          await _callCoordinator.activateCall(active);
+          await _callCoordinator.requestForegroundPresentation(active);
           return;
         }
+        // getActiveCall resolved to null/terminal → genuinely no live call in
+        // this chat; fall through to start a fresh one.
       } catch (_) {
-        // Best-effort discovery — fall through to starting a fresh call.
+        if (!mounted) {
+          return;
+        }
+        // A TRANSIENT failure while checking for a live call — do NOT silently
+        // start a duplicate room (that 409s if a call is actually live). Offer
+        // a retry instead.
+        showAppSnackBar(
+          context,
+          'Не удалось проверить активный звонок. Попробуйте ещё раз.',
+          isError: true,
+        );
+        return;
       }
     }
 

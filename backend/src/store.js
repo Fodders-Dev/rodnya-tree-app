@@ -19313,6 +19313,42 @@ class FileStore {
     return activeCalls.length > 0 ? structuredClone(activeCalls[0]) : null;
   }
 
+  // Discovery for group late-join: the freshest active/ringing call in a chat,
+  // IGNORING participantIds — so a chat member who wasn't pre-invited can find
+  // (and then POST /join) the call. Access is gated by the CALLER at the app
+  // layer (chat membership); this method purposely does NOT filter by
+  // participantIds. Kept distinct from findActiveCall, whose participantIds
+  // filter drives busy-state and MUST stay strict (a chat member must not be
+  // marked "busy" merely because their chat has a call they haven't joined).
+  async findActiveCallForChat(chatId) {
+    const normalizedChatId = String(chatId || "").trim();
+    if (!normalizedChatId) {
+      return null;
+    }
+    const db = await this._read();
+    const statePriority = {
+      active: 0,
+      ringing: 1,
+    };
+    const calls = db.calls
+      .map((entry) => normalizeStoredCall(entry))
+      .filter(
+        (call) =>
+          call &&
+          isCallBusyState(call.state) &&
+          call.chatId === normalizedChatId,
+      )
+      .sort((left, right) => {
+        const leftPriority = statePriority[left.state] ?? 99;
+        const rightPriority = statePriority[right.state] ?? 99;
+        if (leftPriority != rightPriority) {
+          return leftPriority - rightPriority;
+        }
+        return new Date(right.updatedAt) - new Date(left.updatedAt);
+      });
+    return calls.length > 0 ? structuredClone(calls[0]) : null;
+  }
+
   async listRingingCalls() {
     const db = await this._read();
     return db.calls

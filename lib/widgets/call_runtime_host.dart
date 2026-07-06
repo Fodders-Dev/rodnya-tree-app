@@ -136,8 +136,14 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       });
     }
 
-    if (_shouldAutoPresent(call)) {
-      unawaited(_openCallScreen(call));
+    // GP5: an explicit user request to see this call (tapping «Позвонить» on a
+    // chat whose call is already live) force-presents — it overrides a stale
+    // dismissal (_suppressedCallId) that _shouldAutoPresent would otherwise
+    // honour, so the tap can never be a silent no-op.
+    final foregroundRequested =
+        _coordinator.consumeForegroundPresentationRequest(call.id);
+    if (foregroundRequested || _shouldAutoPresent(call)) {
+      unawaited(_openCallScreen(call, force: foregroundRequested));
     }
   }
 

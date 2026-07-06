@@ -99,6 +99,50 @@ void main() {
   );
 
   test(
+    'requestForegroundPresentation applies the call and arms a one-shot '
+    'foreground request the host consumes exactly once',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+      // Let the constructor's initial resync settle so its _applyCall(null)
+      // can't clobber the call we present.
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final call = _buildCall(state: CallState.active);
+      await coordinator.requestForegroundPresentation(call);
+
+      expect(coordinator.currentCall?.id, call.id);
+      // The host consumes the request to FORCE-present (overriding a stale
+      // dismissal); it must fire exactly once, then clear so later notifies
+      // don't re-hijack the UI.
+      expect(coordinator.consumeForegroundPresentationRequest(call.id), isTrue);
+      expect(coordinator.consumeForegroundPresentationRequest(call.id), isFalse);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'requestForegroundPresentation ignores a terminal call — no foreground '
+    'request is armed',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+      final ended = _buildCall(state: CallState.ended);
+
+      await coordinator.requestForegroundPresentation(ended);
+
+      expect(
+        coordinator.consumeForegroundPresentationRequest(ended.id),
+        isFalse,
+        reason: 'a terminal call must never arm a foreground present',
+      );
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService starts foreground service on active call '
     'and stops on terminal',
     () async {

@@ -398,6 +398,35 @@ class CallCoordinatorService extends ChangeNotifier
     await _applyCall(call);
   }
 
+  // GP5: a one-shot "the user explicitly asked to see this call now" flag. Set
+  // by requestForegroundPresentation (e.g. tapping «Позвонить» on a chat whose
+  // call is already live but was minimized). The runtime host consumes it to
+  // force-present, overriding a stale dismissal (_suppressedCallId).
+  String? _foregroundPresentationCallId;
+
+  // Bring an already-live call to the foreground on an EXPLICIT user request,
+  // overriding any prior minimize/dismiss. _applyCall can early-return via the
+  // ignore-gate without notifying when the call is unchanged (the exact case:
+  // the user minimized this very call), so force a notify to make the host
+  // re-evaluate and consume the request.
+  Future<void> requestForegroundPresentation(CallInvite call) async {
+    if (call.state.isTerminal) {
+      return;
+    }
+    _foregroundPresentationCallId = call.id;
+    await _applyCall(call);
+    notifyListeners();
+  }
+
+  bool consumeForegroundPresentationRequest(String callId) {
+    if (_foregroundPresentationCallId != null &&
+        _foregroundPresentationCallId == callId) {
+      _foregroundPresentationCallId = null;
+      return true;
+    }
+    return false;
+  }
+
   Future<void> ensureRuntimeReady() {
     final existingFuture = _runtimeReadyFuture;
     if (existingFuture != null) {
