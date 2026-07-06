@@ -76,3 +76,5 @@ node_modules
 .local_dev_creds
 
 .claude/
+*.apk
+*.aab
