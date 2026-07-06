@@ -15496,23 +15496,23 @@ class FileStore {
   }
 
   async createNotification({userId, type, title, body, data, silent = false}) {
-    const db = await this._read();
-    const user = db.users.find((entry) => entry.id === userId);
-    if (!user) {
-      return null;
-    }
+    return this._mutate((db, skip) => {
+      const user = db.users.find((entry) => entry.id === userId);
+      if (!user) {
+        return skip(null);
+      }
 
-    const notification = createNotificationRecord({
-      userId,
-      type,
-      title,
-      body,
-      data,
-      silent,
+      const notification = createNotificationRecord({
+        userId,
+        type,
+        title,
+        body,
+        data,
+        silent,
+      });
+      db.notifications.push(notification);
+      return structuredClone(notification);
     });
-    db.notifications.push(notification);
-    await this._write(db);
-    return structuredClone(notification);
   }
 
   async registerPushDevice({
@@ -15748,19 +15748,20 @@ class FileStore {
   }
 
   async markNotificationRead(notificationId, userId) {
-    const db = await this._read();
-    const notification = db.notifications.find(
-      (entry) => entry.id === notificationId && entry.userId === userId,
-    );
-    if (!notification) {
-      return null;
-    }
+    return this._mutate((db, skip) => {
+      const notification = db.notifications.find(
+        (entry) => entry.id === notificationId && entry.userId === userId,
+      );
+      if (!notification) {
+        return skip(null);
+      }
 
-    if (!notification.readAt) {
-      notification.readAt = nowIso();
-      await this._write(db);
-    }
-    return structuredClone(notification);
+      if (!notification.readAt) {
+        notification.readAt = nowIso();
+        return structuredClone(notification);
+      }
+      return skip(structuredClone(notification));
+    });
   }
 
   /// Bulk mark — отмечает прочитанными все уведомления юзера, у
@@ -15787,26 +15788,27 @@ class FileStore {
       ? new Set(types.map((entry) => String(entry)))
       : null;
 
-    const db = await this._read();
-    const now = nowIso();
-    let markedCount = 0;
-    for (const notification of db.notifications) {
-      if (notification.userId !== userId) continue;
-      if (notification.readAt) continue;
-      if (typeFilter && !typeFilter.has(String(notification.type || ""))) {
-        continue;
+    return this._mutate((db, skip) => {
+      const now = nowIso();
+      let markedCount = 0;
+      for (const notification of db.notifications) {
+        if (notification.userId !== userId) continue;
+        if (notification.readAt) continue;
+        if (typeFilter && !typeFilter.has(String(notification.type || ""))) {
+          continue;
+        }
+        const data = notification.data || {};
+        const candidate = data[dataKey];
+        if (candidate == null) continue;
+        if (String(candidate) !== normalizedValue) continue;
+        notification.readAt = now;
+        markedCount += 1;
       }
-      const data = notification.data || {};
-      const candidate = data[dataKey];
-      if (candidate == null) continue;
-      if (String(candidate) !== normalizedValue) continue;
-      notification.readAt = now;
-      markedCount += 1;
-    }
-    if (markedCount > 0) {
-      await this._write(db);
-    }
-    return markedCount;
+      if (markedCount === 0) {
+        return skip(markedCount);
+      }
+      return markedCount;
+    });
   }
 
   async listUserBlocks(userId) {
