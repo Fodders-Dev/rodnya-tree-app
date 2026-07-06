@@ -70,6 +70,11 @@ function Resolve-SigningStoreFile([string]$StoreFile, [string]$PropertiesPath) {
       }
     }
     $candidates.Add((Join-Path (Join-Path $repoRoot "android") $StoreFile))
+    # Gradle resolves storeFile relative to the app MODULE (android/app), so
+    # a properties path like "../KEYS/foo.jks" points at android/KEYS. Mirror
+    # gradle's resolution here so the pre-flight check agrees with the build.
+    $candidates.Add((Join-Path (Join-Path $repoRoot "android\app") $StoreFile))
+    $candidates.Add((Join-Path (Join-Path $repoRoot "android") ($StoreFile -replace "\.\./", "")))
     $candidates.Add((Join-Path $repoRoot $StoreFile))
   }
 
