@@ -230,8 +230,10 @@ powershell -ExecutionPolicy Bypass -File .\tool\upload_rustore_screenshots.ps1 `
 - `2026-04-12`: RuStore API больше не режет draft creation, auth и screenshot upload.
 - `AAB` upload сейчас упирается только в store policy:
   - `APK/AAB contains new sensitive permissions`
-  - список: `RECORD_AUDIO`, `READ_EXTERNAL_STORAGE`, `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_MEDIA_AUDIO`
+  - список: `CAMERA`, `RECORD_AUDIO`, `READ_EXTERNAL_STORAGE`, `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_MEDIA_AUDIO`
+    - `CAMERA` + `RECORD_AUDIO` — добавлены в 1.0.24 для голосовых/видеозвонков и видеокружков; обоснование для модератора: [rustore_moderator_notes_1.0.24.md](./rustore_moderator_notes_1.0.24.md#sensitive-permissions--обоснование)
   - RuStore требует загрузить сборку через development console и задекларировать эти permissions вручную
+- `1.0.24`: карточка/whatsnew/moderator-pack обновлены под текущую версию (со звонками): [rustore_store_card_1.0.24.md](./rustore_store_card_1.0.24.md), [rustore_whatsnew_1.0.24.txt](./rustore_whatsnew_1.0.24.txt), [rustore_moderator_notes_1.0.24.md](./rustore_moderator_notes_1.0.24.md). Скриншот-лист нужно дополнить кадрами звонка.
 
 ## Official References
 - RuStore Console: https://www.rustore.ru/developer
