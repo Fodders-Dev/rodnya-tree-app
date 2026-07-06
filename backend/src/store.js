@@ -6081,19 +6081,32 @@ class FileStore {
   //     mutation's already-persisted _write();
   //   - _read()/_write() await _writeQueue/_stateWriteQueue, NOT _mutateQueue,
   //     so there is no circular wait / deadlock.
-  // `applyFn(data)` mutates `data` in place and returns the method's result. It
-  // MUST be pure in-memory — it must NOT call _read/_write/_mutate itself. If
-  // it throws, nothing is persisted (the write is skipped) and the error
-  // propagates to the caller; the fresh read on the next mutation discards the
-  // aborted in-memory changes.
+  // `applyFn(data, skip)` mutates `data` in place and returns the method's
+  // result. It MUST be pure in-memory — it must NOT call _read/_write/_mutate
+  // itself. On a read-only / not-found / no-op path it should `return skip(x)`
+  // instead of `return x`: that returns `x` WITHOUT persisting, so those
+  // early-returns stay pure reads exactly as they were before the migration
+  // (no redundant whole-document write, and — importantly on Postgres — no new
+  // write-layer failure surface on a path the old code never wrote on, e.g. an
+  // already-terminal call handled by applyCallWebhook). Forgetting `skip` only
+  // costs a redundant idempotent write, never a lost update (fail-safe). If
+  // applyFn throws, nothing is persisted and the error propagates; the fresh
+  // read on the next mutation discards the aborted in-memory changes.
   async _mutate(applyFn) {
     if (!this._mutateQueue) {
       this._mutateQueue = Promise.resolve();
     }
     const run = this._mutateQueue.then(async () => {
       const data = await this._read();
-      const result = await applyFn(data);
-      await this._write(data);
+      let shouldWrite = true;
+      const skip = (value) => {
+        shouldWrite = false;
+        return value;
+      };
+      const result = await applyFn(data, skip);
+      if (shouldWrite) {
+        await this._write(data);
+      }
       return result;
     });
     // Keep the lock chained even if applyFn/persist rejects, so later mutations
@@ -19242,10 +19255,10 @@ class FileStore {
     mediaMode,
     originatedBySessionId = null,
   }) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const chat = this._resolveChat(db, chatId);
       if (!chat) {
-        return null;
+        return skip(null);
       }
 
       const chatParticipantIds = normalizeParticipantIds(chat.participantIds || []);
@@ -19258,16 +19271,16 @@ class FileStore {
         !participantIds.includes(initiatorId) ||
         participantIds.some((participantId) => !chatParticipantIds.includes(participantId))
       ) {
-        return false;
+        return skip(false);
       }
       if (chat.type === "direct" && participantIds.length !== 2) {
-        return false;
+        return skip(false);
       }
       if ((chat.type === "group" || chat.type === "branch") && participantIds.length < 2) {
-        return false;
+        return skip(false);
       }
       if (chat.type !== "direct" && chat.type !== "group" && chat.type !== "branch") {
-        return false;
+        return skip(false);
       }
 
       const normalizedRecipientId =
@@ -19275,7 +19288,7 @@ class FileStore {
         participantIds.find((participantId) => participantId !== initiatorId) ||
         "";
       if (!normalizedRecipientId || !participantIds.includes(normalizedRecipientId)) {
-        return false;
+        return skip(false);
       }
 
       const hasBusyCall = db.calls
@@ -19291,7 +19304,7 @@ class FileStore {
           );
         });
       if (hasBusyCall) {
-        return "BUSY";
+        return skip("BUSY");
       }
 
       const call = createCallRecord({
@@ -19404,17 +19417,17 @@ class FileStore {
     sessionByUserId,
     acceptedBySessionId = null,
   }) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
       if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
-        return false;
+        return skip(false);
       }
       if (call.state !== "ringing") {
-        return undefined;
+        return skip(undefined);
       }
 
       const timestamp = nowIso();
@@ -19449,18 +19462,18 @@ class FileStore {
   // ringing -> active (filling the scalar back-compat fields). Idempotent per
   // (user, session): re-adding the same pair just re-writes the same values.
   async addCallParticipantSession({callId, userId, sessionId, session}) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
       const normalizedUserId = String(userId || "").trim();
       if (!normalizedUserId || !call.participantIds.includes(normalizedUserId)) {
-        return false;
+        return skip(false);
       }
       if (isCallTerminalState(call.state)) {
-        return undefined;
+        return skip(undefined);
       }
 
       const timestamp = nowIso();
@@ -19511,11 +19524,11 @@ class FileStore {
   }
 
   async markCallRoomJoinFailure({callId, reason = null}) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
 
       storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
@@ -19527,17 +19540,17 @@ class FileStore {
   }
 
   async rejectCall({callId, userId}) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
       if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
-        return false;
+        return skip(false);
       }
       if (call.state !== "ringing") {
-        return undefined;
+        return skip(undefined);
       }
 
       const timestamp = nowIso();
@@ -19550,17 +19563,17 @@ class FileStore {
   }
 
   async cancelCall({callId, userId}) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
       if (call.initiatorId !== userId) {
-        return false;
+        return skip(false);
       }
       if (call.state !== "ringing") {
-        return undefined;
+        return skip(undefined);
       }
 
       const timestamp = nowIso();
@@ -19573,14 +19586,14 @@ class FileStore {
   }
 
   async markCallMissed({callId, reason = "missed"}) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
       if (call.state !== "ringing") {
-        return undefined;
+        return skip(undefined);
       }
 
       const timestamp = nowIso();
@@ -19593,17 +19606,17 @@ class FileStore {
   }
 
   async hangupCall({callId, userId}) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
       if (!call.participantIds.includes(userId)) {
-        return false;
+        return skip(false);
       }
       if (call.state !== "active") {
-        return undefined;
+        return skip(undefined);
       }
 
       const timestamp = nowIso();
@@ -19656,23 +19669,23 @@ class FileStore {
   // (someoneStillConnected) is unaffected: the call still ends only when the
   // last JOINED participant leaves, never because the roster grew.
   async addCallParticipants({callId, userIds}) {
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find(
         (entry) => String(entry?.id || "") === callId,
       );
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call) {
-        return null;
+        return skip(null);
       }
       if (call.state !== "active" && call.state !== "ringing") {
-        return undefined;
+        return skip(undefined);
       }
       const existing = normalizeParticipantIds(storedCall.participantIds || []);
       const additions = normalizeParticipantIds(userIds || []).filter(
         (participantId) => !existing.includes(participantId),
       );
       if (additions.length === 0) {
-        return false;
+        return skip(false);
       }
       storedCall.participantIds = [...existing, ...additions];
       storedCall.updatedAt = nowIso();
@@ -19689,13 +19702,13 @@ class FileStore {
       return null;
     }
 
-    return this._mutate((db) => {
+    return this._mutate((db, skip) => {
       const storedCall = db.calls.find((entry) => {
         return normalizeNullableString(entry?.roomName) === normalizedRoomName;
       });
       const call = normalizeStoredCall(storedCall);
       if (!storedCall || !call || isCallTerminalState(call.state)) {
-        return call ? structuredClone(call) : null;
+        return skip(call ? structuredClone(call) : null);
       }
 
       const normalizedEvent = String(event || "").trim();
@@ -19757,7 +19770,7 @@ class FileStore {
         return structuredClone(normalizeStoredCall(storedCall));
       }
 
-      return structuredClone(call);
+      return skip(structuredClone(call));
     });
   }
 
