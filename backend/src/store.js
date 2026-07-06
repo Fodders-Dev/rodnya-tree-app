@@ -18875,98 +18875,98 @@ class FileStore {
     replyTo = null,
     call = null,
   }) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    let chat = this._resolveChat(db, chatId);
-    if (!chat) {
-      return null;
-    }
-
-    if (!db.chats.some((entry) => entry.id === chat.id)) {
-      db.chats.push(chat);
-    }
-
-    const participants = normalizeParticipantIds(chat.participantIds);
-    if (!participants.includes(senderId) || participants.length < 2) {
-      return null;
-    }
-
-    const sender = db.users.find((entry) => entry.id === senderId);
-    const normalizedText = String(text || "").trim();
-    const normalizedAttachments = normalizeMessageAttachments({
-      attachments,
-      mediaUrls,
-      imageUrl,
-    });
-    const normalizedMediaUrls = normalizedAttachments.map((entry) => entry.url);
-    const normalizedImageUrl =
-      normalizedAttachments.find((entry) => entry.type === "image")?.url ||
-      normalizedAttachments[0]?.url ||
-      null;
-    const normalizedClientMessageId = String(clientMessageId || "").trim() || null;
-    const normalizedExpiresAt = normalizeOptionalIsoTimestamp(expiresAt);
-    const normalizedReplyTo = normalizeReplyReference(replyTo);
-    const normalizedCall = normalizeChatMessageCall(call);
-    if (
-      !normalizedText &&
-      normalizedAttachments.length === 0 &&
-      !normalizedCall
-    ) {
-      return false;
-    }
-
-    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
-
-    if (normalizedClientMessageId) {
-      const existingMessage = db.messages.find(
-        (entry) =>
-          relatedChatIds.has(String(entry.chatId || "").trim()) &&
-          entry.senderId === senderId &&
-          entry.clientMessageId === normalizedClientMessageId,
-      );
-      if (existingMessage) {
-        return {
-          ...attachMessageReactions(db, existingMessage),
-          _deduplicated: true,
-        };
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      let chat = this._resolveChat(db, chatId);
+      if (!chat) {
+        return skip(null);
       }
-    }
 
-    const timestamp = nowIso();
-    const message = {
-      id: crypto.randomUUID(),
-      chatId: chat.id,
-      senderId,
-      text: normalizedText,
-      timestamp,
-      isRead: false,
-      participants,
-      deliveredTo: [senderId],
-      readBy: [senderId],
-      senderName: sender?.profile?.displayName || "Пользователь",
-      attachments: normalizedAttachments,
-      imageUrl: normalizedImageUrl,
-      mediaUrls: normalizedMediaUrls.length > 0 ? normalizedMediaUrls : null,
-      clientMessageId: normalizedClientMessageId,
-      expiresAt: normalizedExpiresAt,
-      replyTo: normalizedReplyTo,
-    };
+      if (!db.chats.some((entry) => entry.id === chat.id)) {
+        db.chats.push(chat);
+      }
 
-    const storedChat = db.chats.find((entry) => entry.id === chat.id);
-    if (storedChat) {
-      storedChat.updatedAt = timestamp;
-    }
+      const participants = normalizeParticipantIds(chat.participantIds);
+      if (!participants.includes(senderId) || participants.length < 2) {
+        return skip(null);
+      }
 
-    if (normalizedCall) {
-      message.call = normalizedCall;
-    }
-    db.messages.push(message);
-    if (purgedChatIds.size > 0) {
-      purgedChatIds.add(chat.id);
-      this._syncChatUpdatedAt(db, purgedChatIds);
-    }
-    await this._write(db);
-    return attachMessageReactions(db, message);
+      const sender = db.users.find((entry) => entry.id === senderId);
+      const normalizedText = String(text || "").trim();
+      const normalizedAttachments = normalizeMessageAttachments({
+        attachments,
+        mediaUrls,
+        imageUrl,
+      });
+      const normalizedMediaUrls = normalizedAttachments.map((entry) => entry.url);
+      const normalizedImageUrl =
+        normalizedAttachments.find((entry) => entry.type === "image")?.url ||
+        normalizedAttachments[0]?.url ||
+        null;
+      const normalizedClientMessageId = String(clientMessageId || "").trim() || null;
+      const normalizedExpiresAt = normalizeOptionalIsoTimestamp(expiresAt);
+      const normalizedReplyTo = normalizeReplyReference(replyTo);
+      const normalizedCall = normalizeChatMessageCall(call);
+      if (
+        !normalizedText &&
+        normalizedAttachments.length === 0 &&
+        !normalizedCall
+      ) {
+        return skip(false);
+      }
+
+      const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+
+      if (normalizedClientMessageId) {
+        const existingMessage = db.messages.find(
+          (entry) =>
+            relatedChatIds.has(String(entry.chatId || "").trim()) &&
+            entry.senderId === senderId &&
+            entry.clientMessageId === normalizedClientMessageId,
+        );
+        if (existingMessage) {
+          return skip({
+            ...attachMessageReactions(db, existingMessage),
+            _deduplicated: true,
+          });
+        }
+      }
+
+      const timestamp = nowIso();
+      const message = {
+        id: crypto.randomUUID(),
+        chatId: chat.id,
+        senderId,
+        text: normalizedText,
+        timestamp,
+        isRead: false,
+        participants,
+        deliveredTo: [senderId],
+        readBy: [senderId],
+        senderName: sender?.profile?.displayName || "Пользователь",
+        attachments: normalizedAttachments,
+        imageUrl: normalizedImageUrl,
+        mediaUrls: normalizedMediaUrls.length > 0 ? normalizedMediaUrls : null,
+        clientMessageId: normalizedClientMessageId,
+        expiresAt: normalizedExpiresAt,
+        replyTo: normalizedReplyTo,
+      };
+
+      const storedChat = db.chats.find((entry) => entry.id === chat.id);
+      if (storedChat) {
+        storedChat.updatedAt = timestamp;
+      }
+
+      if (normalizedCall) {
+        message.call = normalizedCall;
+      }
+      db.messages.push(message);
+      if (purgedChatIds.size > 0) {
+        purgedChatIds.add(chat.id);
+        this._syncChatUpdatedAt(db, purgedChatIds);
+      }
+      return attachMessageReactions(db, message);
+    });
   }
 
   async updateChatMessage({
@@ -19135,118 +19135,120 @@ class FileStore {
     messageId,
     userIds = [],
   }) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!chat) {
-      return false;
-    }
-    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
-    const message = db.messages.find(
-      (entry) =>
-        entry.id === messageId &&
-        relatedChatIds.has(String(entry.chatId || "").trim()),
-    );
-    if (!message) {
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!chat) {
+        return skip(false);
+      }
+      const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+      const message = db.messages.find(
+        (entry) =>
+          entry.id === messageId &&
+          relatedChatIds.has(String(entry.chatId || "").trim()),
+      );
+      if (!message) {
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return null;
+        }
+        return skip(null);
+      }
+
+      const participantIds = normalizeParticipantIds(chat.participantIds);
+      const recipientIds = normalizeParticipantIds(userIds).filter(
+        (userId) => participantIds.includes(userId) && userId !== message.senderId,
+      );
+      if (recipientIds.length === 0) {
+        return skip({
+          chatId: message.chatId || chat.id,
+          messageId: message.id,
+          deliveredTo: normalizeParticipantIds(message.deliveredTo),
+          changedUserIds: [],
+        });
+      }
+
+      const deliveredTo = normalizeParticipantIds(message.deliveredTo);
+      let changed = false;
+      for (const userId of recipientIds) {
+        if (!deliveredTo.includes(userId)) {
+          deliveredTo.push(userId);
+          changed = true;
+        }
+      }
+      message.deliveredTo = deliveredTo;
+
       if (purgedChatIds.size > 0) {
         this._syncChatUpdatedAt(db, purgedChatIds);
-        await this._write(db);
       }
-      return null;
-    }
 
-    const participantIds = normalizeParticipantIds(chat.participantIds);
-    const recipientIds = normalizeParticipantIds(userIds).filter(
-      (userId) => participantIds.includes(userId) && userId !== message.senderId,
-    );
-    if (recipientIds.length === 0) {
-      return {
+      const result = {
         chatId: message.chatId || chat.id,
         messageId: message.id,
         deliveredTo: normalizeParticipantIds(message.deliveredTo),
-        changedUserIds: [],
+        changedUserIds: changed ? recipientIds : [],
       };
-    }
-
-    const deliveredTo = normalizeParticipantIds(message.deliveredTo);
-    let changed = false;
-    for (const userId of recipientIds) {
-      if (!deliveredTo.includes(userId)) {
-        deliveredTo.push(userId);
-        changed = true;
+      if (changed || purgedChatIds.size > 0) {
+        return result;
       }
-    }
-    message.deliveredTo = deliveredTo;
-
-    if (purgedChatIds.size > 0) {
-      this._syncChatUpdatedAt(db, purgedChatIds);
-    }
-
-    if (changed || purgedChatIds.size > 0) {
-      await this._write(db);
-    }
-
-    return {
-      chatId: message.chatId || chat.id,
-      messageId: message.id,
-      deliveredTo: normalizeParticipantIds(message.deliveredTo),
-      changedUserIds: changed ? recipientIds : [],
-    };
+      return skip(result);
+    });
   }
 
   async markChatAsRead(chatId, userId) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!chat || !chat.participantIds.includes(userId)) {
-      return false;
-    }
-    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!chat || !chat.participantIds.includes(userId)) {
+        return skip(false);
+      }
+      const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
-    let changed = false;
-    const readMessageIds = [];
+      let changed = false;
+      const readMessageIds = [];
 
-    for (const message of db.messages) {
-      if (
-        relatedChatIds.has(String(message.chatId || "").trim()) &&
-        message.senderId !== userId
-      ) {
-        const deliveredTo = normalizeParticipantIds(message.deliveredTo);
-        if (!deliveredTo.includes(userId)) {
-          deliveredTo.push(userId);
-          message.deliveredTo = deliveredTo;
-          changed = true;
-        }
+      for (const message of db.messages) {
+        if (
+          relatedChatIds.has(String(message.chatId || "").trim()) &&
+          message.senderId !== userId
+        ) {
+          const deliveredTo = normalizeParticipantIds(message.deliveredTo);
+          if (!deliveredTo.includes(userId)) {
+            deliveredTo.push(userId);
+            message.deliveredTo = deliveredTo;
+            changed = true;
+          }
 
-        const readBy = normalizeParticipantIds(message.readBy);
-        if (!readBy.includes(userId)) {
-          readBy.push(userId);
-          message.readBy = readBy;
-          readMessageIds.push(message.id);
-          changed = true;
-        }
+          const readBy = normalizeParticipantIds(message.readBy);
+          if (!readBy.includes(userId)) {
+            readBy.push(userId);
+            message.readBy = readBy;
+            readMessageIds.push(message.id);
+            changed = true;
+          }
 
-        if (message.isRead !== true) {
-          message.isRead = true;
-          changed = true;
+          if (message.isRead !== true) {
+            message.isRead = true;
+            changed = true;
+          }
         }
       }
-    }
 
-    if (purgedChatIds.size > 0) {
-      this._syncChatUpdatedAt(db, purgedChatIds);
-    }
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+      }
 
-    if (changed || purgedChatIds.size > 0) {
-      await this._write(db);
-    }
-
-    return {
-      changed,
-      chatId: chat.id,
-      userId,
-      messageIds: readMessageIds,
-    };
+      const result = {
+        changed,
+        chatId: chat.id,
+        userId,
+        messageIds: readMessageIds,
+      };
+      if (changed || purgedChatIds.size > 0) {
+        return result;
+      }
+      return skip(result);
+    });
   }
 
   async createCallInvite({
