@@ -729,6 +729,13 @@ function registerChatRoutes(
     });
   });
 
+  // SPEED-2: фан-аут одного чата сериализуется цепочкой промисов — при
+  // rapid-fire отправке в один чат абсолютно-снапшотные WS-события
+  // (chat.unread.changed с totalUnread) не приходят получателю
+  // out-of-order (иначе бейдж мог залипнуть на меньшем числе). Разные
+  // чаты фанаутятся параллельно. Хвост чистится, чтобы карта не росла.
+  const chatFanoutTail = new Map();
+
   app.post("/v1/chats/:chatId/messages", requireAuth, async (req, res) => {
     // SPEED-3: пофазный тайминг отправки — grep-абельная строка
     // «[send-timing] …» отвечает на вопрос «где миллисекунды» (доступ /
@@ -899,7 +906,7 @@ function registerChatRoutes(
         `dedup=${isDeduplicated}`,
     );
 
-    (async () => {
+    const runFanout = async () => {
       if (typeof store.clearChatDraft === "function") {
         try {
           await store.clearChatDraft({
@@ -999,11 +1006,23 @@ function registerChatRoutes(
         `[send-timing] chat=${message.chatId} fanout=${Date.now() - tPersist}ms ` +
           `recipients=${recipientIds.length}`,
       );
-    })().catch((error) => {
-      console.warn(
-        "[backend] message fan-out failed",
-        error?.message || error,
-      );
+    };
+
+    // Сериализуем фан-аут в пределах чата: следующий стартует только после
+    // завершения предыдущего, чтобы порядок chat.message.created /
+    // chat.unread.changed совпадал с порядком отправки.
+    const chatKey = message.chatId;
+    const prior = chatFanoutTail.get(chatKey) || Promise.resolve();
+    const next = prior.then(runFanout).catch((error) => {
+      console.warn("[backend] message fan-out failed", error?.message || error);
+    });
+    chatFanoutTail.set(chatKey, next);
+    next.finally(() => {
+      // Снимаем хвост только если он всё ещё наш (иначе затрём более
+      // свежий фан-аут этого чата).
+      if (chatFanoutTail.get(chatKey) === next) {
+        chatFanoutTail.delete(chatKey);
+      }
     });
   });
 
