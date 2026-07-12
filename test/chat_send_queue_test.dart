@@ -73,6 +73,54 @@ void main() {
     );
   });
 
+  test(
+      'SPEED-1: pending-пузырь нотифицируется ДО дисковой записи '
+      '(persist не гейтит отрисовку)', () async {
+    final chatService = _FakeChatService();
+    chatService.holdSends();
+    final boxName = nextBoxName();
+    final queue = ChatSendQueue(chatService: chatService, boxName: boxName);
+    addTearDown(queue.dispose);
+
+    var notifiedWithPending = false;
+    String? diskValueAtNotify;
+    queue.addListener(() {
+      if (!notifiedWithPending && queue.messagesFor('chat-1').isNotEmpty) {
+        notifiedWithPending = true;
+        // Что лежит в Hive В МОМЕНТ notify: должен быть null — запись на
+        // диск идёт unawaited ПОСЛЕ notify, а не перед ним (иначе пузырь
+        // ждал бы диска и не появлялся в кадре тапа).
+        diskValueAtNotify = Hive.isBoxOpen(boxName)
+            ? Hive.box<String>(boxName).get('chat-1')
+            : null;
+      }
+    });
+
+    await queue.enqueue(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'Привет',
+    );
+
+    expect(notifiedWithPending, isTrue,
+        reason: 'слушатель должен увидеть pending-сообщение из enqueue');
+    expect(diskValueAtNotify, isNull,
+        reason: 'notify обязан опережать Hive-persist (SPEED-1)');
+    // А recovery-файл догоняет следом.
+    await _waitUntil(
+      () =>
+          Hive.isBoxOpen(boxName) &&
+          Hive.box<String>(boxName).get('chat-1') != null,
+    );
+
+    chatService.completeSend();
+    await _waitUntil(
+      () =>
+          queue.messagesFor('chat-1').single.status ==
+          ChatPendingMessageStatus.sent,
+    );
+  });
+
   test('ChatSendQueue stores failure and retries with same clientMessageId',
       () async {
     final chatService = _FakeChatService()

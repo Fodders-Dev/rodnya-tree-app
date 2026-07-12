@@ -1959,6 +1959,10 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    // SPEED-1 замер: от тапа «отправить» до кадра, в котором отрисован
+    // оптимистичный пузырь (цель <16мс — один кадр, «эффект Telegram»).
+    final tapTrace = PerfTrace('chat.tap-to-bubble');
+
     if (attachments.any(_isRecordedVoiceAttachment)) {
       _recordingController.markSending();
     }
@@ -1985,6 +1989,9 @@ class _ChatScreenState extends State<ChatScreen> {
       replyTo: replyTo,
       expiresInSeconds: _autoDeleteSettings.option.ttl?.inSeconds,
     );
+    // enqueue уже дёрнул notify → setState; пузырь отрисуется в ближайшем
+    // кадре — фиксируем именно его.
+    WidgetsBinding.instance.addPostFrameCallback((_) => tapTrace.finish());
 
     // Side-effects: fire-and-forget so they can't block or kill the send.
     unawaited(

@@ -425,8 +425,13 @@ class ChatSendQueue extends ChangeNotifier {
       expiresInSeconds: expiresInSeconds,
     );
     _upsert(message);
-    await _persistChat(normalizedChatId);
+    // SPEED-1: пузырь должен появиться в кадре тапа — notify ДО дисковой
+    // записи. Hive здесь — только recovery-файл (переживает kill приложения),
+    // не источник правды для UI: in-memory состояние уже консистентно, а
+    // _persistChat кодирует свежайшее состояние в момент выполнения, так что
+    // unawaited-персисты безопасны (last-write-wins).
     _notify();
+    unawaited(_persistChatSafely(normalizedChatId));
     unawaited(_send(message));
     return message;
   }
@@ -452,8 +457,8 @@ class ChatSendQueue extends ChangeNotifier {
       errorText: null,
     );
     _upsert(nextMessage);
-    await _persistChat(chatId);
     _notify();
+    unawaited(_persistChatSafely(chatId));
     await _send(nextMessage);
   }
 
@@ -462,8 +467,8 @@ class ChatSendQueue extends ChangeNotifier {
       _messagesByChat[chatId] ?? const <ChatPendingMessage>[],
     )..removeWhere((message) => message.localId == clientMessageId);
     _messagesByChat[chatId] = _sortedMessages(messages);
-    await _persistChat(chatId);
     _notify();
+    unawaited(_persistChatSafely(chatId));
   }
 
   Future<void> confirmRemoteMessages(
@@ -488,8 +493,8 @@ class ChatSendQueue extends ChangeNotifier {
       return;
     }
     _messagesByChat[chatId] = nextMessages;
-    await _persistChat(chatId);
     _notify();
+    unawaited(_persistChatSafely(chatId));
   }
 
   /// S4: явный потолок ожидания ACK — дольше держать «отправляется»
@@ -535,8 +540,8 @@ class ChatSendQueue extends ChangeNotifier {
           errorText: null,
         ),
       );
-      await _persistChat(message.chatId);
       _notify();
+      unawaited(_persistChatSafely(message.chatId));
     } catch (error) {
       sendTrace.cancel();
       if (!_messageExists(message.chatId, message.localId)) {
@@ -550,8 +555,8 @@ class ChatSendQueue extends ChangeNotifier {
               : _messageErrorText(error),
         ),
       );
-      await _persistChat(message.chatId);
       _notify();
+      unawaited(_persistChatSafely(message.chatId));
     } finally {
       _inFlightMessageIds.remove(message.localId);
     }
@@ -567,8 +572,8 @@ class ChatSendQueue extends ChangeNotifier {
       return;
     }
     _upsert(message.copyWith(progress: progress));
-    unawaited(_persistChat(chatId));
     _notify();
+    unawaited(_persistChatSafely(chatId));
   }
 
   ChatPendingMessage? _findMessage(String chatId, String clientMessageId) {
@@ -597,6 +602,17 @@ class ChatSendQueue extends ChangeNotifier {
       messages[index] = message;
     }
     _messagesByChat[message.chatId] = _sortedMessages(messages);
+  }
+
+  /// SPEED-1: обёртка для unawaited-персистов — ошибка диска не должна
+  /// уронить zone (Hive тут recovery-файл, не источник правды для UI).
+  Future<void> _persistChatSafely(String chatId) async {
+    try {
+      await _persistChat(chatId);
+    } catch (_) {
+      // Best-effort: очередь уже консистентна в памяти; recovery-файл
+      // догонит на следующем персисте.
+    }
   }
 
   Future<void> _persistChat(String chatId) async {
