@@ -207,6 +207,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isRealtimeReconnecting = false;
   final Set<String> _reportedSendFailureIds = <String>{};
   final Set<String> _handledVoiceSendIds = <String>{};
+  // SPEED-5: отпечаток видимого оптимистичного списка — ребилд только на
+  // реальное изменение (см. _handleSendQueueChanged).
+  String? _lastSendQueueFingerprint;
   Timer? _draftSaveTimer;
   bool _isApplyingDraft = false;
   int _draftPersistenceVersion = 0;
@@ -566,7 +569,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     String? failureMessageToShow;
     var shouldMarkDirectChatBlocked = false;
-    for (final message in _optimisticMessages) {
+    final optimisticMessages = _optimisticMessages;
+    for (final message in optimisticMessages) {
       if (message.attachments.any(_isRecordedVoiceAttachment) &&
           _handledVoiceSendIds.add('${message.localId}-${message.status}')) {
         if (message.status == _OutgoingMessageStatus.sent) {
@@ -588,6 +592,30 @@ class _ChatScreenState extends State<ChatScreen> {
           _isCurrentDirectChat) {
         shouldMarkDirectChatBlocked = true;
       }
+    }
+
+    // SPEED-5: очередь нотифицирует по ЛЮБОМУ чату и на каждый переход —
+    // ребилдим экран только когда видимый оптимистичный список ЭТОГО чата
+    // реально изменился (или надо проставить blocked-флаг). При rapid-fire
+    // это срезает лишние полные ребилды списка сообщений.
+    final fingerprint = optimisticMessages
+        .map((message) => '${message.localId}:${message.status}:'
+            '${message.progress?.stage}:${message.progress?.completed}:'
+            '${message.errorText != null}')
+        .join('|');
+    final fingerprintChanged = fingerprint != _lastSendQueueFingerprint;
+    _lastSendQueueFingerprint = fingerprint;
+    if (!fingerprintChanged && !shouldMarkDirectChatBlocked) {
+      if (failureMessageToShow != null) {
+        final pendingFailureText = failureMessageToShow;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) {
+            return;
+          }
+          showAppSnackBar(context, pendingFailureText, isError: true);
+        });
+      }
+      return;
     }
 
     setState(() {
