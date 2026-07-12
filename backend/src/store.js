@@ -19994,8 +19994,13 @@ class FileStore {
           return undefined;
         }),
       )
-      .catch(() => {
-        // Best-effort: протухшее вычистит следующий sweep или любая мутация.
+      .catch((error) => {
+        // Best-effort: протухшее вычистит следующий sweep или любая мутация —
+        // но хроническую проблему (пул, oversized row) надо ВИДЕТЬ в логах.
+        console.warn(
+          "[store] purge sweep failed",
+          error?.message || error,
+        );
       })
       .then(() => {
         this._purgeSweepScheduled = false;
