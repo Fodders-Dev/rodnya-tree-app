@@ -28,6 +28,7 @@ import 'chat_pin_store.dart';
 import 'hive_box_recovery.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
+import 'warm_http_client.dart';
 
 class _ChatMessageStreamState {
   _ChatMessageStreamState(this.chatId);
@@ -78,7 +79,10 @@ class CustomApiChatService
     Duration? realtimeFallbackPollInterval,
   })  : _authService = authService,
         _runtimeConfig = runtimeConfig,
-        _httpClient = httpClient ?? http.Client(),
+        // SPEED-4: горячий путь отправки — держим keep-alive тёплым 5 минут
+        // (дефолтные 15с рвали соединение за время набора текста → свежий
+        // TCP+TLS handshake на следующем сообщении).
+        _httpClient = httpClient ?? createWarmHttpClient(),
         _realtimeService = realtimeService,
         _storageService = storageService,
         _messageCache = messageCache,
