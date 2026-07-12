@@ -215,19 +215,23 @@ class RealtimeHub {
     return closedCount;
   }
 
-  async publishToChat(chatId, payload, {exceptUserId = null} = {}) {
+  // SPEED-3: `chat` — уже загруженная запись чата от вызывающего. Позволяет
+  // не перечитывать ВЕСЬ документ store ради participantIds (у whole-doc
+  // store каждый findChat = SELECT всего состояния). Без неё — прежнее
+  // поведение (внутренний findChat).
+  async publishToChat(chatId, payload, {exceptUserId = null, chat = null} = {}) {
     if (!chatId || typeof this.store?.findChat !== "function") {
       return false;
     }
 
-    const chat = await this.store.findChat(chatId);
-    if (!chat || !Array.isArray(chat.participantIds)) {
+    const resolvedChat = chat || (await this.store.findChat(chatId));
+    if (!resolvedChat || !Array.isArray(resolvedChat.participantIds)) {
       return false;
     }
 
     const excludedUserId = exceptUserId ? String(exceptUserId).trim() : null;
     const deliveredUserIds = [];
-    for (const participantId of chat.participantIds) {
+    for (const participantId of resolvedChat.participantIds) {
       if (!participantId || participantId === excludedUserId) {
         continue;
       }

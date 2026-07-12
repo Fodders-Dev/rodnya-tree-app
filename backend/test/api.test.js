@@ -13149,14 +13149,23 @@ test("notification feed tracks unread events from chat, relation requests and tr
     );
     assert.equal(sendMessageResponse.status, 201);
 
-    const unreadCountResponse = await fetch(
-      `${ctx.baseUrl}/v1/notifications/unread-count`,
-      {
-        headers: {authorization: `Bearer ${bob.accessToken}`},
-      },
-    );
-    assert.equal(unreadCountResponse.status, 200);
-    const unreadCount = await unreadCountResponse.json();
+    // SPEED-2: ack отправителю уходит ДО записи notification-record
+    // (фан-аут в фоне) — короткий поллинг, пока запись догонит.
+    let unreadCount = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const unreadCountResponse = await fetch(
+        `${ctx.baseUrl}/v1/notifications/unread-count`,
+        {
+          headers: {authorization: `Bearer ${bob.accessToken}`},
+        },
+      );
+      assert.equal(unreadCountResponse.status, 200);
+      unreadCount = await unreadCountResponse.json();
+      if (unreadCount.totalUnread >= 3) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     assert.equal(unreadCount.totalUnread, 3);
 
     const notificationsResponse = await fetch(

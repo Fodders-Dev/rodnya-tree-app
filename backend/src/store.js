@@ -18139,39 +18139,39 @@ class FileStore {
   }
 
   async saveChatDraft({userId, chatId, text}) {
-    const db = await this._read();
-    const chat = this._resolveChat(db, chatId);
-    if (!this._canAccessChatDraft(chat, userId)) {
-      return null;
-    }
-
-    db.chatDrafts = Array.isArray(db.chatDrafts) ? db.chatDrafts : [];
-    const normalizedUserId = String(userId || "").trim();
-    const normalizedText = String(text || "");
-    const existingIndex = db.chatDrafts.findIndex((entry) => {
-      return entry.userId === normalizedUserId && entry.chatId === chat.id;
-    });
-
-    if (!normalizedText.trim()) {
-      if (existingIndex >= 0) {
-        db.chatDrafts.splice(existingIndex, 1);
-        await this._write(db);
+    return this._mutate((db, skip) => {
+      const chat = this._resolveChat(db, chatId);
+      if (!this._canAccessChatDraft(chat, userId)) {
+        return skip(null);
       }
-      return null;
-    }
 
-    const draft = createChatDraftRecord({
-      userId: normalizedUserId,
-      chatId: chat.id,
-      text: normalizedText,
+      db.chatDrafts = Array.isArray(db.chatDrafts) ? db.chatDrafts : [];
+      const normalizedUserId = String(userId || "").trim();
+      const normalizedText = String(text || "");
+      const existingIndex = db.chatDrafts.findIndex((entry) => {
+        return entry.userId === normalizedUserId && entry.chatId === chat.id;
+      });
+
+      if (!normalizedText.trim()) {
+        if (existingIndex >= 0) {
+          db.chatDrafts.splice(existingIndex, 1);
+          return null;
+        }
+        return skip(null);
+      }
+
+      const draft = createChatDraftRecord({
+        userId: normalizedUserId,
+        chatId: chat.id,
+        text: normalizedText,
+      });
+      if (existingIndex >= 0) {
+        db.chatDrafts[existingIndex] = draft;
+      } else {
+        db.chatDrafts.push(draft);
+      }
+      return structuredClone(draft);
     });
-    if (existingIndex >= 0) {
-      db.chatDrafts[existingIndex] = draft;
-    } else {
-      db.chatDrafts.push(draft);
-    }
-    await this._write(db);
-    return structuredClone(draft);
   }
 
   async clearChatDraft({userId, chatId}) {
@@ -18218,120 +18218,125 @@ class FileStore {
   }
 
   async getChatPinnedMessage({userId, chatId}) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!this._canAccessChatPin(chat, userId)) {
+    // Чтение с opportunistic-записями (TTL-purge + чистка осиротевшего
+    // пина) — через _mutate, иначе его stale whole-doc запись может затереть
+    // конкурентную мутацию (SPEED-2 сделал фан-аут конкурентным). skip()
+    // держит обычный путь (ничего не протухло) чистым чтением без записи.
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!this._canAccessChatPin(chat, userId)) {
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return null;
+        }
+        return skip(null);
+      }
+
+      const pin = this._findChatPin(db, chat);
+      if (!pin) {
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return null;
+        }
+        return skip(null);
+      }
+
+      const message = this._findMessageForChatPin(db, {
+        chat,
+        messageId: pin.messageId,
+      });
+      if (!message) {
+        db.chatPins = ensureChatPins(db).filter(
+          (entry) => String(entry?.messageId || "").trim() !== pin.messageId,
+        );
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+        }
+        return null;
+      }
+
+      const freshPin = {
+        ...createChatPinRecord({
+          chatId: chat.id,
+          message,
+          pinnedBy: pin.pinnedBy || userId,
+        }),
+        pinnedAt: pin.pinnedAt || nowIso(),
+      };
       if (purgedChatIds.size > 0) {
         this._syncChatUpdatedAt(db, purgedChatIds);
-        await this._write(db);
+        return structuredClone(freshPin);
       }
-      return null;
-    }
-
-    const pin = this._findChatPin(db, chat);
-    if (!pin) {
-      if (purgedChatIds.size > 0) {
-        this._syncChatUpdatedAt(db, purgedChatIds);
-        await this._write(db);
-      }
-      return null;
-    }
-
-    const message = this._findMessageForChatPin(db, {
-      chat,
-      messageId: pin.messageId,
+      return skip(structuredClone(freshPin));
     });
-    if (!message) {
-      db.chatPins = ensureChatPins(db).filter(
-        (entry) => String(entry?.messageId || "").trim() !== pin.messageId,
-      );
-      if (purgedChatIds.size > 0) {
-        this._syncChatUpdatedAt(db, purgedChatIds);
-      }
-      await this._write(db);
-      return null;
-    }
-
-    const freshPin = {
-      ...createChatPinRecord({
-        chatId: chat.id,
-        message,
-        pinnedBy: pin.pinnedBy || userId,
-      }),
-      pinnedAt: pin.pinnedAt || nowIso(),
-    };
-    if (purgedChatIds.size > 0) {
-      this._syncChatUpdatedAt(db, purgedChatIds);
-      await this._write(db);
-    }
-    return structuredClone(freshPin);
   }
 
   async pinChatMessage({userId, chatId, messageId}) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!this._canAccessChatPin(chat, userId)) {
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!this._canAccessChatPin(chat, userId)) {
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return false;
+        }
+        return skip(false);
+      }
+
+      const message = this._findMessageForChatPin(db, {chat, messageId});
+      if (!message) {
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return null;
+        }
+        return skip(null);
+      }
+
+      const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
+      db.chatPins = ensureChatPins(db).filter((entry) => {
+        return !relatedChatIds.has(String(entry?.chatId || "").trim());
+      });
+      const pin = createChatPinRecord({
+        chatId: chat.id,
+        message,
+        pinnedBy: userId,
+      });
+      db.chatPins.push(pin);
       if (purgedChatIds.size > 0) {
         this._syncChatUpdatedAt(db, purgedChatIds);
-        await this._write(db);
       }
-      return false;
-    }
-
-    const message = this._findMessageForChatPin(db, {chat, messageId});
-    if (!message) {
-      if (purgedChatIds.size > 0) {
-        this._syncChatUpdatedAt(db, purgedChatIds);
-        await this._write(db);
-      }
-      return null;
-    }
-
-    const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
-    db.chatPins = ensureChatPins(db).filter((entry) => {
-      return !relatedChatIds.has(String(entry?.chatId || "").trim());
+      return structuredClone(pin);
     });
-    const pin = createChatPinRecord({
-      chatId: chat.id,
-      message,
-      pinnedBy: userId,
-    });
-    db.chatPins.push(pin);
-    if (purgedChatIds.size > 0) {
-      this._syncChatUpdatedAt(db, purgedChatIds);
-    }
-    await this._write(db);
-    return structuredClone(pin);
   }
 
   async clearChatPinnedMessage({userId, chatId}) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!this._canAccessChatPin(chat, userId)) {
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!this._canAccessChatPin(chat, userId)) {
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return false;
+        }
+        return skip(false);
+      }
+
+      const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
+      const pins = ensureChatPins(db);
+      const nextPins = pins.filter((entry) => {
+        return !relatedChatIds.has(String(entry?.chatId || "").trim());
+      });
+      const changed = nextPins.length !== pins.length;
+      db.chatPins = nextPins;
       if (purgedChatIds.size > 0) {
         this._syncChatUpdatedAt(db, purgedChatIds);
-        await this._write(db);
       }
-      return false;
-    }
-
-    const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
-    const pins = ensureChatPins(db);
-    const nextPins = pins.filter((entry) => {
-      return !relatedChatIds.has(String(entry?.chatId || "").trim());
+      if (changed || purgedChatIds.size > 0) {
+        return true;
+      }
+      return skip(true);
     });
-    const changed = nextPins.length !== pins.length;
-    db.chatPins = nextPins;
-    if (purgedChatIds.size > 0) {
-      this._syncChatUpdatedAt(db, purgedChatIds);
-    }
-    if (changed || purgedChatIds.size > 0) {
-      await this._write(db);
-    }
-    return true;
   }
 
   // BUG 3: фото граф-персоны (person.photoUrl), поставленное человеку ДО
@@ -18747,8 +18752,10 @@ class FileStore {
     const db = await this._read();
     const purgedChatIds = this._purgeExpiredMessages(db);
     if (purgedChatIds.size > 0) {
+      // Ответ уже отфильтрован in-memory; физическая зачистка — фоновым
+      // атомарным sweep'ом, не stale-записью с read-пути.
       this._syncChatUpdatedAt(db, purgedChatIds);
-      await this._write(db);
+      this._schedulePurgeSweep();
     }
     const chat = this._resolveChat(db, chatId);
     if (!chat) {
@@ -18791,7 +18798,7 @@ class FileStore {
     const purgedChatIds = this._purgeExpiredMessages(db);
     if (purgedChatIds.size > 0) {
       this._syncChatUpdatedAt(db, purgedChatIds);
-      await this._write(db);
+      this._schedulePurgeSweep();
     }
 
     const normalizedUserId = String(userId || "").trim();
@@ -18975,44 +18982,44 @@ class FileStore {
     userId,
     text,
   }) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!chat || !chat.participantIds.includes(userId)) {
-      return false;
-    }
-    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!chat || !chat.participantIds.includes(userId)) {
+        return skip(false);
+      }
+      const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
-    const message = db.messages.find(
-      (entry) =>
-        entry.id === messageId &&
-        relatedChatIds.has(String(entry.chatId || "").trim()),
-    );
-    if (!message) {
-      return null;
-    }
-    if (message.senderId !== userId) {
-      return undefined;
-    }
+      const message = db.messages.find(
+        (entry) =>
+          entry.id === messageId &&
+          relatedChatIds.has(String(entry.chatId || "").trim()),
+      );
+      if (!message) {
+        return skip(null);
+      }
+      if (message.senderId !== userId) {
+        return skip(undefined);
+      }
 
-    const normalizedText = String(text || "").trim();
-    const attachments = normalizeMessageAttachments(message);
-    if (!normalizedText && attachments.length === 0) {
-      return "EMPTY_MESSAGE";
-    }
+      const normalizedText = String(text || "").trim();
+      const attachments = normalizeMessageAttachments(message);
+      if (!normalizedText && attachments.length === 0) {
+        return skip("EMPTY_MESSAGE");
+      }
 
-    message.text = normalizedText;
-    message.updatedAt = nowIso();
-    const storedChat = db.chats.find((entry) => entry.id === chat.id);
-    if (storedChat) {
-      storedChat.updatedAt = message.updatedAt;
-    }
-    if (purgedChatIds.size > 0) {
-      purgedChatIds.add(chat.id);
-      this._syncChatUpdatedAt(db, purgedChatIds);
-    }
-    await this._write(db);
-    return attachMessageReactions(db, message);
+      message.text = normalizedText;
+      message.updatedAt = nowIso();
+      const storedChat = db.chats.find((entry) => entry.id === chat.id);
+      if (storedChat) {
+        storedChat.updatedAt = message.updatedAt;
+      }
+      if (purgedChatIds.size > 0) {
+        purgedChatIds.add(chat.id);
+        this._syncChatUpdatedAt(db, purgedChatIds);
+      }
+      return attachMessageReactions(db, message);
+    });
   }
 
   async deleteChatMessage({
@@ -19020,49 +19027,49 @@ class FileStore {
     messageId,
     userId,
   }) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!chat || !chat.participantIds.includes(userId)) {
-      return false;
-    }
-    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!chat || !chat.participantIds.includes(userId)) {
+        return skip(false);
+      }
+      const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
-    const messageIndex = db.messages.findIndex(
-      (entry) =>
-        entry.id === messageId &&
-        relatedChatIds.has(String(entry.chatId || "").trim()),
-    );
-    if (messageIndex === -1) {
-      return null;
-    }
+      const messageIndex = db.messages.findIndex(
+        (entry) =>
+          entry.id === messageId &&
+          relatedChatIds.has(String(entry.chatId || "").trim()),
+      );
+      if (messageIndex === -1) {
+        return skip(null);
+      }
 
-    const message = db.messages[messageIndex];
-    if (message.senderId !== userId) {
-      return undefined;
-    }
+      const message = db.messages[messageIndex];
+      if (message.senderId !== userId) {
+        return skip(undefined);
+      }
 
-    db.messages.splice(messageIndex, 1);
-    db.messageReactions = ensureMessageReactions(db).filter(
-      (entry) => String(entry?.messageId || "").trim() !== message.id,
-    );
-    const pinCountBeforeDelete = ensureChatPins(db).length;
-    db.chatPins = ensureChatPins(db).filter(
-      (entry) => String(entry?.messageId || "").trim() !== message.id,
-    );
-    const clearedPinnedMessage = db.chatPins.length !== pinCountBeforeDelete;
-    const storedChat = db.chats.find((entry) => entry.id === chat.id);
-    if (storedChat) {
-      storedChat.updatedAt = nowIso();
-    }
-    purgedChatIds.add(chat.id);
-    this._syncChatUpdatedAt(db, purgedChatIds);
-    await this._write(db);
-    const deletedMessage = attachMessageReactions(db, message);
-    if (clearedPinnedMessage) {
-      deletedMessage._clearedPinnedMessage = true;
-    }
-    return deletedMessage;
+      db.messages.splice(messageIndex, 1);
+      db.messageReactions = ensureMessageReactions(db).filter(
+        (entry) => String(entry?.messageId || "").trim() !== message.id,
+      );
+      const pinCountBeforeDelete = ensureChatPins(db).length;
+      db.chatPins = ensureChatPins(db).filter(
+        (entry) => String(entry?.messageId || "").trim() !== message.id,
+      );
+      const clearedPinnedMessage = db.chatPins.length !== pinCountBeforeDelete;
+      const storedChat = db.chats.find((entry) => entry.id === chat.id);
+      if (storedChat) {
+        storedChat.updatedAt = nowIso();
+      }
+      purgedChatIds.add(chat.id);
+      this._syncChatUpdatedAt(db, purgedChatIds);
+      const deletedMessage = attachMessageReactions(db, message);
+      if (clearedPinnedMessage) {
+        deletedMessage._clearedPinnedMessage = true;
+      }
+      return deletedMessage;
+    });
   }
 
   async toggleChatMessageReaction({
@@ -19071,63 +19078,63 @@ class FileStore {
     userId,
     emoji,
   }) {
-    const db = await this._read();
-    const purgedChatIds = this._purgeExpiredMessages(db);
-    const chat = this._resolveChat(db, chatId);
-    if (!chat || !chat.participantIds.includes(userId)) {
-      return false;
-    }
-    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
-    const message = db.messages.find(
-      (entry) =>
-        entry.id === messageId &&
-        relatedChatIds.has(String(entry.chatId || "").trim()),
-    );
-    if (!message) {
+    return this._mutate((db, skip) => {
+      const purgedChatIds = this._purgeExpiredMessages(db);
+      const chat = this._resolveChat(db, chatId);
+      if (!chat || !chat.participantIds.includes(userId)) {
+        return skip(false);
+      }
+      const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+      const message = db.messages.find(
+        (entry) =>
+          entry.id === messageId &&
+          relatedChatIds.has(String(entry.chatId || "").trim()),
+      );
+      if (!message) {
+        if (purgedChatIds.size > 0) {
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return null;
+        }
+        return skip(null);
+      }
+
+      const normalizedEmoji = normalizeReactionEmoji(emoji);
+      if (!normalizedEmoji) {
+        return skip("INVALID_EMOJI");
+      }
+
+      const reactions = ensureMessageReactions(db);
+      const existingIndex = reactions.findIndex(
+        (entry) =>
+          String(entry?.messageId || "").trim() === message.id &&
+          String(entry?.userId || "").trim() === userId &&
+          normalizeReactionEmoji(entry?.emoji) === normalizedEmoji,
+      );
+
+      let added = false;
+      if (existingIndex >= 0) {
+        reactions.splice(existingIndex, 1);
+      } else {
+        reactions.push({
+          messageId: message.id,
+          userId,
+          emoji: normalizedEmoji,
+          createdAt: nowIso(),
+        });
+        added = true;
+      }
+
       if (purgedChatIds.size > 0) {
         this._syncChatUpdatedAt(db, purgedChatIds);
-        await this._write(db);
       }
-      return null;
-    }
 
-    const normalizedEmoji = normalizeReactionEmoji(emoji);
-    if (!normalizedEmoji) {
-      return "INVALID_EMOJI";
-    }
-
-    const reactions = ensureMessageReactions(db);
-    const existingIndex = reactions.findIndex(
-      (entry) =>
-        String(entry?.messageId || "").trim() === message.id &&
-        String(entry?.userId || "").trim() === userId &&
-        normalizeReactionEmoji(entry?.emoji) === normalizedEmoji,
-    );
-
-    let added = false;
-    if (existingIndex >= 0) {
-      reactions.splice(existingIndex, 1);
-    } else {
-      reactions.push({
+      return {
+        chatId: message.chatId || chat.id,
         messageId: message.id,
-        userId,
-        emoji: normalizedEmoji,
-        createdAt: nowIso(),
-      });
-      added = true;
-    }
-
-    if (purgedChatIds.size > 0) {
-      this._syncChatUpdatedAt(db, purgedChatIds);
-    }
-    await this._write(db);
-
-    return {
-      chatId: message.chatId || chat.id,
-      messageId: message.id,
-      reactions: aggregateMessageReactions(db, message.id),
-      added,
-    };
+        reactions: aggregateMessageReactions(db, message.id),
+        added,
+      };
+    });
   }
 
   async markChatMessageDelivered({
@@ -19783,7 +19790,7 @@ class FileStore {
     const purgedChatIds = this._purgeExpiredMessages(db);
     if (purgedChatIds.size > 0) {
       this._syncChatUpdatedAt(db, purgedChatIds);
-      await this._write(db);
+      this._schedulePurgeSweep();
     }
     const relatedChats = new Map();
     const userById = new Map(
@@ -19963,6 +19970,36 @@ class FileStore {
     }
 
     return Array.from(relatedParticipantIds);
+  }
+
+  // SPEED-2: read-пути (история чата, поиск, превью) больше НЕ пишут
+  // whole-doc сами — их stale-запись после TTL-purge могла затереть
+  // конкурентную _mutate-мутацию (тот же lost-update класс, что у GP3).
+  // Ответ фильтруется in-memory как раньше; ФИЗИЧЕСКУЮ зачистку протухших
+  // сообщений делает этот фоновый атомарный sweep: _mutate читает свежее
+  // состояние в очереди, skip() держит «нечего чистить» без записи.
+  _schedulePurgeSweep() {
+    if (this._purgeSweepScheduled) {
+      return;
+    }
+    this._purgeSweepScheduled = true;
+    Promise.resolve()
+      .then(() =>
+        this._mutate((db, skip) => {
+          const purgedChatIds = this._purgeExpiredMessages(db);
+          if (purgedChatIds.size === 0) {
+            return skip(undefined);
+          }
+          this._syncChatUpdatedAt(db, purgedChatIds);
+          return undefined;
+        }),
+      )
+      .catch(() => {
+        // Best-effort: протухшее вычистит следующий sweep или любая мутация.
+      })
+      .then(() => {
+        this._purgeSweepScheduled = false;
+      });
   }
 
   _purgeExpiredMessages(db) {

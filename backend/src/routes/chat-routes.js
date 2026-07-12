@@ -46,14 +46,16 @@ function registerChatRoutes(
       : null;
   }
 
-  async function publishChatPayload(chatId, payload) {
+  // SPEED-3: `chat` — уже загруженная запись (например, из resolveMappedChat)
+  // — избавляет publishToChat от повторного whole-doc чтения.
+  async function publishChatPayload(chatId, payload, chat = null) {
     if (typeof realtimeHub?.publishToChat === "function") {
-      await realtimeHub.publishToChat(chatId, payload);
+      await realtimeHub.publishToChat(chatId, payload, {chat});
       return;
     }
 
-    const chat = await store.findChat(chatId);
-    for (const participantId of chat?.participantIds || []) {
+    const resolvedChat = chat || (await store.findChat(chatId));
+    for (const participantId of resolvedChat?.participantIds || []) {
       realtimeHub?.publishToUser(participantId, payload);
     }
   }
@@ -64,11 +66,15 @@ function registerChatRoutes(
       return null;
     }
 
-    await publishChatPayload(resolved.chat.id, {
-      type: "chat.updated",
-      chatId: resolved.chat.id,
-      chat: resolved.mappedChat,
-    });
+    await publishChatPayload(
+      resolved.chat.id,
+      {
+        type: "chat.updated",
+        chatId: resolved.chat.id,
+        chat: resolved.mappedChat,
+      },
+      resolved.chat,
+    );
     return resolved;
   }
 
@@ -724,10 +730,15 @@ function registerChatRoutes(
   });
 
   app.post("/v1/chats/:chatId/messages", requireAuth, async (req, res) => {
+    // SPEED-3: пофазный тайминг отправки — grep-абельная строка
+    // «[send-timing] …» отвечает на вопрос «где миллисекунды» (доступ /
+    // персист / фан-аут) до и после оптимизаций.
+    const t0 = Date.now();
     const chat = await requireChatAccess(req, res, req.params.chatId);
     if (!chat) {
       return;
     }
+    const tAccess = Date.now();
     const resolvedChatId = chat.id;
 
     if (chat.type === "direct") {
@@ -869,31 +880,47 @@ function registerChatRoutes(
       return;
     }
 
-    if (typeof store.clearChatDraft === "function") {
-      try {
-        await store.clearChatDraft({
-          userId: req.auth.user.id,
-          chatId: message.chatId,
-        });
-        publishDraftUpdated({
-          userId: req.auth.user.id,
-          chatId: message.chatId,
-          draft: null,
-        });
-      } catch (error) {
-        console.warn(
-          "[backend] clearChatDraft after message send failed",
-          error?.message || error,
-        );
-      }
-    }
-
     const mappedMessage = mapChatMessage(message);
     const isDeduplicated = message._deduplicated === true;
     const recipientIds = (chat.participantIds || []).filter(
       (participantId) => participantId !== req.auth.user.id,
     );
-    if (!isDeduplicated) {
+
+    // SPEED-2: отправитель получает ack СРАЗУ после персиста сообщения —
+    // ровно как Telegram/Slack (ack → фан-аут асинхронно). Всё, что ниже
+    // (черновик, WS-публикации, unread, нотификации), не влияет на
+    // латентность «галочки» и не растёт с числом получателей. Ошибки
+    // фан-аута не могут уронить ответ — он уже отправлен.
+    const tPersist = Date.now();
+    res.status(isDeduplicated ? 200 : 201).json({message: mappedMessage});
+    console.log(
+      `[send-timing] chat=${message.chatId} access=${tAccess - t0}ms ` +
+        `persist=${tPersist - tAccess}ms ack=${tPersist - t0}ms ` +
+        `dedup=${isDeduplicated}`,
+    );
+
+    (async () => {
+      if (typeof store.clearChatDraft === "function") {
+        try {
+          await store.clearChatDraft({
+            userId: req.auth.user.id,
+            chatId: message.chatId,
+          });
+          publishDraftUpdated({
+            userId: req.auth.user.id,
+            chatId: message.chatId,
+            draft: null,
+          });
+        } catch (error) {
+          console.warn(
+            "[backend] clearChatDraft after message send failed",
+            error?.message || error,
+          );
+        }
+      }
+      if (isDeduplicated) {
+        return;
+      }
       // Порядок важен: сначала шлём WS-нотификации, потом пуш.
       // Раньше было наоборот — пуш улетал первым через VKPNS
       // (мгновенная фоновая доставка), а WS-message прохож-
@@ -902,12 +929,16 @@ function registerChatRoutes(
       // шторке раньше чем bubble в чате» — пользователь
       // жалуется именно на это.
       const resolved = await publishChatUpdated(message.chatId, chat);
-      await publishChatPayload(message.chatId, {
-        type: "chat.message.created",
-        chatId: message.chatId,
-        chat: resolved?.mappedChat || mapChatRecord(chat),
-        message: mappedMessage,
-      });
+      await publishChatPayload(
+        message.chatId,
+        {
+          type: "chat.message.created",
+          chatId: message.chatId,
+          chat: resolved?.mappedChat || mapChatRecord(chat),
+          message: mappedMessage,
+        },
+        resolved?.chat || chat,
+      );
       await publishUnreadChanged(resolved?.chat || chat);
 
       const firstAttachment = Array.isArray(mappedMessage.attachments)
@@ -944,11 +975,9 @@ function registerChatRoutes(
           continue;
         }
         // FIX (латентность): медленный VKPNS-HTTP (AbortSignal.timeout 8с на
-        // мёртвый токен) уходит в фон через awaitPush:false. Раньше res.json
-        // висел за этим циклом → оптимистичный баббл застревал на
-        // «отправляется» и очередь по таймауту 10с роняла его в failed (тот же
-        // баг, что у POST /v1/calls). Запись notification-record остаётся
-        // синхронной — лента/непрочитанные получателя обновляются сразу.
+        // мёртвый токен) уходит в фон через awaitPush:false. Запись
+        // notification-record — здесь же, в фоне: лента/непрочитанные
+        // получателя обновляются через мгновение после WS-доставки.
         await createAndDispatchNotification({
           userId: recipientId,
           type: "chat_message",
@@ -966,9 +995,16 @@ function registerChatRoutes(
           },
         });
       }
-    }
-
-    res.status(isDeduplicated ? 200 : 201).json({message: mappedMessage});
+      console.log(
+        `[send-timing] chat=${message.chatId} fanout=${Date.now() - tPersist}ms ` +
+          `recipients=${recipientIds.length}`,
+      );
+    })().catch((error) => {
+      console.warn(
+        "[backend] message fan-out failed",
+        error?.message || error,
+      );
+    });
   });
 
   app.post(
