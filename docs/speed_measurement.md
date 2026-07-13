@@ -40,14 +40,34 @@ fix send speed alone, because the **access-check (~830 ms) also reads the whole 
 to verify chat membership — chat metadata must leave the blob too, or be cached.
 
 **Fix path (proper > cheap):**
-1. **Retention hygiene (own-right correctness, ~2× app-wide):** cap/TTL-prune the unbounded
-   collections — `pushDeliveries`/`calls`/`hardDeleteAudit`/`deletedPersons` (pure logs) and
-   retention-trim `treeChangeRecords` (keep the recent window that history features actually
-   show). Blob 8 MB → ~3.5 MB ⇒ `ack` ~2.5 s → ~1.1 s. Every write in the app speeds up.
-2. **Structural fix (Telegram-grade, ~10×):** extract the hot-write collections out of the
-   single blob into their own indexed tables — messages (send = INSERT) AND the chat
-   membership/metadata read for the access-check, then the big logs. Staged, deploy-gated,
-   not fully testable locally. This is SPEED-6 generalized and correctly prioritized.
+1. **Retention hygiene (own-right correctness) — SHIPPED 2026-07-13.** `_sweepUnboundedLogs`
+   in the daily `hardDeleteExpired` job caps/TTL-prunes the unbounded collections:
+   `pushDeliveries` (>7d), `calls` (terminal >24h; busy never touched), `notifications`
+   (silent >48h / read >30d / unread >365d), and strips `before/after/mergedFrom` snapshots
+   from non-article `treeChangeRecords` >30d (record kept; client history never reads them).
+   The job was also routed through `_mutate` (was raw `_read/_write` → lost-update race).
+2. **Structural fix (Telegram-grade `ack`, deferred).** To get `ack` under ~300 ms you must
+   take the hot-write collections out of the single blob into their own indexed tables —
+   messages (send = INSERT) AND the chat membership/metadata read for the access-check, then
+   the big logs. Staged, deploy-gated, not fully testable locally. SPEED-6 generalized.
+
+### PROVEN RESULT — one-time prune on prod (2026-07-13)
+A dry-run then live one-shot of the sweep on the prod blob removed 263 terminal calls,
+1378 push deliveries, 464 old notifications (0 unread touched), and stripped 1757
+tree-change snapshots. Re-measured on the same device:
+
+| metric | before | after | Δ |
+|---|---|---|---|
+| blob size | 8.0 MB | 4.8 MB | −40% |
+| server `access` | ~830 ms | ~470 ms | −43% |
+| server `persist` | ~1580 ms | ~940 ms | −40% |
+| client send-to-ack | ~2500 ms | ~1500 ms | −40% |
+| tap-to-bubble | ~26 ms | ~28 ms | unchanged (optimistic UI) |
+
+The proportional drop confirms persist is `O(blob size)`. The daily job keeps it trimmed
+and keeps stripping `treeChangeRecords` as they age past 30d. tap-to-bubble was already
+instant (optimistic UI) — the ~1.5 s that remains is the whole-blob rewrite, which only the
+structural fix (step 2) removes.
 
 The generic how-to-measure notes below still apply for re-checking after each step.
 
