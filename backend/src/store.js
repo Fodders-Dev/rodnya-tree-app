@@ -7720,12 +7720,18 @@ class FileStore {
   }
 
   async deleteUser(userId) {
-    const db = await this._read();
+    // SPEED-2/STORE-RACE: аккаунт-удаление через _mutate. Иначе фоновый
+    // фан-аут отправки сообщения (createNotification / markChatMessageDelivered
+    // на _mutate) мог прочитать снапшот с ещё живой сессией и записать её
+    // обратно, ВОСКРЕСИВ только что удалённую сессию (raw _read/_write не
+    // сериализован против _mutate). Кеш-очистка — ПОСЛЕ персиста.
+    let deletedSessionTokens = [];
+    const result = await this._mutate((db, skip) => {
     const existingUser = db.users.find((entry) => entry.id === userId);
     if (!existingUser) {
-      return null;
+      return skip(null);
     }
-    const deletedSessionTokens = db.sessions
+    deletedSessionTokens = db.sessions
       .filter((entry) => entry.userId === userId)
       .map((entry) => entry.token);
 
@@ -8074,11 +8080,6 @@ class FileStore {
     }
 
     this._reconcilePersonIdentities(db);
-    await this._write(db);
-    this._forgetUser(userId);
-    for (const token of deletedSessionTokens) {
-      this._forgetSession(token);
-    }
     return {
       userId,
       removedTreeIds: Array.from(removedTreeIds),
@@ -8086,6 +8087,15 @@ class FileStore {
       removedChatIds: Array.from(removedChatIds),
       removedPostIds: Array.from(removedPostIds),
     };
+    });
+    if (result === null) {
+      return null;
+    }
+    this._forgetUser(userId);
+    for (const token of deletedSessionTokens) {
+      this._forgetSession(token);
+    }
+    return result;
   }
 
   async listOwnedMediaUrls(userId) {
