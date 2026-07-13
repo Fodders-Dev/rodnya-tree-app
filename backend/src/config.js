@@ -186,6 +186,36 @@ function createConfig() {
     120_000,
     "RODNYA_HARD_DELETE_TIMEOUT_MS",
   );
+  // Retention for unbounded LOG / history collections that bloat the
+  // whole-document blob (persist latency ∝ blob size — see
+  // docs/speed_measurement.md). Swept by the same hard-delete job. Safe
+  // defaults; 0 disables an individual trim.
+  const callsTerminalRetentionHours = readEnvNumber(
+    24,
+    "RODNYA_CALLS_TERMINAL_RETENTION_HOURS",
+  );
+  const callsTerminalMax = readEnvNumber(500, "RODNYA_CALLS_TERMINAL_MAX");
+  const pushDeliveriesRetentionDays = readEnvNumber(
+    7,
+    "RODNYA_PUSH_DELIVERIES_RETENTION_DAYS",
+  );
+  const pushDeliveriesMax = readEnvNumber(2000, "RODNYA_PUSH_DELIVERIES_MAX");
+  const notificationsSilentRetentionHours = readEnvNumber(
+    48,
+    "RODNYA_NOTIFICATIONS_SILENT_RETENTION_HOURS",
+  );
+  const notificationsReadRetentionDays = readEnvNumber(
+    30,
+    "RODNYA_NOTIFICATIONS_READ_RETENTION_DAYS",
+  );
+  const notificationsUnreadRetentionDays = readEnvNumber(
+    365,
+    "RODNYA_NOTIFICATIONS_UNREAD_RETENTION_DAYS",
+  );
+  const treeChangeDetailRetentionDays = readEnvNumber(
+    30,
+    "RODNYA_TREE_CHANGE_DETAIL_RETENTION_DAYS",
+  );
   const mediaBackend = String(
     readEnvAlias("RODNYA_MEDIA_BACKEND") || "local",
   )
@@ -397,6 +427,14 @@ function createConfig() {
     hardDeleteMaxPerRun,
     hardDeleteAuditRetentionDays,
     hardDeleteTimeoutMs,
+    callsTerminalRetentionHours,
+    callsTerminalMax,
+    pushDeliveriesRetentionDays,
+    pushDeliveriesMax,
+    notificationsSilentRetentionHours,
+    notificationsReadRetentionDays,
+    notificationsUnreadRetentionDays,
+    treeChangeDetailRetentionDays,
     // OTA-апдейтер sideload-сборок: значения отдаёт GET /v1/app/latest.
     latestAndroidUpdate: {
       versionCode: latestAndroidVersionCode,

@@ -412,6 +412,265 @@ test("computeFirstDelayMs: stale lastRunAt (older than interval) → catch-up 60
   await cleanup(tempDir);
 });
 
+// ── Unbounded log/history retention sweep (blob-shrink) ────────────
+const HOUR_MS = 3_600_000;
+
+function makeCall(overrides) {
+  return {
+    id: `call_${Math.random().toString(36).slice(2)}`,
+    chatId: "chat-1",
+    initiatorId: "user-a",
+    recipientId: "user-b",
+    state: "ended",
+    createdAt: null,
+    updatedAt: null,
+    endedAt: null,
+    ...overrides,
+  };
+}
+
+const LOG_RETENTION = {
+  callsTerminalHours: 24,
+  callsTerminalMax: 500,
+  pushDeliveriesDays: 7,
+  pushDeliveriesMax: 2000,
+  notifSilentHours: 48,
+  notifReadDays: 30,
+  notifUnreadDays: 365,
+  treeChangeDetailDays: 30,
+};
+
+test("log sweep: db.calls — terminal past TTL trimmed, busy calls untouched", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    db.calls.push(
+      // busy — must NEVER be trimmed regardless of age
+      makeCall({id: "call-ringing", state: "ringing", createdAt: isoOffset(now, -10 * DAY_MS), updatedAt: isoOffset(now, -10 * DAY_MS)}),
+      makeCall({id: "call-active", state: "active", createdAt: isoOffset(now, -10 * DAY_MS), updatedAt: isoOffset(now, -10 * DAY_MS)}),
+      // terminal older than 24h → trimmed
+      makeCall({id: "call-old-ended", state: "ended", createdAt: isoOffset(now, -3 * DAY_MS), updatedAt: isoOffset(now, -2 * DAY_MS), endedAt: isoOffset(now, -2 * DAY_MS)}),
+      makeCall({id: "call-old-cancelled", state: "cancelled", createdAt: isoOffset(now, -5 * DAY_MS), updatedAt: isoOffset(now, -5 * DAY_MS)}),
+      // terminal within 24h → kept
+      makeCall({id: "call-recent-ended", state: "ended", createdAt: isoOffset(now, -2 * HOUR_MS), updatedAt: isoOffset(now, -1 * HOUR_MS), endedAt: isoOffset(now, -1 * HOUR_MS)}),
+    );
+  });
+
+  const summary = await store.hardDeleteExpired({now, retentionDays: 30, logRetention: LOG_RETENTION});
+
+  assert.equal(summary.logRetention.callsTerminal, 2);
+  const db = await store._read();
+  assert.deepEqual(
+    db.calls.map((c) => c.id).sort(),
+    ["call-active", "call-recent-ended", "call-ringing"],
+  );
+  await cleanup(tempDir);
+});
+
+test("log sweep: db.calls — newest-N cap trims surplus terminal calls", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    // 4 terminal calls all within TTL (last few hours) — cap=2 keeps newest 2
+    for (let i = 0; i < 4; i += 1) {
+      db.calls.push(
+        makeCall({
+          id: `call-${i}`,
+          state: "ended",
+          createdAt: isoOffset(now, -(i + 1) * HOUR_MS),
+          updatedAt: isoOffset(now, -(i + 1) * HOUR_MS),
+          endedAt: isoOffset(now, -(i + 1) * HOUR_MS),
+        }),
+      );
+    }
+    db.calls.push(makeCall({id: "call-busy", state: "ringing", createdAt: isoOffset(now, -1 * HOUR_MS), updatedAt: isoOffset(now, -1 * HOUR_MS)}));
+  });
+
+  const summary = await store.hardDeleteExpired({
+    now,
+    retentionDays: 30,
+    logRetention: {...LOG_RETENTION, callsTerminalMax: 2},
+  });
+
+  assert.equal(summary.logRetention.callsTerminal, 2);
+  const db = await store._read();
+  // newest two terminal (call-0, call-1) + the busy call survive
+  assert.deepEqual(db.calls.map((c) => c.id).sort(), ["call-0", "call-1", "call-busy"]);
+  await cleanup(tempDir);
+});
+
+test("log sweep: *_MAX=0 DISABLES the cap (does not wipe the collection)", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    // 5 terminal calls all within the 24h TTL → cap would normally apply
+    for (let i = 0; i < 5; i += 1) {
+      db.calls.push(makeCall({id: `call-${i}`, state: "ended", createdAt: isoOffset(now, -(i + 1) * HOUR_MS), updatedAt: isoOffset(now, -(i + 1) * HOUR_MS), endedAt: isoOffset(now, -(i + 1) * HOUR_MS)}));
+    }
+    for (let i = 0; i < 5; i += 1) {
+      db.pushDeliveries.push({id: `pd-${i}`, createdAt: isoOffset(now, -i * HOUR_MS)});
+    }
+  });
+
+  // MAX=0 must DISABLE the cap, not slice(0)→wipe. TTL windows also disabled.
+  const summary = await store.hardDeleteExpired({
+    now,
+    retentionDays: 30,
+    logRetention: {callsTerminalHours: 0, callsTerminalMax: 0, pushDeliveriesDays: 0, pushDeliveriesMax: 0},
+  });
+
+  assert.equal(summary.logRetention.callsTerminal, 0, "cap=0 must not delete calls");
+  assert.equal(summary.logRetention.pushDeliveries, 0, "cap=0 must not delete deliveries");
+  const db = await store._read();
+  assert.equal(db.calls.length, 5, "all calls preserved when cap disabled");
+  assert.equal(db.pushDeliveries.length, 5, "all deliveries preserved when cap disabled");
+  await cleanup(tempDir);
+});
+
+test("log sweep: notification with missing createdAt is never deleted", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    db.notifications.push(
+      {id: "n-no-date-unread", userId: "u1"}, // no createdAt, unread → must be kept
+      {id: "n-ancient-unread", userId: "u1", createdAt: isoOffset(now, -400 * DAY_MS)}, // trimmed
+    );
+  });
+
+  const summary = await store.hardDeleteExpired({now, retentionDays: 30, logRetention: LOG_RETENTION});
+
+  assert.equal(summary.logRetention.notificationsUnread, 1);
+  const db = await store._read();
+  assert.deepEqual(db.notifications.map((n) => n.id).sort(), ["n-no-date-unread"]);
+  await cleanup(tempDir);
+});
+
+test("log sweep: db.pushDeliveries — age TTL trims old telemetry", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    db.pushDeliveries.push(
+      {id: "pd-old", createdAt: isoOffset(now, -8 * DAY_MS)},
+      {id: "pd-edge", createdAt: isoOffset(now, -6 * DAY_MS)},
+      {id: "pd-fresh", createdAt: isoOffset(now, -1 * DAY_MS)},
+    );
+  });
+
+  const summary = await store.hardDeleteExpired({now, retentionDays: 30, logRetention: LOG_RETENTION});
+
+  assert.equal(summary.logRetention.pushDeliveries, 1);
+  const db = await store._read();
+  assert.deepEqual(db.pushDeliveries.map((d) => d.id).sort(), ["pd-edge", "pd-fresh"]);
+  await cleanup(tempDir);
+});
+
+test("log sweep: db.notifications — silent/read/unread windows", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    db.notifications.push(
+      // silent > 48h → trimmed
+      {id: "n-silent-old", userId: "u1", silent: true, createdAt: isoOffset(now, -3 * DAY_MS)},
+      // silent < 48h → kept
+      {id: "n-silent-fresh", userId: "u1", silent: true, createdAt: isoOffset(now, -1 * DAY_MS)},
+      // read > 30d → trimmed
+      {id: "n-read-old", userId: "u1", readAt: isoOffset(now, -40 * DAY_MS), createdAt: isoOffset(now, -45 * DAY_MS)},
+      // read < 30d → kept
+      {id: "n-read-fresh", userId: "u1", readAt: isoOffset(now, -5 * DAY_MS), createdAt: isoOffset(now, -6 * DAY_MS)},
+      // unread > 365d → trimmed
+      {id: "n-unread-ancient", userId: "u1", createdAt: isoOffset(now, -400 * DAY_MS)},
+      // unread recent → kept (the live feature window)
+      {id: "n-unread-fresh", userId: "u1", createdAt: isoOffset(now, -2 * DAY_MS)},
+    );
+  });
+
+  const summary = await store.hardDeleteExpired({now, retentionDays: 30, logRetention: LOG_RETENTION});
+
+  assert.equal(summary.logRetention.notificationsSilent, 1);
+  assert.equal(summary.logRetention.notificationsRead, 1);
+  assert.equal(summary.logRetention.notificationsUnread, 1);
+  const db = await store._read();
+  assert.deepEqual(
+    db.notifications.map((n) => n.id).sort(),
+    ["n-read-fresh", "n-silent-fresh", "n-unread-fresh"],
+  );
+  await cleanup(tempDir);
+});
+
+test("log sweep: db.treeChangeRecords — strips old snapshots, keeps record + article history", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    db.treeChangeRecords.push(
+      // old non-article with heavy snapshots → stripped, record kept
+      {
+        id: "tc-old-update",
+        treeId: "t1",
+        type: "person.updated",
+        createdAt: isoOffset(now, -60 * DAY_MS),
+        details: {before: {name: "A", huge: "x".repeat(1000)}, after: {name: "B"}, changedFields: ["name"]},
+      },
+      // recent non-article → left intact (still within detail window)
+      {
+        id: "tc-recent-update",
+        treeId: "t1",
+        type: "person.updated",
+        createdAt: isoOffset(now, -5 * DAY_MS),
+        details: {before: {name: "C"}, after: {name: "D"}},
+      },
+      // article.* → NEVER touched (biography edit provenance)
+      {
+        id: "tc-article-old",
+        treeId: "t1",
+        type: "article.block-updated",
+        createdAt: isoOffset(now, -200 * DAY_MS),
+        details: {before: {text: "old bio"}, after: {text: "new bio"}},
+      },
+    );
+  });
+
+  const summary = await store.hardDeleteExpired({now, retentionDays: 30, logRetention: LOG_RETENTION});
+
+  assert.equal(summary.logRetention.treeChangeDetailsStripped, 1);
+  const db = await store._read();
+  const byId = Object.fromEntries(db.treeChangeRecords.map((r) => [r.id, r]));
+  // record survives; heavy keys gone; lightweight metadata retained
+  assert.ok(byId["tc-old-update"], "old record kept (timeline intact)");
+  assert.equal(byId["tc-old-update"].details.before, undefined);
+  assert.equal(byId["tc-old-update"].details.after, undefined);
+  assert.deepEqual(byId["tc-old-update"].details.changedFields, ["name"]);
+  // recent + article untouched
+  assert.deepEqual(byId["tc-recent-update"].details.before, {name: "C"});
+  assert.deepEqual(byId["tc-article-old"].details.before, {text: "old bio"});
+  await cleanup(tempDir);
+});
+
+test("log sweep: dry-run reports counts but mutates nothing", async () => {
+  const {store, tempDir} = await makeStore();
+  const now = new Date("2026-05-18T00:00:00Z");
+  await seedState(store, (db) => {
+    db.calls.push(makeCall({id: "call-old", state: "ended", createdAt: isoOffset(now, -3 * DAY_MS), updatedAt: isoOffset(now, -3 * DAY_MS), endedAt: isoOffset(now, -3 * DAY_MS)}));
+    db.pushDeliveries.push({id: "pd-old", createdAt: isoOffset(now, -30 * DAY_MS)});
+    db.notifications.push({id: "n-silent-old", userId: "u1", silent: true, createdAt: isoOffset(now, -10 * DAY_MS)});
+    db.treeChangeRecords.push({id: "tc-old", treeId: "t1", type: "person.updated", createdAt: isoOffset(now, -60 * DAY_MS), details: {before: {a: 1}, after: {a: 2}}});
+  });
+
+  const summary = await store.hardDeleteExpired({now, retentionDays: 30, dryRun: true, logRetention: LOG_RETENTION});
+
+  assert.equal(summary.logRetention.callsTerminal, 1);
+  assert.equal(summary.logRetention.pushDeliveries, 1);
+  assert.equal(summary.logRetention.notificationsSilent, 1);
+  assert.equal(summary.logRetention.treeChangeDetailsStripped, 1);
+
+  const db = await store._read();
+  assert.equal(db.calls.length, 1, "call preserved in dry-run");
+  assert.equal(db.pushDeliveries.length, 1, "push delivery preserved");
+  assert.equal(db.notifications.length, 1, "notification preserved");
+  // heavy snapshot NOT stripped in dry-run
+  assert.deepEqual(db.treeChangeRecords[0].details.before, {a: 1});
+  await cleanup(tempDir);
+});
+
 test("computeFirstDelayMs: recent lastRunAt → wait remainder", async () => {
   const {store, tempDir} = await makeStore();
   // 6h назад → должны ждать ~18h.

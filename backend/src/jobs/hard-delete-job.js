@@ -65,6 +65,19 @@ async function runHardDeleteJob({store, config, runtimeInfo, override = {}} = {}
       maxPerRun: Number(config.hardDeleteMaxPerRun) || 10_000,
       dryRun: effectiveDryRun,
       runId,
+      // Retention for unbounded log/history collections (blob-shrink),
+      // swept in the same atomic pass. undefined values fall back to the
+      // store's own safe defaults.
+      logRetention: {
+        callsTerminalHours: config.callsTerminalRetentionHours,
+        callsTerminalMax: config.callsTerminalMax,
+        pushDeliveriesDays: config.pushDeliveriesRetentionDays,
+        pushDeliveriesMax: config.pushDeliveriesMax,
+        notifSilentHours: config.notificationsSilentRetentionHours,
+        notifReadDays: config.notificationsReadRetentionDays,
+        notifUnreadDays: config.notificationsUnreadRetentionDays,
+        treeChangeDetailDays: config.treeChangeDetailRetentionDays,
+      },
     });
     logEvent("log", "hard_delete_run", {
       ...summary,

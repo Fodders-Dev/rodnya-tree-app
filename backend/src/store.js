@@ -20911,6 +20911,180 @@ class FileStore {
     return {check: structuredClone(check)};
   }
 
+  // ── Retention for unbounded LOG / history collections ─────────────
+  // These are NOT soft-delete tombstones (that is hardDeleteExpired's
+  // job) but append-only logs/history that bloat the whole-document blob.
+  // The store rewrites the ENTIRE blob on every write, so persist latency
+  // ∝ total blob size — a prod blob measured 8 MB gave ~2.5 s message-send
+  // ack, ~1.6 s of it just re-serialising the blob (see
+  // docs/speed_measurement.md). Trimming these by age/cap shrinks the blob
+  // and speeds up EVERY write app-wide.
+  //
+  // Mutates `db` in place ONLY when !dryRun; always returns counts so a dry
+  // run reports what it WOULD trim. Pure in-memory — no nested store calls
+  // (runs inside hardDeleteExpired, which owns the single _read/_write).
+  _sweepUnboundedLogs(db, retention = {}, {nowTs, dryRun = false} = {}) {
+    const HOUR = 3_600_000;
+    const DAY = 86_400_000;
+    const counts = {
+      callsTerminal: 0,
+      pushDeliveries: 0,
+      notificationsSilent: 0,
+      notificationsRead: 0,
+      notificationsUnread: 0,
+      treeChangeDetailsStripped: 0,
+    };
+    const parseTs = (value) => {
+      const t = value ? Date.parse(value) : NaN;
+      return Number.isFinite(t) ? t : null;
+    };
+    // A newest-N cap. Returns null for 0 / negative / non-numeric so the cap
+    // is DISABLED (matching the "0 disables an individual trim" config
+    // contract) instead of slice(0) wiping the whole collection.
+    const positiveIntOrNull = (value) => {
+      const n = Math.floor(Number(value));
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+
+    // ── db.calls: terminal-only TTL + newest-N cap. Busy calls
+    //   (ringing/active) are NEVER trimmed — dropping a live call breaks
+    //   busy-detection / resume / join / webhook teardown. The durable
+    //   user-facing call log lives in db.messages (call payload), not here.
+    const callsTtlMs =
+      Math.max(0, Number(retention.callsTerminalHours ?? 24)) * HOUR;
+    const callsMax = positiveIntOrNull(retention.callsTerminalMax ?? 500);
+    if (Array.isArray(db.calls) && db.calls.length) {
+      // null when no parseable timestamp — such a call is never TTL-trimmed
+      // (we never delete on an unknown age), only cap-trimmed as oldest.
+      const callTs = (c) =>
+        parseTs(c.updatedAt) ?? parseTs(c.endedAt) ?? parseTs(c.createdAt);
+      const remove = new Set();
+      for (const call of db.calls) {
+        if (!isCallTerminalState(call.state)) continue; // keep busy calls
+        const ts = callTs(call);
+        if (callsTtlMs > 0 && ts !== null && nowTs - ts > callsTtlMs) {
+          remove.add(call);
+        }
+      }
+      // Cap: among still-surviving terminal calls, keep only newest callsMax.
+      // callsMax === null (knob 0 / non-numeric) DISABLES the cap.
+      if (callsMax !== null) {
+        const survivingTerminal = db.calls
+          .filter((c) => isCallTerminalState(c.state) && !remove.has(c))
+          .sort((a, b) => (callTs(b) ?? 0) - (callTs(a) ?? 0));
+        for (const call of survivingTerminal.slice(callsMax)) remove.add(call);
+      }
+      counts.callsTerminal = remove.size;
+      if (!dryRun && remove.size) {
+        db.calls = db.calls.filter((c) => !remove.has(c));
+      }
+    }
+
+    // ── db.pushDeliveries: pure telemetry log. Age TTL + newest-N cap.
+    //   No user feature reads it back (only an ops debug endpoint).
+    const pushTtlMs =
+      Math.max(0, Number(retention.pushDeliveriesDays ?? 7)) * DAY;
+    const pushMax = positiveIntOrNull(retention.pushDeliveriesMax ?? 2000);
+    if (Array.isArray(db.pushDeliveries) && db.pushDeliveries.length) {
+      const pdTs = (d) => parseTs(d.createdAt) ?? parseTs(d.updatedAt);
+      const remove = new Set();
+      for (const delivery of db.pushDeliveries) {
+        const ts = pdTs(delivery);
+        if (pushTtlMs > 0 && ts !== null && nowTs - ts > pushTtlMs) {
+          remove.add(delivery);
+        }
+      }
+      // pushMax === null (knob 0 / non-numeric) DISABLES the cap.
+      if (pushMax !== null) {
+        const surviving = db.pushDeliveries
+          .filter((d) => !remove.has(d))
+          .sort((a, b) => (pdTs(b) ?? 0) - (pdTs(a) ?? 0));
+        for (const delivery of surviving.slice(pushMax)) remove.add(delivery);
+      }
+      counts.pushDeliveries = remove.size;
+      if (!dryRun && remove.size) {
+        db.pushDeliveries = db.pushDeliveries.filter((d) => !remove.has(d));
+      }
+    }
+
+    // ── db.notifications: mixed. The feature shows only the newest ≤50
+    //   UNREAD per user, so all three windows sit far past any live item:
+    //     • silent:true  (tree_mutated / call_ended pings) — transient,
+    //       already delivered via realtime+push → drop after 48h.
+    //     • read (readAt set) — no read-history screen re-reads them → 30d.
+    //     • unread — stale beyond a year → 365d (generous safety margin).
+    const notifSilentMs =
+      Math.max(0, Number(retention.notifSilentHours ?? 48)) * HOUR;
+    const notifReadMs =
+      Math.max(0, Number(retention.notifReadDays ?? 30)) * DAY;
+    const notifUnreadMs =
+      Math.max(0, Number(retention.notifUnreadDays ?? 365)) * DAY;
+    if (Array.isArray(db.notifications) && db.notifications.length) {
+      const remove = new Set();
+      for (const notif of db.notifications) {
+        const createdTs = parseTs(notif.createdAt);
+        // Never delete a notification we cannot age (missing/unparseable
+        // createdAt) — a live unread item must never be silently removed.
+        if (createdTs === null) continue;
+        const age = nowTs - createdTs;
+        if (notif.silent === true) {
+          if (notifSilentMs > 0 && age > notifSilentMs) {
+            remove.add(notif);
+            counts.notificationsSilent += 1;
+          }
+        } else if (notif.readAt) {
+          if (notifReadMs > 0 && age > notifReadMs) {
+            remove.add(notif);
+            counts.notificationsRead += 1;
+          }
+        } else if (notifUnreadMs > 0 && age > notifUnreadMs) {
+          remove.add(notif);
+          counts.notificationsUnread += 1;
+        }
+      }
+      if (!dryRun && remove.size) {
+        db.notifications = db.notifications.filter((n) => !remove.has(n));
+      }
+    }
+
+    // ── db.treeChangeRecords: feature-backing HISTORY, but the byte driver
+    //   is the full before/after/mergedFrom entity snapshots embedded on
+    //   high-churn person.*/relation.* records (3.5 MB in prod). The client
+    //   history sheet renders only type + names + timestamps — it NEVER
+    //   reads details.before/after — so stripping those heavy keys from old
+    //   NON-article records is invisible, KEEPS the record (timeline intact),
+    //   and reclaims the bulk. article.* records (biography edit provenance —
+    //   family-memory north-star) are left fully intact.
+    const treeDetailMs =
+      Math.max(0, Number(retention.treeChangeDetailDays ?? 30)) * DAY;
+    if (
+      treeDetailMs > 0 &&
+      Array.isArray(db.treeChangeRecords) &&
+      db.treeChangeRecords.length
+    ) {
+      for (const record of db.treeChangeRecords) {
+        if (!record || typeof record !== "object") continue;
+        if (typeof record.type === "string" && record.type.startsWith("article.")) {
+          continue;
+        }
+        const createdTs = parseTs(record.createdAt);
+        if (createdTs === null || nowTs - createdTs <= treeDetailMs) continue;
+        const details = record.details;
+        if (!details || typeof details !== "object") continue;
+        let stripped = false;
+        for (const heavyKey of ["before", "after", "mergedFrom"]) {
+          if (Object.prototype.hasOwnProperty.call(details, heavyKey)) {
+            if (!dryRun) delete details[heavyKey];
+            stripped = true;
+          }
+        }
+        if (stripped) counts.treeChangeDetailsStripped += 1;
+      }
+    }
+
+    return counts;
+  }
+
   // ── Phase 3.6: hard-delete background job ─────────────────────────
   // Sweeps physically deleted entries past their retention window:
   //   * `graphPersons`    — Path A explicit `hardDeleteScheduledAt`
@@ -20950,6 +21124,7 @@ class FileStore {
     maxPerRun = 10_000,
     dryRun = false,
     runId = null,
+    logRetention = {},
   } = {}) {
     const startedAt = now instanceof Date ? now : new Date(now);
     const startedTs = startedAt.getTime();
@@ -20957,8 +21132,14 @@ class FileStore {
     const auditRetentionMs = auditRetentionDays * 86_400_000;
     const effectiveRunId = runId || crypto.randomUUID();
 
-    const db = await this._read();
-
+    // Route the whole read→compute→mutate→write through _mutate so this daily
+    // job serializes against every other _mutate writer (message-send, calls,
+    // notifications). Otherwise its whole-blob overwrite — built on a snapshot
+    // read OUTSIDE the lock — could clobber a message that was concurrently
+    // appended + ack'd (the store-wide lost-update the _mutate primitive
+    // closes). applyFn is pure in-memory (no awaits / nested store calls);
+    // dry-run returns via skip() so it stays a pure read (no write).
+    return this._mutate((db, skip) => {
     // Hybrid eligibility: explicit `hardDeleteScheduledAt` wins; иначе
     // age-based fallback (`deletedAt + retention`). Без `deletedAt` —
     // entity не soft-deleted, не eligible.
@@ -21161,52 +21342,66 @@ class FileStore {
       deletedCounts.deletedPersons +
       deletedCounts.deletedPosts;
 
-    if (!dryRun) {
-      db.graphRelations = (db.graphRelations || []).filter(
-        (r) => !removeIdsByType.graphRelation.has(r.id),
-      );
-      db.branches = (db.branches || []).filter(
-        (b) => !removeIdsByType.branch.has(b.id),
-      );
-      db.personIdentities = (db.personIdentities || []).filter(
-        (pi) => !removeIdsByType.personIdentity.has(pi.id),
-      );
-      db.graphPersons = (db.graphPersons || []).filter(
-        (gp) => !removeIdsByType.graphPerson.has(gp.id),
-      );
-      db.branchPersonViews = (db.branchPersonViews || []).filter((v) => {
-        const key = v.id ?? `${v.branchId || ""}:${v.graphPersonId || ""}`;
-        return !removeIdsByType.branchPersonView.has(key);
-      });
-      // Ship Q4a: physically erase deletedPersons rows past retention
-      // + floor. Snapshot data permanently gone — recovery impossible
-      // beyond этого point.
-      db.deletedPersons = (db.deletedPersons || []).filter(
-        (r) => !removeDeletedPersonIds.has(r.id),
-      );
-      // Ship Q4a (Ship 30b): same для deletedPosts.
-      db.deletedPosts = (db.deletedPosts || []).filter(
-        (r) => !removeDeletedPostIds.has(r.id),
-      );
-      db.hardDeleteAudit = [...survivingAudit, ...newAuditEntries];
-      db.hardDeleteLastRunAt = startedAt.toISOString();
-      await this._write(db);
-    }
+    // Retention for unbounded log/history collections (blob-shrink). Mutates
+    // db in place when !dryRun; the single _write below persists it alongside
+    // the tombstone sweep. Runs regardless of the maxPerRun tombstone budget
+    // (its own cheap O(n) filters), so large log collections never starve
+    // graph-tombstone cleanup.
+    const logCounts = this._sweepUnboundedLogs(db, logRetention, {
+      nowTs: startedTs,
+      dryRun,
+    });
 
     const finishedAt = new Date();
-    return {
+    const summary = {
       runId: effectiveRunId,
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
       durationMs: finishedAt.getTime() - startedTs,
       dryRun,
       deleted: deletedCounts,
+      logRetention: logCounts,
       sampleIds,
       capHit: budget <= 0 && totalDeleted >= Math.max(0, Math.floor(maxPerRun)),
       lastRunAt: dryRun
         ? db.hardDeleteLastRunAt || null
         : startedAt.toISOString(),
     };
+
+    // Dry-run: report counts without persisting. skip() keeps it a pure read
+    // (and _sweepUnboundedLogs already no-op'd its own mutations under dryRun).
+    if (dryRun) return skip(summary);
+
+    db.graphRelations = (db.graphRelations || []).filter(
+      (r) => !removeIdsByType.graphRelation.has(r.id),
+    );
+    db.branches = (db.branches || []).filter(
+      (b) => !removeIdsByType.branch.has(b.id),
+    );
+    db.personIdentities = (db.personIdentities || []).filter(
+      (pi) => !removeIdsByType.personIdentity.has(pi.id),
+    );
+    db.graphPersons = (db.graphPersons || []).filter(
+      (gp) => !removeIdsByType.graphPerson.has(gp.id),
+    );
+    db.branchPersonViews = (db.branchPersonViews || []).filter((v) => {
+      const key = v.id ?? `${v.branchId || ""}:${v.graphPersonId || ""}`;
+      return !removeIdsByType.branchPersonView.has(key);
+    });
+    // Ship Q4a: physically erase deletedPersons rows past retention
+    // + floor. Snapshot data permanently gone — recovery impossible
+    // beyond этого point.
+    db.deletedPersons = (db.deletedPersons || []).filter(
+      (r) => !removeDeletedPersonIds.has(r.id),
+    );
+    // Ship Q4a (Ship 30b): same для deletedPosts.
+    db.deletedPosts = (db.deletedPosts || []).filter(
+      (r) => !removeDeletedPostIds.has(r.id),
+    );
+    db.hardDeleteAudit = [...survivingAudit, ...newAuditEntries];
+    db.hardDeleteLastRunAt = startedAt.toISOString();
+    return summary;
+    });
   }
 }
 
