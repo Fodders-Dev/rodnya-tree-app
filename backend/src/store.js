@@ -22554,6 +22554,7 @@ module.exports = {
   deepFreezeState,
   deriveSessionPublicId,
   describeMessagePreview,
+  ensureCirclesForTree,
   isExpiredAt,
   isMessageReadByUser,
   normalizeChatMessageCall,

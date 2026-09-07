@@ -22,6 +22,7 @@ const {
   deepFreezeState,
   deriveSessionPublicId,
   describeMessagePreview,
+  ensureCirclesForTree,
   isMessageReadByUser,
   normalizeChatMessageCall,
   normalizeChatSearchQuery,
@@ -243,6 +244,33 @@ class PostgresStore extends FileStore {
     this._qualifiedNotificationsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._notificationsTable)}`;
     this._qualifiedPushDeliveriesTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._pushDeliveriesTable)}`;
     this._qualifiedNotificationBackupsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._notificationBackupsTable)}`;
+    // SPEED-15: корзина deletedPersons (245 КБ/220 записей на проде) — в
+    // таблице. Не append-only (restore мутирует строку, hard-delete удаляет
+    // её), поэтому в отличие от treeChangeRecords нужна не только «дренаж
+    // новых записей», но и операционная очередь (см. _queueDeletedPersonOp).
+    this._deletedPersonsTable = `${this._table}_deleted_persons`;
+    this._deletedPersonsBackupsTable = `${this._table}_deleted_persons_backups`;
+    this._qualifiedDeletedPersonsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._deletedPersonsTable)}`;
+    this._qualifiedDeletedPersonsBackupsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._deletedPersonsBackupsTable)}`;
+    this._deletedPersonsTablesReady = false;
+    this._pendingDeletedPersonsOps = [];
+    // SPEED-15: clientDiagnostics (ring-buffer на 500 записей) — в таблице.
+    // Append-only + собственный cap, читается только /v1/admin — createClient
+    // Diagnostic/listClientDiagnostics полностью переезжают на SQL, блоб-
+    // массив после миграции больше никто не пополняет (см. оверрайды ниже).
+    this._clientDiagnosticsTable = `${this._table}_client_diagnostics`;
+    this._clientDiagnosticsBackupsTable = `${this._table}_client_diagnostics_backups`;
+    this._qualifiedClientDiagnosticsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._clientDiagnosticsTable)}`;
+    this._qualifiedClientDiagnosticsBackupsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._clientDiagnosticsBackupsTable)}`;
+    this._clientDiagnosticsTablesReady = false;
+    // SPEED-15: sessions уже не читаются из блоба ни на одном пути _read()
+    // (проекционная таблица SPEED-6/8a — единственный источник при чтении);
+    // маркер sessionsOutOfBlob останавливает и запись блоба, и повторное
+    // затирание проекции блобом на буте (см. _hydrateAuthProjectionTables
+    // FromStateRow и _migrateSessionsOutOfBlob).
+    this._sessionsBackupsTable = `${this._table}_sessions_backups`;
+    this._qualifiedSessionsBackupsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._sessionsBackupsTable)}`;
+    this._sessionsOutOfBlob = false;
     // SPEED-7: гейт готовности — false, пока бут-миграция не подтвердила
     // маркер. При транзиентно недоступном состоянии миграция скипается, и
     // ВСЕ notification-оверрайды делегируют в FileStore-путь по блобу:
@@ -429,6 +457,9 @@ class PostgresStore extends FileStore {
     await this._createChatTables();
     await this._createNotificationTables();
     await this._createTreeChangeTables();
+    await this._createDeletedPersonsTables();
+    await this._createClientDiagnosticsTables();
+    await this._createSessionsBackupsTable();
 
     // SPEED-9 C-boot (docs/speed9_proposal.md §5): раньше КАЖДЫЙ из шагов
     // ниже делал свой собственный SELECT data FROM + normalizeDbState —
@@ -452,6 +483,9 @@ class PostgresStore extends FileStore {
       cursor = await this._migrateChatCollectionsToTables(cursor);
       cursor = await this._migrateNotificationCollectionsToTables(cursor);
       cursor = await this._migrateTreeChangeCollectionsToTables(cursor);
+      cursor = await this._migrateDeletedPersonsToTables(cursor);
+      cursor = await this._migrateClientDiagnosticsToTables(cursor);
+      cursor = await this._migrateSessionsOutOfBlob(cursor);
       await this._hydrateChatProjectionFromState(cursor?.state);
       // Прогрев кэша: первый настоящий _read() после буста должен сразу
       // попасть в кэш вместо гарантированного промаха (_cachedVersion до
@@ -480,6 +514,9 @@ class PostgresStore extends FileStore {
       await this._migrateChatCollectionsToTables();
       await this._migrateNotificationCollectionsToTables();
       await this._migrateTreeChangeCollectionsToTables();
+      await this._migrateDeletedPersonsToTables();
+      await this._migrateClientDiagnosticsToTables();
+      await this._migrateSessionsOutOfBlob();
       await this._hydrateChatProjectionFromState();
     }
   }
@@ -1366,6 +1403,30 @@ class PostgresStore extends FileStore {
   // сегодня это исключительно pg-mem-ограничение в тестах, см.
   // docs/speed_measurement.md), чтобы и там не делать отдельный SELECT.
   async _hydrateAuthProjectionTablesFromStateRow(bootState) {
+    // SPEED-15: once migrationStatus.sessionsOutOfBlob is set, data->
+    // 'sessions' in the row is permanently `[]` — this function used to
+    // rebuild the auth-sessions projection FROM the blob on EVERY boot
+    // (belt-and-suspenders against drift), which would now DELETE every
+    // live session on each restart/deploy. bootState is the row this SAME
+    // boot already read (SPEED-9 C-boot cursor) when available; on the
+    // degraded no-cursor path fall back to a cheap scalar marker read
+    // instead of skipping the check (default = rebuild, today's behavior,
+    // if even that fails).
+    let sessionsOutOfBlob =
+      bootState?.migrationStatus?.sessionsOutOfBlob === "complete-v1";
+    if (!bootState) {
+      try {
+        const markerResult = await this._pool.query(
+          `SELECT data->'migrationStatus'->>'sessionsOutOfBlob' AS marker
+             FROM ${this._qualifiedTableName} WHERE id = $1`,
+          [this._rowId],
+        );
+        sessionsOutOfBlob = markerResult.rows[0]?.marker === "complete-v1";
+      } catch (_) {
+        sessionsOutOfBlob = false;
+      }
+    }
+    this._sessionsOutOfBlob = sessionsOutOfBlob;
     await this._withProjectionClient(async (client, useTransaction) => {
       try {
         if (useTransaction) {
@@ -1385,27 +1446,29 @@ class PostgresStore extends FileStore {
               AND COALESCE(user_entry->>'id', '') <> ''`,
           [this._rowId],
         );
-        await client.query(`DELETE FROM ${this._qualifiedAuthSessionsTableName}`);
-        await client.query(
-          `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
-             token,
-             refresh_token,
-             user_id,
-             created_at,
-             session_data
-           )
-           SELECT
-             session_entry->>'token',
-             NULLIF(COALESCE(session_entry->>'refreshToken', ''), ''),
-             COALESCE(session_entry->>'userId', ''),
-             NULLIF(COALESCE(session_entry->>'createdAt', ''), ''),
-             session_entry
-             FROM ${this._qualifiedTableName},
-                  LATERAL jsonb_array_elements(COALESCE(data->'sessions', '[]'::jsonb)) AS session_entry
-            WHERE id = $1
-              AND COALESCE(session_entry->>'token', '') <> ''`,
-          [this._rowId],
-        );
+        if (!sessionsOutOfBlob) {
+          await client.query(`DELETE FROM ${this._qualifiedAuthSessionsTableName}`);
+          await client.query(
+            `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
+               token,
+               refresh_token,
+               user_id,
+               created_at,
+               session_data
+             )
+             SELECT
+               session_entry->>'token',
+               NULLIF(COALESCE(session_entry->>'refreshToken', ''), ''),
+               COALESCE(session_entry->>'userId', ''),
+               NULLIF(COALESCE(session_entry->>'createdAt', ''), ''),
+               session_entry
+               FROM ${this._qualifiedTableName},
+                    LATERAL jsonb_array_elements(COALESCE(data->'sessions', '[]'::jsonb)) AS session_entry
+              WHERE id = $1
+                AND COALESCE(session_entry->>'token', '') <> ''`,
+            [this._rowId],
+          );
+        }
         if (useTransaction) {
           await client.query("COMMIT");
         }
@@ -1427,7 +1490,9 @@ class PostgresStore extends FileStore {
             rawData = result.rows[0]?.data ?? EMPTY_DB;
           }
           await this._replaceProjectedUsers(rawData.users);
-          await this._replaceProjectedSessions(rawData.sessions);
+          if (!sessionsOutOfBlob) {
+            await this._replaceProjectedSessions(rawData.sessions);
+          }
           return;
         }
         if (useTransaction) {
@@ -1629,6 +1694,108 @@ class PostgresStore extends FileStore {
 
   async _updateSessionsArray(sessions) {
     await this._replaceProjectedSessions(sessions);
+  }
+
+  // ── SPEED-15: sessions полностью вне блоба ──────────────────────────
+  // _read() уже подменяет data.sessions содержимым auth_sessions на КАЖДОМ
+  // пути (SPEED-6 проекция + SPEED-8a кэш) — то, что лежит в самой JSONB-
+  // колонке, никогда не читается назад НИГДЕ на PostgresStore. Единственный
+  // потребитель блобовых sessions — _hydrateAuthProjectionTablesFromStateRow
+  // на буте (перестраивает таблицу ИЗ блоба «на всякий случай» при старте
+  // процесса); он уже проверяет этот же маркер и пропускает перестройку
+  // (см. выше), иначе обнулённый блоб стёр бы все сессии на первом же
+  // рестарте после миграции.
+  async _createSessionsBackupsTable() {
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS ${this._qualifiedSessionsBackupsTableName} (
+        id TEXT PRIMARY KEY,
+        backup_data JSONB NOT NULL
+      )
+    `);
+  }
+
+  async _migrateSessionsOutOfBlob(bootRow) {
+    const MARKER = "complete-v1";
+    let state = null;
+    let version = bootRow ? bootRow.version ?? null : null;
+    if (bootRow && bootRow.state) {
+      state = bootRow.state;
+    } else {
+      try {
+        const result = await this._pool.query(
+          `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
+          [this._rowId],
+        );
+        const rawData = result.rows[0]?.data ?? EMPTY_DB;
+        state = normalizeDbState(
+          typeof rawData === "string" ? JSON.parse(rawData) : rawData,
+        );
+      } catch (error) {
+        console.warn(
+          "[backend] sessions-out-of-blob migration skipped — state unavailable",
+          JSON.stringify({message: error?.message || String(error)}),
+        );
+        return null;
+      }
+    }
+    try {
+      if (state?.migrationStatus?.sessionsOutOfBlob === MARKER) {
+        this._sessionsOutOfBlob = true;
+        return {state, version};
+      }
+      const sessions = Array.isArray(state.sessions) ? state.sessions : [];
+      // Бэкап — на случай отката до кода без этой миграции (см.
+      // scripts/restore-sessions-to-blob.js). Проекционная таблица уже
+      // отражает эти же данные (_hydrateAuthProjectionTablesFromStateRow
+      // чуть раньше в этом же буте прогнала блоб → таблицу как обычно,
+      // маркер тогда ещё не стоял) — здесь только фиксируем bind-снимок и
+      // чистим блоб.
+      await this._pool.query(
+        `INSERT INTO ${this._qualifiedSessionsBackupsTableName} (id, backup_data)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (id) DO NOTHING`,
+        [`pre-migration-${MARKER}`, JSON.stringify({savedAt: nowIso(), sessions})],
+      );
+      const nextState = {
+        ...state,
+        sessions: [],
+        migrationStatus: {
+          ...(state.migrationStatus || {}),
+          sessionsOutOfBlob: MARKER,
+        },
+      };
+      const updateResult = await this._pool.query(
+        `UPDATE ${this._qualifiedTableName}
+            SET data = $2::jsonb,
+                updated_at = NOW(),
+                version = version + 1
+          WHERE id = $1
+          RETURNING version`,
+        [this._rowId, JSON.stringify(nextState)],
+      );
+      // Кэш обязан помнить РЕАЛЬНЫЕ сессии (как и везде — _read() накладывает
+      // их поверх кэша из проекции), иначе первый _read() увидел бы
+      // sessions: [] из этого объекта раньше, чем успеет их подменить.
+      this._cachedState = normalizeDbState({...nextState, sessions});
+      await this._persistSnapshotCache(this._cachedState);
+      this._sessionsOutOfBlob = true;
+      console.log(
+        "[backend] sessions migrated out of blob",
+        JSON.stringify({sessions: sessions.length}),
+      );
+      return {
+        state: this._cachedState,
+        version: PostgresStore._normalizeStateVersion(
+          updateResult?.rows?.[0]?.version,
+        ),
+      };
+    } catch (error) {
+      console.warn(
+        "[backend] sessions-out-of-blob migration failed — blob stays source of truth",
+        JSON.stringify({message: error?.message || String(error)}),
+      );
+      return {state, version};
+    }
   }
 
   async authenticate(email, password) {
@@ -3128,6 +3295,659 @@ class PostgresStore extends FileStore {
       [id],
     );
     return result.rows.map((row) => this._rowToTreeChangeRecord(row)).filter(Boolean);
+  }
+
+  // ── SPEED-15: корзина deletedPersons в таблице ──────────────────────
+  // 245 КБ / 220 записей на проде (15% блоба) — снапшоты персон+связей на
+  // 30-дневное восстановление, читаемые ТОЛЬКО экраном «Корзина». Новые
+  // строки по-прежнему рождаются в блобе (deletePerson не переопределён —
+  // FileStore.deletePerson делает db.deletedPersons.push внутри своего
+  // _read()+_write()) и дренируются в таблицу на _write, как treeChangeRe-
+  // cords. НО в отличие от журнала — не append-only: restorePerson мутирует
+  // строку (restoredAt), hardDeletePerson удаляет её, поэтому чтения
+  // (list*/restore/hardDelete) полностью переопределены на SQL, а не
+  // делегируют FileStore-логику по пустому после дренажа блоб-массиву.
+  async _createDeletedPersonsTables() {
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS ${this._qualifiedDeletedPersonsBackupsTableName} (
+        id TEXT PRIMARY KEY,
+        backup_data JSONB NOT NULL
+      )
+    `);
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS ${this._qualifiedDeletedPersonsTableName} (
+        id TEXT,
+        original_person_id TEXT NOT NULL DEFAULT '',
+        tree_id TEXT NOT NULL DEFAULT '',
+        semya_id TEXT NOT NULL DEFAULT '',
+        deleted_by_user_id TEXT NOT NULL DEFAULT '',
+        deleted_at TEXT NOT NULL DEFAULT '',
+        hard_delete_scheduled_at TEXT NOT NULL DEFAULT '',
+        earliest_hard_delete TEXT NOT NULL DEFAULT '',
+        restored_at TEXT NOT NULL DEFAULT '',
+        restored_by_user_id TEXT NOT NULL DEFAULT '',
+        row_data JSONB NOT NULL,
+        CONSTRAINT ${quoteIdentifier(`${this._deletedPersonsTable}_pk`)} PRIMARY KEY (id)
+      )
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._deletedPersonsTable}_semya_idx`)}
+        ON ${this._qualifiedDeletedPersonsTableName} (semya_id)
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._deletedPersonsTable}_actor_idx`)}
+        ON ${this._qualifiedDeletedPersonsTableName} (deleted_by_user_id)
+    `);
+  }
+
+  _deletedPersonRowValues(entry) {
+    const row = entry && typeof entry === "object" ? entry : {};
+    return [
+      String(row.id || "").trim(),
+      String(row.originalPersonId || "").trim(),
+      String(row.treeId || "").trim(),
+      String(row.semyaId || "").trim(),
+      String(row.deletedByUserId || "").trim(),
+      String(row.deletedAt || "").trim(),
+      String(row.hardDeleteScheduledAt || "").trim(),
+      String(row.earliestHardDelete || "").trim(),
+      String(row.restoredAt || "").trim(),
+      String(row.restoredByUserId || "").trim(),
+      JSON.stringify(row),
+    ];
+  }
+
+  _rowToDeletedPerson(row) {
+    const raw = row?.row_data;
+    if (!raw) return null;
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  }
+
+  async _insertDeletedPersonRows(rows) {
+    let inserted = 0;
+    let skipped = 0;
+    for (const entry of rows) {
+      const values = this._deletedPersonRowValues(entry);
+      if (!values[0]) {
+        skipped += 1;
+        continue;
+      }
+      await this._pool.query(
+        `INSERT INTO ${this._qualifiedDeletedPersonsTableName}
+           (id, original_person_id, tree_id, semya_id, deleted_by_user_id, deleted_at,
+            hard_delete_scheduled_at, earliest_hard_delete, restored_at, restored_by_user_id, row_data)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+         ON CONFLICT DO NOTHING`,
+        values,
+      );
+      inserted += 1;
+    }
+    return {inserted, skipped};
+  }
+
+  // Маркер — migrationStatus.deletedPersonsToTables. Тот же контракт, что
+  // и у treeChangeRecords: опциональный {state, version} от предыдущего
+  // шага буста; на успехе возвращает {state, version} ПОСЛЕ своей записи.
+  async _migrateDeletedPersonsToTables(bootRow) {
+    const MARKER = "complete-v1";
+    let state = null;
+    let version = bootRow ? bootRow.version ?? null : null;
+    if (bootRow && bootRow.state) {
+      state = bootRow.state;
+    } else {
+      try {
+        const result = await this._pool.query(
+          `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
+          [this._rowId],
+        );
+        const rawData = result.rows[0]?.data ?? EMPTY_DB;
+        state = normalizeDbState(
+          typeof rawData === "string" ? JSON.parse(rawData) : rawData,
+        );
+      } catch (error) {
+        console.warn(
+          "[backend] deleted persons migration skipped — state unavailable",
+          JSON.stringify({message: error?.message || String(error)}),
+        );
+        return null;
+      }
+    }
+    try {
+      if (state?.migrationStatus?.deletedPersonsToTables === MARKER) {
+        this._deletedPersonsTablesReady = true;
+        return {state, version};
+      }
+      const rows = Array.isArray(state.deletedPersons) ? state.deletedPersons : [];
+      await this._pool.query(
+        `INSERT INTO ${this._qualifiedDeletedPersonsBackupsTableName} (id, backup_data)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (id) DO NOTHING`,
+        [`pre-migration-${MARKER}`, JSON.stringify({savedAt: nowIso(), deletedPersons: rows})],
+      );
+      const inserted = await this._insertDeletedPersonRows(rows);
+      const nextState = {
+        ...state,
+        deletedPersons: [],
+        migrationStatus: {
+          ...(state.migrationStatus || {}),
+          deletedPersonsToTables: MARKER,
+        },
+      };
+      const updateResult = await this._pool.query(
+        `UPDATE ${this._qualifiedTableName}
+            SET data = $2::jsonb,
+                updated_at = NOW(),
+                version = version + 1
+          WHERE id = $1
+          RETURNING version`,
+        [this._rowId, JSON.stringify(nextState)],
+      );
+      this._cachedState = normalizeDbState(nextState);
+      await this._persistSnapshotCache(this._cachedState);
+      this._deletedPersonsTablesReady = true;
+      console.log(
+        "[backend] deleted persons migrated to tables",
+        JSON.stringify({rows: inserted.inserted, skipped: inserted.skipped}),
+      );
+      return {
+        state: this._cachedState,
+        version: PostgresStore._normalizeStateVersion(
+          updateResult?.rows?.[0]?.version,
+        ),
+      };
+    } catch (error) {
+      console.warn(
+        "[backend] deleted persons migration failed — blob stays source of truth",
+        JSON.stringify({message: error?.message || String(error)}),
+      );
+      return {state, version};
+    }
+  }
+
+  _queueDeletedPersonOp(op) {
+    if (!this._deletedPersonsTablesReady) return;
+    this._pendingDeletedPersonsOps.push(op);
+  }
+
+  async _applyDeletedPersonOp(op) {
+    if (op.kind === "restore") {
+      // row_data должен остаться консистентен с колонками — restorePerson/
+      // hardDeletePerson читают ТОЛЬКО row_data (это то, что уходит клиенту),
+      // а не отдельные restored_at/restored_by_user_id колонки (те служат
+      // только фильтрам WHERE restored_at = ''). Без этого повторный SELECT
+      // видел бы restoredAt: null в JSON при уже заполненной колонке —
+      // ALREADY_RESTORED никогда бы не сработал.
+      const current = await this._pool.query(
+        `SELECT row_data FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
+        [op.id],
+      );
+      const row = this._rowToDeletedPerson(current.rows[0]);
+      if (!row) return;
+      const nextRow = {
+        ...row,
+        restoredAt: op.restoredAt,
+        restoredByUserId: op.restoredByUserId || null,
+      };
+      await this._pool.query(
+        `UPDATE ${this._qualifiedDeletedPersonsTableName}
+            SET restored_at = $2, restored_by_user_id = $3, row_data = $4::jsonb
+          WHERE id = $1`,
+        [op.id, op.restoredAt, op.restoredByUserId || "", JSON.stringify(nextRow)],
+      );
+    }
+  }
+
+  /// Дренаж на записи: новые строки корзины из блоба (deletePerson,
+  /// унаследованный от FileStore) → в таблицу, затем очередь операций
+  /// (restore). Ошибка = best-effort: массив остаётся в блобе, следующий
+  /// _write повторит (дедуп по id / идемпотентный UPDATE).
+  async _drainDeletedPersonsCollection(data) {
+    if (!this._deletedPersonsTablesReady) {
+      return data;
+    }
+    const rows = Array.isArray(data?.deletedPersons) ? data.deletedPersons : [];
+    const ops = this._pendingDeletedPersonsOps;
+    if (rows.length === 0 && ops.length === 0) {
+      return data;
+    }
+    try {
+      if (rows.length) {
+        await this._insertDeletedPersonRows(rows);
+      }
+      while (ops.length) {
+        const op = ops[0];
+        await this._applyDeletedPersonOp(op);
+        ops.shift();
+      }
+    } catch (error) {
+      console.warn(
+        "[backend] deleted persons drain failed — array stays in blob for retry",
+        JSON.stringify({message: error?.message || String(error)}),
+      );
+      return data;
+    }
+    return {...data, deletedPersons: []};
+  }
+
+  async listDeletedPersonsForUser({userId}) {
+    if (!userId || typeof userId !== "string") return [];
+    await this.initialize();
+    if (!this._deletedPersonsTablesReady) {
+      return super.listDeletedPersonsForUser({userId});
+    }
+    await this._awaitReadConsistency();
+    // Членство семьи по-прежнему в блобе — семья-scoping (не сама корзина)
+    // остаётся один _read(), как и раньше, но теперь без 245 КБ мёртвого
+    // груза в каждом чтении блоба.
+    const db = await this._read();
+    const memberSemyaIds = new Set(
+      (db.semyaMembers || [])
+        .filter((m) => m.userId === userId && !m.hiddenAt)
+        .map((m) => m.semyaId),
+    );
+    const result = await this._pool.query(
+      `SELECT row_data, semya_id, deleted_by_user_id, deleted_at
+         FROM ${this._qualifiedDeletedPersonsTableName}
+        WHERE restored_at = ''`,
+    );
+    const rows = result.rows
+      .filter(
+        (row) =>
+          row.deleted_by_user_id === userId ||
+          (row.semya_id && memberSemyaIds.has(row.semya_id)),
+      )
+      .sort((a, b) => String(b.deleted_at || "").localeCompare(String(a.deleted_at || "")));
+    return rows.map((row) => this._rowToDeletedPerson(row)).filter(Boolean);
+  }
+
+  async listDeletedPersonsForSemya({semyaId, userId}) {
+    if (!semyaId || typeof semyaId !== "string") return [];
+    if (!userId) return [];
+    await this.initialize();
+    if (!this._deletedPersonsTablesReady) {
+      return super.listDeletedPersonsForSemya({semyaId, userId});
+    }
+    await this._awaitReadConsistency();
+    const db = await this._read();
+    const isMember = (db.semyaMembers || []).some(
+      (m) => m.userId === userId && m.semyaId === semyaId && !m.hiddenAt,
+    );
+    if (!isMember) {
+      throw new Error("NOT_MEMBER");
+    }
+    const result = await this._pool.query(
+      `SELECT row_data
+         FROM ${this._qualifiedDeletedPersonsTableName}
+        WHERE semya_id = $1 AND restored_at = ''
+        ORDER BY deleted_at DESC`,
+      [semyaId],
+    );
+    return result.rows.map((row) => this._rowToDeletedPerson(row)).filter(Boolean);
+  }
+
+  async restorePerson({deletedPersonId, actorUserId}) {
+    if (!deletedPersonId || typeof deletedPersonId !== "string") {
+      throw new Error("INVALID_INPUT");
+    }
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+    await this.initialize();
+    if (!this._deletedPersonsTablesReady) {
+      return super.restorePerson({deletedPersonId, actorUserId});
+    }
+    await this._awaitReadConsistency();
+    const rowResult = await this._pool.query(
+      `SELECT row_data FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
+      [deletedPersonId],
+    );
+    const row = this._rowToDeletedPerson(rowResult.rows[0]);
+    if (!row) throw new Error("DELETED_PERSON_NOT_FOUND");
+    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+    if (
+      row.hardDeleteScheduledAt &&
+      Date.parse(row.hardDeleteScheduledAt) < Date.now()
+    ) {
+      throw new Error("HARD_DELETE_ELAPSED");
+    }
+
+    const db = await this._read();
+    const isOriginalActor = row.deletedByUserId === actorUserId;
+    let isSemyaMember = false;
+    if (row.semyaId) {
+      isSemyaMember = (db.semyaMembers || []).some(
+        (m) =>
+          m.userId === actorUserId &&
+          m.semyaId === row.semyaId &&
+          !m.hiddenAt,
+      );
+      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
+      if (semya?.deletedAt) {
+        throw new Error("SEMYA_DELETED");
+      }
+    }
+    if (!isOriginalActor && !isSemyaMember) {
+      throw new Error("FORBIDDEN");
+    }
+
+    db.persons = Array.isArray(db.persons) ? db.persons : [];
+    db.persons.push(structuredClone(row.snapshot));
+    if (Array.isArray(row.relationsSnapshot)) {
+      db.relations = Array.isArray(db.relations) ? db.relations : [];
+      for (const rel of row.relationsSnapshot) {
+        db.relations.push(structuredClone(rel));
+      }
+    }
+
+    if (row.snapshot?.userId) {
+      const tree = db.trees.find((entry) => entry.id === row.treeId);
+      if (tree) {
+        tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+        if (!tree.memberIds.includes(row.snapshot.userId)) {
+          tree.memberIds.push(row.snapshot.userId);
+        }
+        tree.members = Array.isArray(tree.members) ? tree.members : [];
+        if (!tree.members.includes(row.snapshot.userId)) {
+          tree.members.push(row.snapshot.userId);
+        }
+        this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
+        tree.updatedAt = nowIso();
+      }
+    }
+
+    const restoredAt = nowIso();
+    this._appendTreeChangeRecord(db, {
+      treeId: row.treeId,
+      actorId: actorUserId,
+      type: "person.restored",
+      personId: row.originalPersonId,
+      details: {
+        deletedPersonId: row.id,
+        deletedAt: row.deletedAt,
+      },
+    });
+    this._reconcilePersonIdentities(db);
+    ensureCirclesForTree(db, row.treeId);
+
+    this._queueDeletedPersonOp({
+      kind: "restore",
+      id: deletedPersonId,
+      restoredAt,
+      restoredByUserId: actorUserId,
+    });
+    await this._write(db);
+    return structuredClone({...row, restoredAt, restoredByUserId: actorUserId});
+  }
+
+  async hardDeletePerson({deletedPersonId, actorUserId}) {
+    if (!deletedPersonId || typeof deletedPersonId !== "string") {
+      throw new Error("INVALID_INPUT");
+    }
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+    await this.initialize();
+    if (!this._deletedPersonsTablesReady) {
+      return super.hardDeletePerson({deletedPersonId, actorUserId});
+    }
+    await this._awaitReadConsistency();
+    const rowResult = await this._pool.query(
+      `SELECT row_data FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
+      [deletedPersonId],
+    );
+    const row = this._rowToDeletedPerson(rowResult.rows[0]);
+    if (!row) throw new Error("DELETED_PERSON_NOT_FOUND");
+    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+    if (
+      row.earliestHardDelete &&
+      Date.parse(row.earliestHardDelete) > Date.now()
+    ) {
+      throw new Error("FLOOR_NOT_MET");
+    }
+
+    const isOriginalActor = row.deletedByUserId === actorUserId;
+    let isSemyaMember = false;
+    if (row.semyaId) {
+      const db = await this._read();
+      isSemyaMember = (db.semyaMembers || []).some(
+        (m) =>
+          m.userId === actorUserId &&
+          m.semyaId === row.semyaId &&
+          !m.hiddenAt,
+      );
+    }
+    if (!isOriginalActor && !isSemyaMember) {
+      throw new Error("FORBIDDEN");
+    }
+
+    // В отличие от FileStore (splice из блоба + полный _write) — точечный
+    // DELETE, без чтения/записи всего блоба ради удаления одной корзинной
+    // строки.
+    await this._pool.query(
+      `DELETE FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
+      [deletedPersonId],
+    );
+    return {purged: true, deletedPersonId};
+  }
+
+  // ── SPEED-15: clientDiagnostics в таблице ───────────────────────────
+  // Ring-buffer на 500 записей (34 КБ/30 записей на проде), читается ТОЛЬКО
+  // /v1/admin/client-diagnostics. Append-only и никогда не участвует в
+  // _mutate-applyFn — оверрайды полностью на SQL, блоб-массив после
+  // миграции больше никто не пополняет (в отличие от deletedPersons здесь
+  // не нужен дренаж «новых записей из унаследованного пути»).
+  async _createClientDiagnosticsTables() {
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS ${this._qualifiedClientDiagnosticsBackupsTableName} (
+        id TEXT PRIMARY KEY,
+        backup_data JSONB NOT NULL
+      )
+    `);
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS ${this._qualifiedClientDiagnosticsTableName} (
+        id TEXT,
+        user_id TEXT NOT NULL DEFAULT '',
+        type TEXT NOT NULL DEFAULT 'client_event',
+        created_at TEXT NOT NULL DEFAULT '',
+        row_data JSONB NOT NULL,
+        CONSTRAINT ${quoteIdentifier(`${this._clientDiagnosticsTable}_pk`)} PRIMARY KEY (id)
+      )
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._clientDiagnosticsTable}_created_idx`)}
+        ON ${this._qualifiedClientDiagnosticsTableName} (created_at)
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._clientDiagnosticsTable}_user_idx`)}
+        ON ${this._qualifiedClientDiagnosticsTableName} (user_id)
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._clientDiagnosticsTable}_type_idx`)}
+        ON ${this._qualifiedClientDiagnosticsTableName} (type)
+    `);
+  }
+
+  async _migrateClientDiagnosticsToTables(bootRow) {
+    const MARKER = "complete-v1";
+    let state = null;
+    let version = bootRow ? bootRow.version ?? null : null;
+    if (bootRow && bootRow.state) {
+      state = bootRow.state;
+    } else {
+      try {
+        const result = await this._pool.query(
+          `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
+          [this._rowId],
+        );
+        const rawData = result.rows[0]?.data ?? EMPTY_DB;
+        state = normalizeDbState(
+          typeof rawData === "string" ? JSON.parse(rawData) : rawData,
+        );
+      } catch (error) {
+        console.warn(
+          "[backend] client diagnostics migration skipped — state unavailable",
+          JSON.stringify({message: error?.message || String(error)}),
+        );
+        return null;
+      }
+    }
+    try {
+      if (state?.migrationStatus?.clientDiagnosticsToTables === MARKER) {
+        this._clientDiagnosticsTablesReady = true;
+        return {state, version};
+      }
+      const rows = Array.isArray(state.clientDiagnostics) ? state.clientDiagnostics : [];
+      await this._pool.query(
+        `INSERT INTO ${this._qualifiedClientDiagnosticsBackupsTableName} (id, backup_data)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (id) DO NOTHING`,
+        [`pre-migration-${MARKER}`, JSON.stringify({savedAt: nowIso(), clientDiagnostics: rows})],
+      );
+      let inserted = 0;
+      for (const entry of rows) {
+        const id = String(entry?.id || "").trim();
+        if (!id) continue;
+        await this._pool.query(
+          `INSERT INTO ${this._qualifiedClientDiagnosticsTableName}
+             (id, user_id, type, created_at, row_data)
+           VALUES ($1, $2, $3, $4, $5::jsonb)
+           ON CONFLICT DO NOTHING`,
+          [
+            id,
+            String(entry.userId || "").trim(),
+            String(entry.type || "client_event").trim() || "client_event",
+            String(entry.createdAt || "").trim(),
+            JSON.stringify(entry),
+          ],
+        );
+        inserted += 1;
+      }
+      const nextState = {
+        ...state,
+        clientDiagnostics: [],
+        migrationStatus: {
+          ...(state.migrationStatus || {}),
+          clientDiagnosticsToTables: MARKER,
+        },
+      };
+      const updateResult = await this._pool.query(
+        `UPDATE ${this._qualifiedTableName}
+            SET data = $2::jsonb,
+                updated_at = NOW(),
+                version = version + 1
+          WHERE id = $1
+          RETURNING version`,
+        [this._rowId, JSON.stringify(nextState)],
+      );
+      this._cachedState = normalizeDbState(nextState);
+      await this._persistSnapshotCache(this._cachedState);
+      this._clientDiagnosticsTablesReady = true;
+      console.log(
+        "[backend] client diagnostics migrated to tables",
+        JSON.stringify({rows: inserted}),
+      );
+      return {
+        state: this._cachedState,
+        version: PostgresStore._normalizeStateVersion(
+          updateResult?.rows?.[0]?.version,
+        ),
+      };
+    } catch (error) {
+      console.warn(
+        "[backend] client diagnostics migration failed — blob stays source of truth",
+        JSON.stringify({message: error?.message || String(error)}),
+      );
+      return {state, version};
+    }
+  }
+
+  async createClientDiagnostic({
+    userId,
+    sessionId = null,
+    type,
+    message = "",
+    platform = null,
+    appVersion = null,
+    context = {},
+    error = null,
+    stackTrace = null,
+  }) {
+    await this.initialize();
+    if (!this._clientDiagnosticsTablesReady) {
+      return super.createClientDiagnostic({
+        userId,
+        sessionId,
+        type,
+        message,
+        platform,
+        appVersion,
+        context,
+        error,
+        stackTrace,
+      });
+    }
+    const event = {
+      id: `diag_${crypto.randomUUID()}`,
+      userId: normalizeNullableString(userId),
+      sessionId: normalizeNullableString(sessionId),
+      type: normalizeNullableString(type) || "client_event",
+      message: normalizeNullableString(message) || "",
+      platform,
+      appVersion,
+      context: context && typeof context === "object" ? context : {},
+      error,
+      stackTrace,
+      createdAt: nowIso(),
+    };
+    await this._pool.query(
+      `INSERT INTO ${this._qualifiedClientDiagnosticsTableName}
+         (id, user_id, type, created_at, row_data)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [event.id, event.userId || "", event.type, event.createdAt, JSON.stringify(event)],
+    );
+    // Тот же ring-buffer cap, что и в FileStore (slice(-500)) — точечный
+    // DELETE вместо чтения всего блоба ради обрезки массива.
+    await this._pool.query(
+      `DELETE FROM ${this._qualifiedClientDiagnosticsTableName}
+        WHERE id NOT IN (
+          SELECT id FROM ${this._qualifiedClientDiagnosticsTableName}
+          ORDER BY created_at DESC, id DESC
+          LIMIT 500
+        )`,
+    );
+    return structuredClone(event);
+  }
+
+  async listClientDiagnostics({type = null, userId = null, limit = 100} = {}) {
+    await this.initialize();
+    if (!this._clientDiagnosticsTablesReady) {
+      return super.listClientDiagnostics({type, userId, limit});
+    }
+    await this._awaitReadConsistency();
+    const normalizedType = normalizeNullableString(type);
+    const normalizedUserId = normalizeNullableString(userId);
+    const cappedLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+    const params = [];
+    let where = "";
+    if (normalizedType) {
+      params.push(normalizedType);
+      where += ` AND type = $${params.length}`;
+    }
+    if (normalizedUserId) {
+      params.push(normalizedUserId);
+      where += ` AND user_id = $${params.length}`;
+    }
+    params.push(cappedLimit);
+    const result = await this._pool.query(
+      `SELECT row_data
+         FROM ${this._qualifiedClientDiagnosticsTableName}
+        WHERE TRUE ${where}
+        ORDER BY created_at DESC, id DESC
+        LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows
+      .map((row) => {
+        const raw = row.row_data;
+        return typeof raw === "string" ? JSON.parse(raw) : raw;
+      })
+      .filter(Boolean);
   }
 
   async _drainTransientNotificationCollections(data) {
@@ -5286,9 +6106,20 @@ class PostgresStore extends FileStore {
       }
       data = await this._drainTransientNotificationCollections(data);
       data = await this._drainTreeChangeCollections(data);
+      data = await this._drainDeletedPersonsCollection(data);
       const nextUsersHash = computeProjectionHash(data?.users);
       const nextSessionsHash = computeProjectionHash(data?.sessions);
       const nextChatsHash = computeProjectionHash(data?.chats);
+      // SPEED-15: с маркером sessionsOutOfBlob сессии в JSONB-колонке не
+      // нужны вообще — _read() на КАЖДОМ пути (попадание кэша и промах)
+      // подменяет data.sessions содержимым проекционной таблицы, так что
+      // то, что лежит в самой колонке, никогда не читается назад. Хэш и
+      // `_replaceProjectedSessions` ниже используют РЕАЛЬНЫЙ data.sessions
+      // (до подмены) — в блоб уходит только урезанная копия.
+      const blobPayload =
+        this._sessionsOutOfBlob && data && typeof data === "object"
+          ? {...data, sessions: []}
+          : data;
       const upsertResult = await this._pool.query(
         `
           INSERT INTO ${this._qualifiedTableName} (id, data, updated_at, version)
@@ -5299,7 +6130,7 @@ class PostgresStore extends FileStore {
               version = ${this._qualifiedTableName}.version + 1
           RETURNING version
         `,
-        [this._rowId, JSON.stringify(data)],
+        [this._rowId, JSON.stringify(blobPayload)],
       );
       const writtenVersion = PostgresStore._normalizeStateVersion(
         upsertResult?.rows?.[0]?.version,
