@@ -2184,3 +2184,240 @@ pg-mem — см. «Метод» выше, — но покрыт fake-pool query-
 
 Остаток — `JSON.stringify` ~2 МБ + `UPDATE` JSONB/TOAST + хуки; дальше только
 вынос persons из блоба в таблицу (миграция, отдельное решение).
+
+## SPEED-15 — уменьшить блоб без выноса персон (07.09.2026)
+
+После SPEED-14 остаток пути записи (250–500 мс) — в основном размер блоба:
+каждая запись всё ещё сериализует и пишет ~1,6 МБ JSONB целиком. Persons
+выносить рано (95+ мест чтения, отдельная миграция калибра SPEED-6/7), но
+часть блоба — коллекции, которые читает только ОДИН узкий экран
+(«Корзина», admin-диагностика) или вообще ничем не читаются на
+PostgresStore (`sessions` — проекционная таблица SPEED-6/8a уже
+единственный источник на чтение). Это ровно профиль SPEED-8b
+(`treeChangeRecords`/`hardDeleteAudit`) — тот же рецепт: бэкап-таблица,
+маркер `migrationStatus.<x>ToTables`, встраивание в цепочку `_bootstrap()`
+(контракт `{state, version}` SPEED-9 C-boot).
+
+### Таблица: коллекция → судьба
+
+| коллекция | было КБ | стало КБ | куда ушло | маркер | откат |
+|---|---|---|---|---|---|
+| `deletedPersons` | 245,1 | 0 | `<t>_deleted_persons` + `<t>_deleted_persons_backups` | `deletedPersonsToTables` | `scripts/restore-deleted-persons-to-blob.js` |
+| `clientDiagnostics` | 33,6 | 0 | `<t>_client_diagnostics` + `<t>_client_diagnostics_backups` | `clientDiagnosticsToTables` | `scripts/restore-client-diagnostics-to-blob.js` |
+| `sessions` | 59,8 | 0 | уже была в `<t>_auth_sessions` (SPEED-6/8a) — только перестали ДУБЛИРОВАТЬ в JSONB | `sessionsOutOfBlob` | `scripts/restore-sessions-to-blob.js` |
+| `circleMembers` | 223,2 | без изменений | — | — | анализ ниже, без реализации |
+| зеркало графа (graphPersons+graphRelations+branchPersonViews) | 261,0 | без изменений | — | — | анализ ниже, без изменений |
+
+Итог по блобу (копия прод-снимка, 1620,4 КБ → 1282,0 КБ): **−338,4 КБ
+(−20,9%)** без единой строки миграции persons.
+
+### 1. `deletedPersons` (корзина) → таблица
+
+Все обращения — `deletePerson` (пишет снимок), `listDeletedPersonsForUser`/
+`listDeletedPersonsForSemya` (экран «Корзина»), `restorePerson`,
+`hardDeletePerson`; ни одного чтения внутри `_mutate`-applyFn (все пять
+методов и в FileStore — самостоятельный `_read()`+`_write()`, не через
+общий `_mutateQueue`). В отличие от `treeChangeRecords` корзина НЕ
+append-only: `restorePerson` мутирует строку (`restoredAt`), `hardDelete
+Person` удаляет её. Поэтому решение — гибрид:
+
+- `deletePerson` НЕ переопределён — FileStore-логика как была (снимок
+  персоны+связей, `db.deletedPersons.push`, `_read()`+`_write()`); новая
+  запись рождается в блобе и на `_write()` дренируется в таблицу тем же
+  паттерном, что и `treeChangeRecords` (`_drainDeletedPersonsCollection`).
+- `listDeletedPersonsForUser`/`listDeletedPersonsForSemya`/`restorePerson`/
+  `hardDeletePerson` полностью переопределены на SQL — после дренажа блоб-
+  массив пуст, делегировать в старую логику по нему уже нельзя.
+  `restorePerson` по-прежнему делает `_read()`+`_write()` для персоны/связей/
+  членства дерева (это блобные поля, их выносить не в периметре SPEED-15),
+  но саму строку корзины помечает восстановленной через операционную
+  очередь (`_queueDeletedPersonOp`/`_applyDeletedPersonOp`), применяемую
+  `_write()` — тот же механизм, что у хуков merge/pseudonymize/strip/
+  pruneAudit в SPEED-8b. `hardDeletePerson` — точечный `DELETE`, вообще без
+  `_write()` блоба (раньше — полный `_read()`+`_write()` ради удаления
+  одной корзинной строки).
+- Найденный на этапе тестов баг (исправлен до мерджа): `_applyDeletedPersonOp`
+  сначала обновлял только колонки `restored_at`/`restored_by_user_id`, не
+  трогая JSONB `row_data` — повторный `restorePerson` того же id не видел
+  `ALREADY_RESTORED`, потому что `restorePerson`/`hardDeletePerson` читают
+  ТОЛЬКО `row_data` (то, что уходит клиенту), а не отдельные колонки (те
+  только для `WHERE restored_at = ''`). Починено — операция теперь
+  синхронизирует оба представления одним `UPDATE`.
+
+### 2. `clientDiagnostics` → таблица
+
+Проще: append-only ring-buffer на 500 записей (`slice(-500)` в
+`createClientDiagnostic`), читается только `GET /v1/admin/client-
+diagnostics`; ни одного другого писателя/читателя в `backend/src`. Полностью
+переезжает на SQL после миграции (никакой очереди «дренаж новых записей» не
+нужно — `createClientDiagnostic` больше не трогает блоб вообще, значит блоб-
+массив после миграции никто не пополняет). Cap на 500 — точечный `DELETE ...
+WHERE id NOT IN (SELECT id ... ORDER BY created_at DESC LIMIT 500)` вместо
+чтения и урезания всего блоба.
+
+### 3. `sessions` — аудит и вывод: да, безопасно, с одной обязательной правкой
+
+Источник истины на ЧТЕНИЕ — уже таблица `<t>_auth_sessions` (SPEED-6/8a):
+`_read()` подменяет `data.sessions` её содержимым на ОБОИХ путях (попадание
+кэша и промах), а `createSession`/`touchSession`/`deleteSession`/
+`deleteSessionsForUser` на PostgresStore и так работают напрямую с таблицей,
+блоб не трогая. Единственный путь, который трактовал блоб как источник —
+`_hydrateAuthProjectionTablesFromStateRow`, и вызывается он НЕ разово при
+миграции, а на **КАЖДОМ старте процесса** (часть `_bootstrap()`, задача —
+подстраховаться на случай рассинхрона). Без гейта обнулённый после миграции
+блоб заставил бы эту функцию перестроить таблицу из пустого места на первом
+же рестарте/деплое — **разлогинило бы всех пользователей**. Это и есть
+единственный путь, читающий `db.sessions` из блоба на PostgresStore, и он
+описан здесь именно потому, что путь не удаляется, а получает гейт.
+
+Сделано с маркером `sessionsOutOfBlob`:
+- `_hydrateAuthProjectionTablesFromStateRow` проверяет
+  `migrationStatus.sessionsOutOfBlob` (из уже прочитанного SPEED-9 C-boot
+  снимка либо, на деградированном пути без cursor, дешёвым scalar-запросом
+  `data->'migrationStatus'->>'sessionsOutOfBlob'`) и при стоящем маркере
+  пропускает `DELETE FROM auth_sessions` + перестройку из блоба — таблица
+  остаётся источником истины без циклической подстраховки. Ветка для
+  `users` (которые остаются в блобе) не тронута.
+- `_migrateSessionsOutOfBlob` — бэкап текущего `sessions` в
+  `<t>_sessions_backups` (только для аудита — таблица `auth_sessions` уже
+  актуальна на момент миграции, восстанавливаться неоткуда, кроме как из
+  самой таблицы, см. скрипт отката), `sessions: []` + маркер в блоб.
+- `_write()` перестаёт встраивать `sessions` в JSONB-колонку при стоящем
+  маркере (`blobPayload = {...data, sessions: []}`), но хэш-сверка и
+  `_replaceProjectedSessions` по-прежнему используют РЕАЛЬНЫЙ
+  `data.sessions` (до подмены) — путь FileStore.deleteUser (унаследован,
+  мутирует `db.sessions` прямо в блобе внутри своего `_read()`+`_write()`)
+  продолжает корректно чистить проекцию, просто больше не тащит содержимое
+  обратно в блоб.
+
+Тест `postgres-sessions-out-of-blob.test.js` содержит контрольный
+эксперимент: та же функция БЕЗ гейта на уже смигрированном состоянии стирает
+таблицу подчистую (0 из 3 сессий) — это и есть инцидент, который сделал бы
+эту миграцию небезопасной без правки `_hydrateAuthProjectionTablesFromStateRow`.
+
+### 4. Зеркало графа и `circleMembers` — анализ, БЕЗ реализации
+
+**Зеркало графа (`graphPersons`+`graphRelations`+`branchPersonViews`,
+16,3% блоба).** `_syncGraphFromLegacy` (вызывается на каждом `_read()`
+промахе/`_write()`, SPEED-9 A — O(N), идемпотентно) действительно
+пересобирает КАНОНИЧЕСКИЕ поля с нуля из `persons`/`relations`/`branches`
+на каждый вызов — в этом смысле похоже на кэш. Но `_syncPersonToGraph`
+показывает, что часть полей — НЕ производная:
+- `graphPerson.version` — монотонный счётчик изменений канонических полей;
+  полный ребилд с нуля обнулил бы историю.
+- `graphPerson.visibility`/`visibilityOverride`, `contactPrivacy`,
+  `isPublic`, `mergedInto`, `hardDeleteScheduledAt` (graph-нативный soft-
+  delete, отдельный от legacy) — независимое состояние, которое explicit
+  устанавливает владелец через graph-API («Phase 3.1: owner override через
+  UI поднимает до owner-only с visibilityOverride=true», код явно
+  запрещает клобберить не-дефолтные значения `??=`).
+- `branchPersonView.label`/`photoOverride` — per-branch редакторские
+  оверрайды (кастомное имя/фото ИМЕННО в этой ветке канваса), не выводятся
+  из `legacyPerson` вообще — их выставляет отдельный путь редактирования
+  вида, не показанный в `_syncPersonToGraph`.
+
+Вывод: это НЕ чистый derived-кэш, а гибрид (производные канонические поля +
+независимое graph-нативное состояние). Убрать из блоба «просто
+пересчитав» нельзя — тихо потеряли бы privacy-оверрайды, per-branch
+подписи/фото и историю версий. Безопасный вынос потребовал бы отдельной
+миграции калибра SPEED-6 (собственные таблицы `graph_persons`/
+`graph_relations`/`branch_person_views` с полным набором независимых
+колонок, не просто «дренаж новых записей») — вне периметра SPEED-15.
+
+**`circleMembers` (13,8% блоба, 679 записей).** Та же картина: часть
+кругов — авто-круги (`ensureAutoCirclesForTree`/`ensureDefaultCirclesForTree`,
+членство целиком выводится из дерева/персон, пересобирается на каждом
+чтении ленты, см. SPEED-8c), а часть — **`custom`/`favorites` круги**, чьё
+членство пользователь выбирает явно через `replaceCircleMembers` (ручной
+эндпоинт: «избранное» либо кастомная подборка родных) — это реальные,
+невыводимые данные, не связанные с структурой дерева. Вынос в таблицу
+технически возможен (679 записей, append-ish, читается только на построение
+ленты/списка кругов), но требует аккуратно различать auto- и custom- строки
+при миграции/чтении — самостоятельная задача, не в периметре SPEED-15 (в
+блобе остаётся без изменений).
+
+### Тесты и идентичность
+
+- `backend/test/postgres-deleted-persons-tables.test.js` (pg-mem, реальный
+  SQL) — миграция/бэкап/идемпотентность, list для пользователя/семьи,
+  restore (`ALREADY_RESTORED`/`HARD_DELETE_ELAPSED`/`FORBIDDEN`/
+  `DELETED_PERSON_NOT_FOUND`), hardDelete (точечный `DELETE`), дренаж новой
+  записи из унаследованного `deletePerson`.
+- `backend/test/postgres-client-diagnostics-tables.test.js` — миграция,
+  создание (блоб не пополняется), ring-buffer cap на 500 (точечный
+  `DELETE`), фильтры/порядок чтения.
+- `backend/test/postgres-sessions-out-of-blob.test.js` — миграция чистит
+  блоб/бэкап/маркер; **критичный** тест — гейт в
+  `_hydrateAuthProjectionTablesFromStateRow` не стирает таблицу (плюс
+  контрольный эксперимент без гейта, показывающий инцидент); деградированный
+  путь без SPEED-9 C-boot cursor тоже уважает маркер; `_write()` больше не
+  встраивает `sessions` в JSONB, проекция синкается верно.
+- `backend/test/postgres-deleted-persons-diagnostics-http.test.js` —
+  HTTP-уровень (`createApp`) поверх PostgresStore+pg-mem: `/v1/me/deleted-
+  persons`, `/v1/semya/:id/deleted-persons`, `/v1/deleted-persons/:id/
+  restore`, `/v1/deleted-persons/:id` (hard-purge), `/v1/diagnostics/
+  client-events` + `/v1/admin/client-diagnostics` — тот же контракт
+  (статусы/тела), что на FileStore (`test/deleted-persons-routes.test.js`).
+  В отличие от SPEED-11 (см. её оговорку про `findTree`/`LATERAL
+  jsonb_array_elements` на pg-mem) эти четыре маршрута не проходят через
+  `requireTreeAccess`, поэтому полноценный HTTP end-to-end здесь работает.
+- `npm --prefix backend test`: **784/784** (было 763 до SPEED-15,
+  763+8+4+4+5=784), ~20–26 с.
+
+### Замер: блоб и `_write()` до/после (копия прод-снимка, 1620,4 КБ)
+
+| метрика | до | после |
+|---|---|---|
+| блоб (JSONB-колонка) | 1620,4 КБ | **1282,0 КБ** (−20,9%) |
+| `JSON.stringify` всего state | 3,13 мс | 2,53 мс (−19,1%) |
+| `JSON.parse` всего state | 2,67 мс | 2,10 мс (−21,1%) |
+| `structuredClone` (кэш-хит `_read()`, SPEED-8a/11 — самый горячий путь) | 4,81 мс | 3,83 мс (−20,3%) |
+| `FileStore._write()` (реальный `fs.writeFile`, 100 повторов) | 16,96 мс | 14,37 мс (−15,3%) |
+| `PostgresStore._write()` (pg-mem, 150 повторов) | 40,17 мс | 39,64 мс (не изменилось) |
+
+Оговорка (как и в SPEED-13/14): pg-mem не моделирует сетевой round-trip и
+TOAST/сжатие реального Postgres — его `_write()` держится на накладных
+расходах планировщика запросов САМОГО pg-mem, которые НЕ зависят от размера
+полезной нагрузки, поэтому разница в 338 КБ там не видна. `FileStore`
+(реальная запись на диск) и голые `JSON.stringify`/`JSON.parse`/
+`structuredClone` — честные прокси CPU/IO-стоимости, зависящей от размера, и
+все показывают ~15–21% улучшение пропорционально сокращению блоба. На
+проде (реальный Postgres по сети) ожидаемый эффект — ближе к FileStore-
+цифрам, чем к pg-mem: экономия на JSONB-сериализации/передаче/TOAST на
+каждую из сотен записей в день, а не разовая.
+
+### Риски и план деплоя
+
+Это миграция прод-БД — слияние в main **только по явному «го» владельца**,
+как и SPEED-6/7/8b.
+
+1. **Пред-деплойный дамп**: свежий `pg_dump` в
+   `/opt/rodnya/backups/manual/pre-speed15-<timestamp>.dump` (как перед
+   SPEED-8b).
+2. **Репетиция на копии**: восстановить дамп на scratch-БД, поднять backend
+   с этим кодом, убедиться, что миграция прошла (маркеры в
+   `migrationStatus`, размер блоба упал), смоук `/v1/me/deleted-persons`,
+   `/v1/diagnostics/client-events`, логин/сессии.
+3. **Деплой**: как обычно (push в main → `backend-deploy.yml`); миграции
+   встроены в `_bootstrap()`, срабатывают на первом старте нового кода.
+4. **Порядок миграций внутри буста не критичен для отката** — три новых шага
+   (`_migrateDeletedPersonsToTables`, `_migrateClientDiagnosticsToTables`,
+   `_migrateSessionsOutOfBlob`) друг от друга не зависят, каждый — свой
+   маркер, свой бэкап.
+5. **Самый рискованный шаг — sessions**: если после деплоя увидим массовый
+   логаут при следующем рестарте/деплое — это ЗНАЧИТ, что гейт в
+   `_hydrateAuthProjectionTablesFromStateRow` не сработал (баг, не должен
+   произойти при зелёных тестах, но это единственный шаг SPEED-15, ошибка в
+   котором заметна пользователям сразу и массово, а не только на экране
+   «Корзина»/admin). Наблюдать логи `[backend] sessions migrated out of
+   blob` (разово) и убедиться, что `[backend] postgres-store bootstrap
+   snapshot read failed` не появляется на КАЖДОМ следующем рестарте.
+6. **Откат** (бэкенд остановлен, по порядку от последнего маркера к
+   первому — независимости достаточно, но откатывать по одному проще
+   диагностировать):
+   `node scripts/restore-sessions-to-blob.js` →
+   `node scripts/restore-client-diagnostics-to-blob.js` →
+   `node scripts/restore-deleted-persons-to-blob.js` (у каждого `--dry-run`
+   для проверки объёмов перед реальным прогоном).
+7. **Наблюдение** ~неделя, как SPEED-6/7/8b, затем можно удалить эту секцию
+   из «текущих» в постоянную историю (как уже сделано с SPEED-6/7).
