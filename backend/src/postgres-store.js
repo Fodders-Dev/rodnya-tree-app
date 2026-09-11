@@ -5912,7 +5912,164 @@ class PostgresStore extends FileStore {
         Number(summary.logRetention.pushDeliveries || 0) +
         counts.pushDeliveries;
     }
+
+    // SPEED-16: super() above swept `db.deletedPersons` — but SPEED-15 moved
+    // that collection out of the blob into `_deletedPersonsTable`, and every
+    // `_write` drains the array back to `[]` (`_drainDeletedPersonsCollection`).
+    // So on a migrated store the array-based sweep always finds zero rows and
+    // the corbeille's 30-day "удалил → удалено" contract (DECISIONS.md
+    // 2026-05-18) silently stopped being enforced the moment a row moved to
+    // the table. Mirror the identical hybrid-eligibility formula (explicit
+    // hardDeleteScheduledAt wins, else deletedAt+retention fallback, floored
+    // by earliestHardDelete, restoredAt rows excluded) against the table
+    // instead, sharing whatever's left of maxPerRun after the graph/branch/
+    // identity sweep above. Runs OUTSIDE `_mutate` (like the notifications
+    // sweep just above) — it's plain SQL against a dedicated table, not a
+    // blob-wide read-modify-write, so it can't race the `_mutate` queue.
+    // Before the table exists (migration not yet run) this stays a no-op —
+    // super()'s array-based sweep already handles that case correctly.
+    if (this._deletedPersonsTablesReady) {
+      const GRAPH_SWEEP_KEYS = [
+        "graphPersons",
+        "graphRelations",
+        "branches",
+        "personIdentities",
+        "branchPersonViews",
+        "deletedPersons",
+        "deletedPosts",
+      ];
+      const graphDeletedSoFar = GRAPH_SWEEP_KEYS.reduce(
+        (sum, key) => sum + (Number(summary.deleted?.[key]) || 0),
+        0,
+      );
+      // Mirror FileStore's own default-parameter semantics (undefined/null
+      // → default; an explicit 0 is honoured, not coerced back to default).
+      const effectiveMaxPerRun =
+        options.maxPerRun === undefined || options.maxPerRun === null
+          ? 10_000
+          : Number(options.maxPerRun);
+      const effectiveRetentionDays =
+        options.retentionDays === undefined || options.retentionDays === null
+          ? 30
+          : Number(options.retentionDays);
+      const remainingBudget = Math.max(
+        0,
+        Math.floor(effectiveMaxPerRun) - graphDeletedSoFar,
+      );
+      const tableSweep = await this._sweepDeletedPersonsHardDeleteTable({
+        startedAt,
+        nowTs,
+        retentionDays: effectiveRetentionDays,
+        // Reuse the SAME runId super() already settled on (generated inside
+        // FileStore when the caller didn't pass one) so both halves of one
+        // hard-delete run share a single audit runId.
+        runId: summary.runId,
+        dryRun,
+        budget: remainingBudget,
+      });
+      if (summary.deleted) {
+        summary.deleted.deletedPersons =
+          Number(summary.deleted.deletedPersons || 0) + tableSweep.deletedCount;
+      }
+      if (tableSweep.sampleIds.length) {
+        const existingSamples = Array.isArray(summary.sampleIds?.deletedPerson)
+          ? summary.sampleIds.deletedPerson
+          : [];
+        summary.sampleIds = summary.sampleIds || {};
+        summary.sampleIds.deletedPerson = [
+          ...existingSamples,
+          ...tableSweep.sampleIds,
+        ].slice(0, 5);
+      }
+      // Re-derive capHit over the COMBINED total (graph sweep + table sweep)
+      // — a run that exhausts the shared budget entirely in the table sweep
+      // must still surface capHit so the next scheduled run knows to keep
+      // going, same signal super() emits for its own collections.
+      const combinedTotal = graphDeletedSoFar + tableSweep.deletedCount;
+      summary.capHit =
+        effectiveMaxPerRun > 0 && combinedTotal >= Math.floor(effectiveMaxPerRun);
+    }
     return summary;
+  }
+
+  // SPEED-16: eligibility mirror of FileStore.hardDeleteExpired's deletedPersons
+  // block, against `_deletedPersonsTable` instead of `db.deletedPersons`. ISO
+  // timestamp columns compare correctly lexicographically (all produced via
+  // `.toISOString()` — fixed-width, UTC, zero-padded), same idiom already used
+  // by the audit self-prune and the notifications sweep above.
+  async _sweepDeletedPersonsHardDeleteTable({
+    startedAt,
+    nowTs,
+    retentionDays,
+    runId,
+    dryRun,
+    budget,
+  }) {
+    if (!(budget > 0)) {
+      return {deletedCount: 0, sampleIds: []};
+    }
+    const nowIso = startedAt.toISOString();
+    const retentionMs = Math.max(0, Number(retentionDays) || 0) * 86_400_000;
+    const fallbackCutoffIso = new Date(nowTs - retentionMs).toISOString();
+    // restored_at = '' — excludes rows a user pulled back out of the trash.
+    // hard_delete_scheduled_at wins when set (Path A); otherwise fall back to
+    // deleted_at + retention (Path B, same as isEligible() in FileStore).
+    // earliest_hard_delete is the floor — never purge before it, guards
+    // against a misconfigured/short retention env var.
+    const eligibleWhere = `
+        restored_at = ''
+        AND deleted_at <> ''
+        AND (
+          (hard_delete_scheduled_at <> '' AND hard_delete_scheduled_at < $1)
+          OR (hard_delete_scheduled_at = '' AND deleted_at < $2)
+        )
+        AND (earliest_hard_delete = '' OR earliest_hard_delete <= $1)
+    `;
+    // Select the budget-capped candidate set first, then delete row-by-row.
+    // NOT `DELETE ... WHERE id IN (SELECT ... LIMIT $n)`: pg-mem silently
+    // drops the LIMIT once it's inside an IN-subquery and deletes every
+    // eligible row regardless of budget (verified against pg-mem directly —
+    // plain `SELECT ... LIMIT` is honoured, the nested form is not), which
+    // would blow the maxPerRun budget on prod's real Postgres semantics vs.
+    // what the pg-mem test suite could ever catch. The same select-then-
+    // delete-by-id shape is already used a few dozen lines up for the
+    // pushDeliveries overflow cap.
+    const candidates = await this._pool.query(
+      `SELECT id, deleted_at, hard_delete_scheduled_at
+         FROM ${this._qualifiedDeletedPersonsTableName}
+        WHERE ${eligibleWhere}
+        ORDER BY deleted_at ASC, id ASC
+        LIMIT $3`,
+      [nowIso, fallbackCutoffIso, budget],
+    );
+    if (dryRun) {
+      return {
+        deletedCount: candidates.rows.length,
+        sampleIds: candidates.rows.slice(0, 5).map((row) => row.id),
+      };
+    }
+    const auditEntries = [];
+    for (const row of candidates.rows) {
+      await this._pool.query(
+        `DELETE FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
+        [row.id],
+      );
+      auditEntries.push({
+        runId,
+        entityType: "deletedPerson",
+        entityId: row.id,
+        deletedAt: row.deleted_at || null,
+        scheduledAt: row.hard_delete_scheduled_at || null,
+        hardDeletedAt: nowIso,
+      });
+    }
+    if (auditEntries.length) {
+      await this._insertHardDeleteAuditRows(auditEntries);
+    }
+    return {
+      deletedCount: candidates.rows.length,
+      sampleIds: candidates.rows.slice(0, 5).map((row) => row.id),
+    };
   }
 
   async findActiveCall({userId, chatId = null} = {}) {
