@@ -14753,6 +14753,52 @@ class FileStore {
       }
     }
 
+    // SPEED-16: trim graphPerson.legacyPersonIds — drop ids that no
+    // longer exist in db.persons. Mirrors the legacyRelationIds trim
+    // below. `_syncPersonToGraph` only ever PUSHES into this array
+    // (dedup on push, never prunes on delete), so on prod a single
+    // long-lived graphPerson with `userId` set had accumulated 1364
+    // dead legacy ids — 53 KB on one row, none resolving to a live
+    // person, and periodically "resurrected" by smoke traffic
+    // (re-created legacy person under the same identity) only to be
+    // re-tombstoned, which is why the hard-delete job never got a
+    // stable target to sweep it.
+    //
+    // Unlike legacyRelationIds this intentionally does NOT gate
+    // deletedAt/version/updatedAt or any owner-set field (visibility,
+    // visibilityOverride, contactPrivacy, isPublic, mergedInto) — the
+    // identityId-keyed soft-delete/restore loop just above already
+    // owns the lifecycle decision (a graphPerson stays alive as long
+    // as ANY live person still carries its identityId == graphPerson.id,
+    // independent of how many legacy records ever fed it — see the
+    // "20 records on prod" multi-branch identity case). This trim is
+    // pure storage hygiene on the array, nothing else.
+    //
+    // Consumers checked — none depend on a DEAD legacy id surviving:
+    //   - `_buildGraphSyncIndex`'s graphPersonsByLegacyId map (feeds
+    //     `_resolveGraphPersonIdForLegacy` for relation resolution)
+    //     is built at the TOP of THIS SAME pass, before this trim
+    //     runs — every lookup this pass needed already happened
+    //     against the untrimmed array. Trimming now only shapes what
+    //     the NEXT pass's index sees.
+    //   - `findGraphPersonByLegacy`'s legacyPersonIds fallback only
+    //     fires for an id that resolved to a row in db.persons (i.e.
+    //     still live) — a dead id can never reach that branch.
+    //   - `filterLegacyPersonsByGraphVisibility`'s graphPersonsByLegacy
+    //     map (~14109) is only ever queried with ids drawn from the
+    //     (live) `persons` argument it's given.
+    for (const graphPerson of db.graphPersons) {
+      if (!Array.isArray(graphPerson.legacyPersonIds)) {
+        graphPerson.legacyPersonIds = [];
+      }
+      const filtered = graphPerson.legacyPersonIds.filter((pid) =>
+        liveLegacyPersonIds.has(pid),
+      );
+      if (filtered.length !== graphPerson.legacyPersonIds.length) {
+        graphPerson.legacyPersonIds = filtered;
+      }
+    }
+
     // Trim branch.includeRules.manualPersonIds: if a legacy person
     // got deleted, its identity is no longer on this branch and the
     // inclusion list shouldn't claim it. Mirrors the per-branch

@@ -1134,3 +1134,224 @@ test(
     assert.equal(result, null);
   },
 );
+
+// ── SPEED-16: trim graphPerson.legacyPersonIds ──────────────────────
+// `_syncPersonToGraph` only ever pushes into legacyPersonIds, never
+// prunes on delete — on prod one graphPerson with `userId` set had
+// accumulated 1364 dead ids (53 KB, none live). Mirrors the existing
+// legacyRelationIds trim above but must NOT touch deletedAt/version/
+// updatedAt/owner-set fields — those stay owned by the identityId-
+// keyed soft-delete/restore loop.
+
+test(
+  "_syncGraphFromLegacy trims a dead legacyPersonId while a multi-branch identity keeps the surviving one",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [
+      {id: "t1", creatorId: "u1", name: "T1"},
+      {id: "t2", creatorId: "u1", name: "T2"},
+    ];
+    db.persons = [
+      {id: "p-mom-on-t1", treeId: "t1", identityId: "id-mom", name: "Мама", creatorId: "u1"},
+      {id: "p-mom-on-t2", treeId: "t2", identityId: "id-mom", name: "Мама", creatorId: "u1"},
+    ];
+    db.personIdentities = [
+      {id: "id-mom", personIds: ["p-mom-on-t1", "p-mom-on-t2"]},
+    ];
+
+    store._syncGraphFromLegacy(db);
+    assert.deepEqual(
+      [...db.graphPersons[0].legacyPersonIds].sort(),
+      ["p-mom-on-t1", "p-mom-on-t2"],
+    );
+
+    // t1's legacy record is hard-deleted outright (not soft-deleted —
+    // simulates the hard-delete job / a legacy path that removes the
+    // row from db.persons directly), t2's survives. The identity is
+    // still live via t2, so the graphPerson itself must stay alive —
+    // only the dead id drops out of the array.
+    db.persons = db.persons.filter((p) => p.id !== "p-mom-on-t1");
+    store._syncGraphFromLegacy(db);
+
+    assert.equal(db.graphPersons.length, 1);
+    const [graphPerson] = db.graphPersons;
+    assert.equal(graphPerson.deletedAt, null, "identity still live via t2 — must not be tombstoned");
+    assert.deepEqual(graphPerson.legacyPersonIds, ["p-mom-on-t2"]);
+
+    // t2's branch view / include-rule are untouched by the trim.
+    assert.equal(db.branchPersonViews.length, 1);
+    assert.equal(db.branchPersonViews[0].branchId, "t2");
+  },
+);
+
+test(
+  "_syncGraphFromLegacy empties legacyPersonIds when the last legacy record disappears (goes tombstone in lockstep)",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {id: "p1", treeId: "t1", identityId: "id1", name: "Т", creatorId: "u1"},
+    ];
+    db.personIdentities = [{id: "id1", personIds: ["p1"]}];
+
+    store._syncGraphFromLegacy(db);
+    assert.deepEqual(db.graphPersons[0].legacyPersonIds, ["p1"]);
+
+    db.persons = [];
+    store._syncGraphFromLegacy(db);
+
+    assert.deepEqual(db.graphPersons[0].legacyPersonIds, []);
+    assert.notEqual(db.graphPersons[0].deletedAt, null);
+  },
+);
+
+test(
+  "_syncGraphFromLegacy legacyPersonIds trim is idempotent — no growth, no version/updatedAt churn on repeat passes",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [
+      {id: "t1", creatorId: "u1", name: "T1"},
+      {id: "t2", creatorId: "u1", name: "T2"},
+    ];
+    db.persons = [
+      {id: "p-a-t1", treeId: "t1", identityId: "id-a", name: "А", creatorId: "u1"},
+      {id: "p-a-t2", treeId: "t2", identityId: "id-a", name: "А", creatorId: "u1"},
+    ];
+    db.personIdentities = [{id: "id-a", personIds: ["p-a-t1", "p-a-t2"]}];
+
+    store._syncGraphFromLegacy(db);
+    // Settle into a stable state first (one dead id trimmed once).
+    db.persons = db.persons.filter((p) => p.id !== "p-a-t1");
+    store._syncGraphFromLegacy(db);
+
+    const snapshotAfterTrim = structuredClone(db.graphPersons[0]);
+    assert.deepEqual(snapshotAfterTrim.legacyPersonIds, ["p-a-t2"]);
+
+    // Two more passes with nothing new to trim — must not mutate
+    // version/updatedAt/legacyPersonIds further (own array reference
+    // is allowed to change; content and everything else must not).
+    store._syncGraphFromLegacy(db);
+    store._syncGraphFromLegacy(db);
+
+    assert.deepEqual(db.graphPersons[0], snapshotAfterTrim);
+  },
+);
+
+test(
+  "_syncGraphFromLegacy: restorePerson's persons-array reinsertion refills legacyPersonIds and resurrects the tombstone",
+  () => {
+    // restorePerson (postgres-store.js / FileStore) pushes the
+    // deletedPersons snapshot back into db.persons then relies on the
+    // regular _read()/_write() sync pass to bring the graph back in
+    // line — exercised here directly against the snapshot it would
+    // push, mirroring the existing "resurrects a soft-deleted
+    // graphPerson" test above but asserting legacyPersonIds
+    // specifically (SPEED-16 regression: trimming must not prevent a
+    // restored id from being re-added).
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {id: "p1", treeId: "t1", identityId: "id1", name: "Т", creatorId: "u1"},
+    ];
+    db.personIdentities = [{id: "id1", personIds: ["p1"]}];
+
+    store._syncGraphFromLegacy(db);
+
+    // Deleted — trimmed to [] and tombstoned.
+    db.persons = [];
+    store._syncGraphFromLegacy(db);
+    assert.deepEqual(db.graphPersons[0].legacyPersonIds, []);
+    assert.notEqual(db.graphPersons[0].deletedAt, null);
+
+    // restorePerson: snapshot goes back into db.persons (same id).
+    db.persons = [
+      {id: "p1", treeId: "t1", identityId: "id1", name: "Т", creatorId: "u1"},
+    ];
+    db.personIdentities = [{id: "id1", personIds: ["p1"]}];
+    store._syncGraphFromLegacy(db);
+
+    assert.equal(db.graphPersons[0].deletedAt, null);
+    assert.deepEqual(db.graphPersons[0].legacyPersonIds, ["p1"]);
+  },
+);
+
+test(
+  "_syncGraphFromLegacy: a relation still pointing at an already-trimmed dead legacy person doesn't throw",
+  () => {
+    // Realistic day-N-after-the-fix state: person A was deleted and
+    // its graphPerson tombstoned + legacyPersonIds already trimmed to
+    // [] by an earlier pass (still inside the 30-day hard-delete
+    // window — not purged from db.graphPersons yet). db.relations
+    // still carries a STALE edge referencing person A's legacy id —
+    // inconsistent leftover data (e.g. a path that removes a person
+    // without cleaning up its relations). `_resolveGraphPersonIdForLegacy`
+    // must resolve this to null (not found in db.persons, not found in
+    // any graphPerson.legacyPersonIds since it was already trimmed
+    // away) and `_syncRelationToGraph` must skip it gracefully instead
+    // of throwing or fabricating a half-formed graphRelation.
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {id: "person-b", treeId: "t1", identityId: "id-b", name: "Б", creatorId: "u1"},
+    ];
+    db.personIdentities = [{id: "id-b", personIds: ["person-b"]}];
+    db.graphPersons = [
+      {
+        id: "id-a",
+        createdBy: "u1",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+        version: 1,
+        deletedAt: "2026-05-01T00:00:00.000Z",
+        hardDeleteScheduledAt: "2026-05-31T00:00:00.000Z",
+        deletedByUserId: "u1",
+        mergedInto: null,
+        userId: null,
+        legacyPersonIds: [], // already trimmed by an earlier pass
+        contactPrivacy: "owner-only",
+        isPublic: false,
+        source: "manual",
+        visibility: "connected-via-blood-graph",
+        visibilityOverride: false,
+        name: "А",
+      },
+    ];
+    db.relations = [
+      {
+        id: "rel-stale",
+        treeId: "t1",
+        person1Id: "person-a", // dead — not in db.persons, not in any legacyPersonIds
+        person2Id: "person-b",
+        relation1to2: "parent",
+        relation2to1: "child",
+      },
+    ];
+
+    assert.doesNotThrow(() => store._syncGraphFromLegacy(db));
+
+    // Half a dangling edge resolves to nothing — no graphRelation
+    // fabricated from it.
+    assert.equal(db.graphRelations.length, 0);
+    // The tombstone is left exactly as it was (still not live,
+    // legacyPersonIds still empty, no version/updatedAt churn).
+    const tombstone = db.graphPersons.find((g) => g.id === "id-a");
+    assert.equal(tombstone.deletedAt, "2026-05-01T00:00:00.000Z");
+    assert.equal(tombstone.version, 1);
+    assert.deepEqual(tombstone.legacyPersonIds, []);
+    // The live side of the graph is unaffected.
+    const live = db.graphPersons.find((g) => g.id === "id-b");
+    assert.equal(live.deletedAt, null);
+
+    // Idempotent — a second pass over this same inconsistent state
+    // changes nothing further.
+    const before = structuredClone(db);
+    store._syncGraphFromLegacy(db);
+    assert.deepEqual(db.graphRelations, before.graphRelations);
+    assert.deepEqual(db.graphPersons, before.graphPersons);
+  },
+);

@@ -415,6 +415,29 @@ function referenceSyncGraphFromLegacy(db) {
     }
   }
 
+  // SPEED-16 (11.09.2026): trims graphPerson.legacyPersonIds — kept in
+  // lockstep with the real store.js algorithm (this reference exists
+  // to prove the indexed rewrite doesn't ACCIDENTALLY diverge from the
+  // naive algorithm; it isn't meant to freeze store.js's INTENDED
+  // behavior in amber, same reasoning that already applies to the
+  // legacyRelationIds trim below). Without this, "identity-ghost"
+  // — this fixture's already-hard-deleted "p-ghost" legacy id,
+  // deliberately kept ONLY via legacyPersonIds to exercise
+  // _resolveGraphPersonIdForLegacy's fallback path for rel-ghost —
+  // would diverge: the real algorithm trims it after this pass, this
+  // copy wouldn't.
+  for (const graphPerson of db.graphPersons) {
+    if (!Array.isArray(graphPerson.legacyPersonIds)) {
+      graphPerson.legacyPersonIds = [];
+    }
+    const filteredLegacyPersonIds = graphPerson.legacyPersonIds.filter((pid) =>
+      liveLegacyPersonIds.has(pid),
+    );
+    if (filteredLegacyPersonIds.length !== graphPerson.legacyPersonIds.length) {
+      graphPerson.legacyPersonIds = filteredLegacyPersonIds;
+    }
+  }
+
   const identitiesByBranch = new Map();
   for (const person of persons) {
     const identityId = normalizeNullableString(person.identityId);
