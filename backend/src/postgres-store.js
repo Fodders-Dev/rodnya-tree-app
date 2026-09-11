@@ -5917,7 +5917,7 @@ class PostgresStore extends FileStore {
     // that collection out of the blob into `_deletedPersonsTable`, and every
     // `_write` drains the array back to `[]` (`_drainDeletedPersonsCollection`).
     // So on a migrated store the array-based sweep always finds zero rows and
-    // the corзина's 30-day "удалил → удалено" contract (DECISIONS.md
+    // the corbeille's 30-day "удалил → удалено" contract (DECISIONS.md
     // 2026-05-18) silently stopped being enforced the moment a row moved to
     // the table. Mirror the identical hybrid-eligibility formula (explicit
     // hardDeleteScheduledAt wins, else deletedAt+retention fallback, floored
