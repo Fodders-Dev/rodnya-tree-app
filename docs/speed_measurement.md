@@ -2461,3 +2461,167 @@ tables {"rows":35}`, `sessions migrated out of blob {"sessions":188}`; все
 SPEED-16: GC надгробий старше срока корзины без живых legacy-id + удаление
 отсутствующих id из `legacyPersonIds` (и чтобы смоуки/пробы убирали за
 собой). Вслепую не трогать — см. §4 выше: у графа есть owner-set поля.
+
+## SPEED-16 — надгробия графа и корзина после SPEED-15 (11.09.2026)
+
+### Находка — это НЕ утечка
+
+531 `graphPersons` при 159 живых `persons` (392 надгробия, `deletedAt`) на
+проде 11.09 — скользящее ~30-дневное окно, не растущая утечка. Фоновый джоб
+Phase 3.6 (`hard-delete-job.js` → `store.hardDeleteExpired`) на проде
+включён (`RODNYA_HARD_DELETE_ENABLED=true`, `FIRST_RUN_DRY=false`), ходит
+раз в сутки и реально сметает записи старше `retentionDays` (в день замера —
+9 `graphPersons` + 7 `deletedPersons`). Источник надгробий —
+`tool/prod_route_smoke.mjs --suite all` из `production-watch.yml` (см.
+«Вывод шага 3» ниже), не утечка кода. Тем не менее нашлись две реальные
+проблемы — регрессия SPEED-15 (А) и накопление мусора в самом графе (Б).
+
+### Регрессия А — корзина в таблице больше не сметается
+
+SPEED-15 (`6905e0d3`) вынес `deletedPersons` из блоба в таблицу
+`<table>_deleted_persons`; `_write()` дренирует блобный массив в `[]` на
+КАЖДОЙ записи (`_drainDeletedPersonsCollection`). `hardDeleteExpired`
+(FileStore) по-прежнему сметает `db.deletedPersons` — этот массив на
+PostgresStore после миграции всегда пуст, значит с момента деплоя SPEED-15
+автоматическая чистка корзины через 30 дней (контракт «удалил → удалено»,
+DECISIONS.md 2026-05-18) на проде молча не работала. На 11.09 в таблице
+256 строк, eligible = 0 (джоб успел вычистить всё старое ДО миграции) — но
+через несколько дней первые строки перешагнули бы окно и зависли бы
+навсегда.
+
+**Починка** — `PostgresStore.hardDeleteExpired`: пока
+`!this._deletedPersonsTablesReady`, поведение не меняется (делегирует в
+`super()`, как раньше). Когда таблица готова, ПОСЛЕ `super()` (граф/ветки/
+identities/логи — как раньше, внутри `_mutate`) отдельным SQL сметает саму
+таблицу той же гибридной формулой eligibility, что и блобный путь: explicit
+`hardDeleteScheduledAt` > `deletedAt+retention` fallback, floor —
+`earliestHardDelete`, `restoredAt` — исключение. Бюджет `maxPerRun` —
+ОБЩИЙ с graph/branch/identity сметом выше (то, что уже съел `super()`,
+вычитается из бюджета таблицы); `dryRun` считает без записи; аудит —
+прямой `INSERT` в `<table>_hard_delete_audit` (`entityType: "deletedPerson"`,
+общий `runId` на весь прогон — выбран самый простой путь, т.к. к моменту
+вызова уже известны все поля записи и не нужно гонять через
+`_pendingTreeChangeOps`/дренаж).
+
+**Находка при тестах**: pg-mem тихо игнорирует `LIMIT` внутри
+`DELETE ... WHERE id IN (SELECT ... LIMIT n)` — сметает ВЕСЬ eligible-набор
+вместо budget-капа (проверено напрямую на pg-mem: обычный `SELECT ... LIMIT`
+уважает лимит, вложенный в `IN` — нет). Это снесло бы `maxPerRun` на
+реальном проде, а тест на pg-mem бы не поймал. Использован уже принятый в
+файле паттерн select-then-delete-by-id (как в overflow-капе
+`pushDeliveries` чуть выше по файлу).
+
+### Обрезка Б — мёртвые `legacyPersonIds`
+
+`_syncPersonToGraph` только пушит id в `graphPerson.legacyPersonIds` и
+никогда не чистит на удаление персоны — асимметрично уже существующему
+триму `legacyRelationIds`. На проде одна запись с `userId` накопила 1364
+мёртвых id (53 КБ на одну запись), ни один из которых не существует в
+`persons`; запись периодически «воскрешается» смоуком (новый legacy-person
+под тем же identityId) и снова становится надгrobием — джоб её никогда не
+трогает, т.к. `deletedAt` то и дело сбрасывается.
+
+**Починка** — в конце `_syncGraphFromLegacy` (после цикла по relations)
+`graphPerson.legacyPersonIds` обрезается до живых id, зеркально существующему
+триму `legacyRelationIds`. НЕ трогает `version`/`updatedAt`/`deletedAt` и
+owner-set поля (`visibility`, `visibilityOverride`, `contactPrivacy`,
+`isPublic`, `mergedInto`) — только массив; lifecycle (soft-delete/restore)
+по-прежнему решает identityId-based цикл, идущий чуть выше в том же проходе.
+
+Проверены все потребители `legacyPersonIds`:
+- `_buildGraphSyncIndex`'s `graphPersonsByLegacyId` (кормит
+  `_resolveGraphPersonIdForLegacy`) строится в НАЧАЛЕ прохода, до трима —
+  все резолвы ТЕКУЩЕГО прохода уже отработали на непострезанном массиве;
+  трим влияет только на индекс СЛЕДУЮЩЕГО прохода.
+- `findGraphPersonByLegacy`'s fallback по `legacyPersonIds` срабатывает
+  только для id, который резолвится в `db.persons` (т.е. ещё жив) — мёртвый
+  id туда никогда не долетает.
+- `filterLegacyPersonsByGraphVisibility`'s `graphPersonsByLegacy` map
+  запрашивается только id из (живого) списка `persons`, который ей передан.
+
+### Замер (копия блоба, только счётчики/размеры — без личных данных)
+
+Файл `local_db.json`, указанный в задаче
+(`backend/.scratch/local_db.json`), — локальный снапшот (135 `graphPersons`
+/ 155 `persons`, максимум 3 legacy-id на запись) — на нём обрезать нечего
+(0 мёртвых id), это НЕ повторяет описанный на проде bloat. В том же
+scratchpad нашёлся `prod_blob.json` (тот же каталог, снят раньше) — его
+счётчики (476 `graphPersons` / 155 `persons`, максимум 1273 legacy-id на
+одной записи) почти точно совпадают с прод-фактами брифинга (531/159,
+1364) — использован он. Один проход `_syncGraphFromLegacy` через
+`FileStore` (`backend/.scratch/measure_speed16.js`, gitignored):
+
+| метрика | до | после |
+|---|---|---|
+| `graphPersons` (JSON-размер) | 393,7 КБ | 332,5 КБ (−15,5 %) |
+| макс. `legacyPersonIds` на одной записи | 1273 | 3 |
+| суммарно `legacyPersonIds` по всем записям | 1772 | 156 |
+| обрезано мёртвых id за один проход | — | **1616** |
+
+Оставшийся максимум (3) — многобранчевая identity (~20 таких записей на
+проде, персона в нескольких деревьях), это ожидаемо и не трогается —
+трим убирает только мёртвые id, не топит живые дубли.
+
+### Тесты
+
+- `backend/test/postgres-hard-delete-deleted-persons.test.js` (новый, 5
+  тестов) — сметание/сохранение по окну, `restoredAt`, floor, dry-run без
+  аудита, общий бюджет с graph-сметом, `restorePerson` после сметения →
+  `DELETED_PERSON_NOT_FOUND`, делегация в `super()` до маркера миграции.
+- `backend/test/graph-sync.test.js` (+5 тестов) — обрезка при живом
+  мультибранч-id, обнуление в lockstep с tombstone, идемпотентность
+  (version/updatedAt не растут), `restorePerson` возвращает id и
+  воскрешает надгробие, связь на уже обрезанный мёртвый id не роняет синк.
+- `backend/test/graph-sync-speed9-index.test.js` — эталонная копия
+  (`referenceSyncGraphFromLegacy`) обновлена тем же тримом, иначе
+  fixture `identity-ghost` расходится побайтово с реальным алгоритмом; файл
+  существует, чтобы ловить СЛУЧАЙНОЕ расхождение индексации, а не
+  замораживать поведение SPEED-9-эры навсегда.
+- `npm --prefix backend test`: **794/794** (784 на момент старта ветки +
+  5 + 5), ~21–23 с.
+
+### Вывод шага 3 — источник мусора
+
+`tool/prod_route_smoke.mjs --suite all`, гоняемый `production-watch.yml`
+каждые 6 часов (4 раза/сутки), на каждом прогоне создаёт 3 одноразовых
+person-фикстуры (`POST /v1/trees/:id/persons`: relative/invite/claim) и
+удаляет их в конце (`deletePersonFixtures` → `DELETE …/persons/:id`).
+4×3 = 12 новых надгробий/сутки — за 30-дневное окно retention это до ~360,
+почти точно совпадает с наблюдаемыми 392. Основной аккаунт смоука
+(`RODNYA_SMOKE_EMAIL`) и партнёрский — фиксированные, `ensureAuthenticatedSession`
+сперва логинится и только при 401 регистрирует; `completeProfileViaApi`
+скипается, если профиль уже полный — в steady state ни тот, ни другой не
+пересоздаются, значит «воскрешаемая» запись с `userId` из брифинга — не
+эти два аккаунта. Дерево тоже фиксировано (`RODNYA_SMOKE_FIXTURE_TREE_ID`).
+Claim-flow в браузере только ГРУЗИТ страницу (`page.waitForFunction` на
+уход с `#/login`), реального join через `addCurrentUserToTree` не делает.
+`tool/measure_send_speed.mjs` (ручной запуск, `/measure-send-speed`)
+регистрирует 2 свежих аккаунта на прогон и удаляет их (`DELETE
+/v1/auth/account`) — не вызывает `POST /persons` напрямую, поэтому вклад в
+`graphPersons` менее вероятен и не подтверждён; это ручной, а не cron-путь,
+так что объём в любом случае мал.
+
+**Рекомендация** (файлы workflow/`tool/*.mjs` не менялись — только вывод):
+3 одноразовые person-фикстуры смоука можно сделать идемпотентными —
+искать существующую по стабильному имени/тегу перед созданием и
+переиспользовать (тот же паттерн, что уже применён к call-смоуку,
+«Смоук Тест»/`+smoke2`), вместо create+delete на каждый из 4 прогонов в
+сутки. Это не течёт и не ломает ничего уже сегодня (retention +
+чинённый в SPEED-16 hard-delete справляются), но убрало бы ненужную
+работу самому джобу и держало бы блоб чище без 30-дневного хвоста.
+
+### Риски и откат
+
+- **Шаг А** (сметание таблицы): не миграция схемы — использует таблицу,
+  уже созданную SPEED-15. Откат — ревert коммита кода джоба; данных не
+  теряет (то, что не смело, останется в таблице до следующего деплоя).
+  Первый живой прогон после деплоя увидит уже готовые `eligible`-строки
+  таблицы немедленно (`RODNYA_HARD_DELETE_FIRST_RUN_DRY` на проде уже
+  `false` — джоб живой) — на 11.09 eligible=0, но к моменту деплоя могло
+  набежать несколько строк; проверить лог `[backend] hard_delete_run` на
+  первом прогоне после деплоя (`deleted.deletedPersons`, `sampleIds.
+  deletedPerson`).
+- **Шаг Б** (обрезка `legacyPersonIds`): откатывать нечего — обрезаются
+  ТОЛЬКО мёртвые id (не существующие в `persons`), это мусор без
+  восстановительной ценности; откат = ревert коммита, если найдётся
+  потребитель, полагающийся на мёртвый id (не найден при ревью, см. выше).
