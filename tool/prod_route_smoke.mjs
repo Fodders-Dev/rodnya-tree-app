@@ -30,8 +30,14 @@ function parseArgs(argv) {
     suite: process.env.RODNYA_SMOKE_SUITE || "all",
     autoRegister:
       String(process.env.RODNYA_SMOKE_AUTO_REGISTER || "").trim() === "1",
-    keepFixtures:
-      String(process.env.RODNYA_SMOKE_KEEP_FIXTURES || "").trim() === "1",
+    // Персоны-фикстуры переиспользуются между прогонами (см.
+    // ensurePersonFixture): каждые 6 часов production-watch раньше создавал и
+    // удалял три персоны, оставляя 12 надгробий графа в сутки на 30 дней.
+    // Удаление — только по явному --purge-fixtures / RODNYA_SMOKE_PURGE_FIXTURES=1
+    // (например, при выводе смоук-дерева из эксплуатации). RODNYA_SMOKE_KEEP_FIXTURES
+    // и --keep-fixtures оставлены для совместимости: теперь это поведение по умолчанию.
+    purgeFixtures:
+      String(process.env.RODNYA_SMOKE_PURGE_FIXTURES || "").trim() === "1",
     outputJson:
       process.env.RODNYA_SMOKE_OUTPUT_JSON ||
       path.join(process.cwd(), "output", "playwright", "prod-route-smoke.json"),
@@ -110,7 +116,11 @@ function parseArgs(argv) {
         options.autoRegister = true;
         break;
       case "--keep-fixtures":
-        options.keepFixtures = true;
+        // Совместимость: переиспользуемые фикстуры и так не удаляются.
+        options.purgeFixtures = false;
+        break;
+      case "--purge-fixtures":
+        options.purgeFixtures = true;
         break;
       case "--headed":
         options.headed = true;
@@ -571,12 +581,23 @@ async function ensurePrimaryTree({
   };
 }
 
+// Маркеры фикстур. Переиспользуемая персона узнаётся по ТОЧНОМУ совпадению
+// имени (без метки времени) и описания — чтобы никогда не принять за фикстуру
+// настоящего человека в дереве. Legacy-маркер нужен, чтобы один раз подмести
+// одноразовые фикстуры прошлых прогонов, у которых не сработала очистка.
+const REUSABLE_FIXTURE_SUMMARY =
+  "Постоянная фикстура прод-смоука: переиспользуется каждым прогоном, не удалять.";
+const DISPOSABLE_FIXTURE_SUMMARY = "Auto-created disposable smoke fixture.";
+const DISPOSABLE_FIXTURE_NAME_PATTERN =
+  /^Smoke (Relative|Invite|Claim) \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+
 async function createPersonFixture({
   apiUrl,
   accessToken,
   treeId,
   label,
-  familySummary = "Auto-created disposable smoke fixture.",
+  name = `${label} ${new Date().toISOString().slice(0, 19)}`,
+  familySummary = DISPOSABLE_FIXTURE_SUMMARY,
 }) {
   const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/trees/${encodeURIComponent(treeId)}/persons`,
@@ -588,7 +609,7 @@ async function createPersonFixture({
         accept: "application/json",
       },
       body: JSON.stringify({
-        name: `${label} ${new Date().toISOString().slice(0, 19)}`,
+        name,
         gender: "unknown",
         isAlive: true,
         familySummary,
@@ -625,6 +646,61 @@ async function fetchTreePersons({apiUrl, accessToken, treeId}) {
   }
   const payload = await response.json();
   return Array.isArray(payload?.persons) ? payload.persons : [];
+}
+
+// Найти переиспользуемую фикстуру в уже загруженном списке персон дерева,
+// иначе создать. Совпадение — только по точному имени И маркеру описания.
+async function ensurePersonFixture({apiUrl, accessToken, treeId, label, persons}) {
+  const existing = (persons || []).find(
+    (person) =>
+      String(person?.name || "").trim() === label &&
+      String(person?.familySummary || "").trim() === REUSABLE_FIXTURE_SUMMARY,
+  );
+  if (existing?.id) {
+    return {
+      treeId,
+      personId: String(existing.id),
+      personName: existing.name || label,
+      reused: true,
+    };
+  }
+  const created = await createPersonFixture({
+    apiUrl,
+    accessToken,
+    treeId,
+    label,
+    name: label,
+    familySummary: REUSABLE_FIXTURE_SUMMARY,
+  });
+  return {...created, reused: false};
+}
+
+// Одноразовые фикстуры прошлых прогонов (имя с меткой времени + legacy-маркер),
+// которые остались в дереве из-за упавшей очистки. Подметаем best-effort:
+// ошибка удаления не валит смоук.
+async function sweepDisposableFixtureLeftovers({apiUrl, accessToken, treeId, persons}) {
+  const leftovers = (persons || []).filter(
+    (person) =>
+      DISPOSABLE_FIXTURE_NAME_PATTERN.test(String(person?.name || "").trim()) &&
+      String(person?.familySummary || "").trim() === DISPOSABLE_FIXTURE_SUMMARY,
+  );
+  const results = [];
+  for (const person of leftovers) {
+    try {
+      results.push({
+        personId: String(person.id),
+        ...(await deletePersonFixture({
+          apiUrl,
+          accessToken,
+          treeId,
+          personId: String(person.id),
+        })),
+      });
+    } catch (error) {
+      results.push({personId: String(person.id), ok: false, error: String(error?.message || error)});
+    }
+  }
+  return results;
 }
 
 async function createDirectChatFixture({
@@ -713,23 +789,37 @@ async function createRouteFixtures({
   partnerPassword,
   autoRegister,
 }) {
-  const relativeDetailsFixture = await createPersonFixture({
+  // Один список персон на прогон: из него и переиспользование, и подметание
+  // одноразовых фикстур прошлых прогонов. Ни один из проверяемых маршрутов
+  // (relative-details, invite, claim) фикстуры не мутирует — их можно держать
+  // в смоук-дереве постоянно.
+  const treePersons = await fetchTreePersons({apiUrl, accessToken, treeId});
+  const leftoverSweep = await sweepDisposableFixtureLeftovers({
+    apiUrl,
+    accessToken,
+    treeId,
+    persons: treePersons,
+  });
+  const relativeDetailsFixture = await ensurePersonFixture({
     apiUrl,
     accessToken,
     treeId,
     label: "Smoke Relative",
+    persons: treePersons,
   });
-  const inviteFixture = await createPersonFixture({
+  const inviteFixture = await ensurePersonFixture({
     apiUrl,
     accessToken,
     treeId,
     label: "Smoke Invite",
+    persons: treePersons,
   });
-  const claimFixture = await createPersonFixture({
+  const claimFixture = await ensurePersonFixture({
     apiUrl,
     accessToken,
     treeId,
     label: "Smoke Claim",
+    persons: treePersons,
   });
 
   const resolvedPartnerCredentials =
@@ -784,6 +874,12 @@ async function createRouteFixtures({
     personName: relativeDetailsFixture.personName,
     invitePersonId: inviteFixture.personId,
     claimPersonId: claimFixture.personId,
+    reused: {
+      relative: relativeDetailsFixture.reused,
+      invite: inviteFixture.reused,
+      claim: claimFixture.reused,
+    },
+    leftoverSweep,
     inviteUrl,
     claimUrl,
     chatId: chatFixture?.chatId || null,
@@ -1470,7 +1566,7 @@ async function main() {
       );
     }
 
-    if (authenticatedSession && results.fixtures?.treeId && !config.keepFixtures) {
+    if (authenticatedSession && results.fixtures?.treeId && config.purgeFixtures) {
       results.fixtures.cleanup = await deletePersonFixtures({
         apiUrl: config.apiUrl,
         accessToken: authenticatedSession.accessToken,
@@ -1481,11 +1577,12 @@ async function main() {
           results.fixtures.claimPersonId,
         ],
       });
-    } else if (results.fixtures?.personId && config.keepFixtures) {
+    } else if (results.fixtures?.personId) {
       results.fixtures.cleanup = {
         ok: true,
         skipped: true,
-        reason: "RODNYA_SMOKE_KEEP_FIXTURES=1",
+        reason:
+          "reusable fixtures kept for the next run (pass --purge-fixtures / RODNYA_SMOKE_PURGE_FIXTURES=1 to delete)",
       };
     }
   } finally {
