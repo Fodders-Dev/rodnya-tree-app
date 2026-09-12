@@ -341,7 +341,7 @@ Notes:
   - optional `-SmokeInviteUrl`
   - optional `-SmokeClaimUrl`
 - Use `tool/prod_route_smoke.env.example` as the template for disposable smoke credentials and one-time invite/claim fixtures.
-- If invite/claim URLs are not provided and the smoke account has a writable tree, `tool/prod_route_smoke.mjs` auto-creates three reusable offline person fixtures (`Smoke Relative` / `Smoke Invite` / `Smoke Claim`) in the smoke tree on the first run and reuses them afterwards (no create+delete churn, no graph tombstones); pass `--purge-fixtures` / `RODNYA_SMOKE_PURGE_FIXTURES=1` to delete them. Leftover disposable fixtures from older runs are swept automatically.
+- If invite/claim URLs are not provided and the smoke account has a writable tree, `tool/prod_route_smoke.mjs` auto-creates a reusable offline person fixture (`Smoke Relative`) in the smoke tree once and reuses it afterwards; the invite/claim fixtures stay disposable per run because the authenticated partner consumes them (accept → merge, claim → link) and are deleted at the end. Pass `--purge-fixtures` / `RODNYA_SMOKE_PURGE_FIXTURES=1` to delete the reusable one too. Leftover disposable fixtures from older runs are swept automatically.
 
 ## GitHub Actions
 

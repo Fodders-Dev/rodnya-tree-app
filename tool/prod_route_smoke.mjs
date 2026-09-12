@@ -30,12 +30,14 @@ function parseArgs(argv) {
     suite: process.env.RODNYA_SMOKE_SUITE || "all",
     autoRegister:
       String(process.env.RODNYA_SMOKE_AUTO_REGISTER || "").trim() === "1",
-    // Персоны-фикстуры переиспользуются между прогонами (см.
-    // ensurePersonFixture): каждые 6 часов production-watch раньше создавал и
-    // удалял три персоны, оставляя 12 надгробий графа в сутки на 30 дней.
-    // Удаление — только по явному --purge-fixtures / RODNYA_SMOKE_PURGE_FIXTURES=1
-    // (например, при выводе смоук-дерева из эксплуатации). RODNYA_SMOKE_KEEP_FIXTURES
-    // и --keep-fixtures оставлены для совместимости: теперь это поведение по умолчанию.
+    // Фикстура relative-details переиспользуется между прогонами (см.
+    // ensurePersonFixture); invite/claim-фикстуры одноразовые по природе —
+    // авторизованный партнёр их ПОГЛОЩАЕТ (accept → слияние, claim → привязка к
+    // пользователю), так что «переиспользование» тестировало бы уже принятое
+    // приглашение. Раньше все три создавались и удалялись каждый прогон.
+    // --purge-fixtures / RODNYA_SMOKE_PURGE_FIXTURES=1 удаляет и постоянную
+    // фикстуру (например, при выводе смоук-дерева из эксплуатации);
+    // RODNYA_SMOKE_KEEP_FIXTURES и --keep-fixtures — совместимые no-op.
     purgeFixtures:
       String(process.env.RODNYA_SMOKE_PURGE_FIXTURES || "").trim() === "1",
     outputJson:
@@ -589,7 +591,7 @@ const REUSABLE_FIXTURE_SUMMARY =
   "Постоянная фикстура прод-смоука: переиспользуется каждым прогоном, не удалять.";
 const DISPOSABLE_FIXTURE_SUMMARY = "Auto-created disposable smoke fixture.";
 const DISPOSABLE_FIXTURE_NAME_PATTERN =
-  /^Smoke (Relative|Invite|Claim) \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+  /^Smoke (Relative|Invite|Claim|Fixture) \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
 
 async function createPersonFixture({
   apiUrl,
@@ -679,11 +681,22 @@ async function ensurePersonFixture({apiUrl, accessToken, treeId, label, persons}
 // которые остались в дереве из-за упавшей очистки. Подметаем best-effort:
 // ошибка удаления не валит смоук.
 async function sweepDisposableFixtureLeftovers({apiUrl, accessToken, treeId, persons}) {
-  const leftovers = (persons || []).filter(
-    (person) =>
-      DISPOSABLE_FIXTURE_NAME_PATTERN.test(String(person?.name || "").trim()) &&
-      String(person?.familySummary || "").trim() === DISPOSABLE_FIXTURE_SUMMARY,
-  );
+  const leftovers = (persons || []).filter((person) => {
+    const name = String(person?.name || "").trim();
+    const summary = String(person?.familySummary || "").trim();
+    if (
+      DISPOSABLE_FIXTURE_NAME_PATTERN.test(name) &&
+      summary === DISPOSABLE_FIXTURE_SUMMARY
+    ) {
+      return true;
+    }
+    // Первая версия переиспользования (12.09) успела создать invite/claim как
+    // «постоянные» — партнёр их поглотил, и они остались бы в дереве навсегда.
+    return (
+      (name === "Smoke Invite" || name === "Smoke Claim") &&
+      summary === REUSABLE_FIXTURE_SUMMARY
+    );
+  });
   const results = [];
   for (const person of leftovers) {
     try {
@@ -790,9 +803,8 @@ async function createRouteFixtures({
   autoRegister,
 }) {
   // Один список персон на прогон: из него и переиспользование, и подметание
-  // одноразовых фикстур прошлых прогонов. Ни один из проверяемых маршрутов
-  // (relative-details, invite, claim) фикстуры не мутирует — их можно держать
-  // в смоук-дереве постоянно.
+  // одноразовых фикстур прошлых прогонов (в т.ч. тех, что не удалились из-за
+  // упавшей очистки).
   const treePersons = await fetchTreePersons({apiUrl, accessToken, treeId});
   const leftoverSweep = await sweepDisposableFixtureLeftovers({
     apiUrl,
@@ -800,6 +812,7 @@ async function createRouteFixtures({
     treeId,
     persons: treePersons,
   });
+  // relative-details только читает персону — фикстура постоянная.
   const relativeDetailsFixture = await ensurePersonFixture({
     apiUrl,
     accessToken,
@@ -807,19 +820,22 @@ async function createRouteFixtures({
     label: "Smoke Relative",
     persons: treePersons,
   });
-  const inviteFixture = await ensurePersonFixture({
+  // invite/claim поглощаются авторизованным партнёром на первом же прогоне
+  // (проверено на проде 12.09: accept → person.merged, персона исчезает;
+  // claim → персона привязывается к пользователю). Поэтому они одноразовые:
+  // свежие на каждый прогон и удаляются в конце (см. cleanup), иначе смоук
+  // проверял бы уже принятое приглашение вместо живого сценария.
+  const inviteFixture = await createPersonFixture({
     apiUrl,
     accessToken,
     treeId,
     label: "Smoke Invite",
-    persons: treePersons,
   });
-  const claimFixture = await ensurePersonFixture({
+  const claimFixture = await createPersonFixture({
     apiUrl,
     accessToken,
     treeId,
     label: "Smoke Claim",
-    persons: treePersons,
   });
 
   const resolvedPartnerCredentials =
@@ -876,8 +892,8 @@ async function createRouteFixtures({
     claimPersonId: claimFixture.personId,
     reused: {
       relative: relativeDetailsFixture.reused,
-      invite: inviteFixture.reused,
-      claim: claimFixture.reused,
+      invite: false,
+      claim: false,
     },
     leftoverSweep,
     inviteUrl,
@@ -1566,23 +1582,33 @@ async function main() {
       );
     }
 
-    if (authenticatedSession && results.fixtures?.treeId && config.purgeFixtures) {
-      results.fixtures.cleanup = await deletePersonFixtures({
-        apiUrl: config.apiUrl,
-        accessToken: authenticatedSession.accessToken,
-        treeId: results.fixtures.treeId,
-        personIds: [
-          results.fixtures.personId,
-          results.fixtures.invitePersonId,
-          results.fixtures.claimPersonId,
-        ],
-      });
-    } else if (results.fixtures?.personId) {
+    if (authenticatedSession && results.fixtures?.treeId) {
+      // Одноразовые invite/claim — всегда (404 после поглощения partner'ом —
+      // нормальный исход); постоянная relative — только по --purge-fixtures.
+      const disposableIds = [
+        results.fixtures.invitePersonId,
+        results.fixtures.claimPersonId,
+      ];
       results.fixtures.cleanup = {
-        ok: true,
-        skipped: true,
-        reason:
-          "reusable fixtures kept for the next run (pass --purge-fixtures / RODNYA_SMOKE_PURGE_FIXTURES=1 to delete)",
+        disposable: await deletePersonFixtures({
+          apiUrl: config.apiUrl,
+          accessToken: authenticatedSession.accessToken,
+          treeId: results.fixtures.treeId,
+          personIds: disposableIds,
+        }),
+        reusable: config.purgeFixtures
+          ? await deletePersonFixtures({
+              apiUrl: config.apiUrl,
+              accessToken: authenticatedSession.accessToken,
+              treeId: results.fixtures.treeId,
+              personIds: [results.fixtures.personId],
+            })
+          : {
+              ok: true,
+              skipped: true,
+              reason:
+                "reusable relative fixture kept for the next run (pass --purge-fixtures / RODNYA_SMOKE_PURGE_FIXTURES=1 to delete)",
+            },
       };
     }
   } finally {
