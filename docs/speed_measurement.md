@@ -2644,3 +2644,10 @@ Claim-flow в браузере только ГРУЗИТ страницу (`page
 деплоя нет; первый живой прогон джоба hard-delete с новым сметанием таблицы
 корзины — по расписанию (~17 ч после буста), его строку `hard_delete_run`
 с ненулевым `deletedPersons` стоит глянуть отдельно.
+
+**Первый прогон джоба после SPEED-16 (12.09, по расписанию).** Строка
+`hard_delete_run`: `dryRun:false`, `deleted: graphPersons 12, deletedPersons 8`,
+`capHit:false`, `errors:[]`. Проверка по таблицам: восьмёрка ушла именно из
+`_deleted_persons` (256 строк после, годных 0), в `_hard_delete_audit` — 8
+записей `deletedPerson` и 12 `graphPerson` под одним `runId` (общий runId
+двух половин прогона работает). Регрессия SPEED-15 закрыта на живом проде.
