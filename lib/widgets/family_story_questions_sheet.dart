@@ -435,8 +435,12 @@ class _TargetTile extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
+                // Gender-aware «Сама Лида» / «Сам Артём» is composed by the
+                // caller (it knows FamilyPerson.gender) — see
+                // _buildStoryAskTargets in relative_details_screen_sections
+                // .dart. This widget stays dumb: just renders the label.
                 child: Text(
-                  target.isHero ? 'Сама(сам) ${target.displayName}' : target.displayName,
+                  target.displayName,
                   style: theme.textTheme.bodyLarge?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),

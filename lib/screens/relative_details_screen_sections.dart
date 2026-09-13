@@ -688,7 +688,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         heroUserId != currentUserId) {
       targets.add(FamilyStoryAskTarget(
         userId: heroUserId,
-        displayName: heroDisplayName,
+        displayName: '${_selfAskPrefix(person.gender)} $heroDisplayName',
         photoUrl: person.photoUrl,
         isHero: true,
       ));
@@ -701,6 +701,21 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       targets.add(FamilyStoryAskTarget(userId: uid, displayName: p.name, photoUrl: p.photoUrl));
     }
     return targets;
+  }
+
+  /// «Сама Лида» / «Сам Артём» — gender-aware so the chip doesn't read
+  /// like a form field («сам(а)»). Falls back to the slash notation only
+  /// when gender genuinely isn't known.
+  String _selfAskPrefix(Gender gender) {
+    switch (gender) {
+      case Gender.female:
+        return 'Сама';
+      case Gender.male:
+        return 'Сам';
+      case Gender.other:
+      case Gender.unknown:
+        return 'Сам(а)';
+    }
   }
 
   Future<void> _askFamilyStory({
