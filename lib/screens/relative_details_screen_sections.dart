@@ -253,6 +253,16 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               // the header (§3.2.1, revised from C1: these are the card's
               // skeleton, kept on view). Self-hides if nothing is filled.
               _buildBasicInfoSection(),
+              // MVP-1 «Спросить историю»: initiator-only status line for
+              // their own open questions about this person — sits right
+              // above the section it refers to. Key ties its lifetime to
+              // _storyRequestStatusTick so a freshly sent request shows
+              // up immediately (see _askFamilyStory).
+              if (_person != null && _currentTreeId != null)
+                StoryRequestStatusLine(
+                  key: ValueKey('story-status-${person.id}-$_storyRequestStatusTick'),
+                  personId: person.id,
+                ),
               // «Семейные истории» — read-first article (§3.1 order: шапка →
               // Основная информация → биография → … → Семья). Empty-CTA
               // suppressed: the header's primary CTA already offers it.
@@ -658,15 +668,78 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     );
   }
 
+  /// MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.3):
+  /// candidates for the «Кого спросить» step — «сам(а) {герой}» (when the
+  /// person being asked about has their own linked account and it isn't
+  /// the viewer) followed by other tree members with an account. Reuses
+  /// `_treePeople` (already loaded for relation labels — see `_load`
+  /// above), no separate fetch. Empty when the capability is absent or
+  /// there's simply nobody with an account to ask yet — the sheet then
+  /// behaves exactly as before this feature existed.
+  List<FamilyStoryAskTarget> _buildStoryAskTargets({
+    required FamilyPerson person,
+    required String heroDisplayName,
+  }) {
+    final currentUserId = _authService.currentUserId;
+    final heroUserId = person.userId;
+    final targets = <FamilyStoryAskTarget>[];
+    if (heroUserId != null &&
+        heroUserId.isNotEmpty &&
+        heroUserId != currentUserId) {
+      targets.add(FamilyStoryAskTarget(
+        userId: heroUserId,
+        displayName: '${_selfAskPrefix(person.gender)} $heroDisplayName',
+        photoUrl: person.photoUrl,
+        isHero: true,
+      ));
+    }
+    final seen = targets.map((t) => t.userId).toSet();
+    for (final p in _treePeople) {
+      final uid = p.userId;
+      if (uid == null || uid.isEmpty) continue;
+      if (uid == currentUserId || !seen.add(uid)) continue;
+      targets.add(FamilyStoryAskTarget(userId: uid, displayName: p.name, photoUrl: p.photoUrl));
+    }
+    return targets;
+  }
+
+  /// «Сама Лида» / «Сам Артём» — gender-aware so the chip doesn't read
+  /// like a form field («сам(а)»). Falls back to the slash notation only
+  /// when gender genuinely isn't known.
+  String _selfAskPrefix(Gender gender) {
+    switch (gender) {
+      case Gender.female:
+        return 'Сама';
+      case Gender.male:
+        return 'Сам';
+      case Gender.other:
+      case Gender.unknown:
+        return 'Сам(а)';
+    }
+  }
+
   Future<void> _askFamilyStory({
     required String name,
     String? relation,
     String? gender,
   }) async {
+    final person = _person;
+    final treeId = _currentTreeId;
+    final storyService = _familyService is StoryRequestCapableFamilyTreeService
+        ? _familyService as StoryRequestCapableFamilyTreeService
+        : null;
+    final askTargets = (storyService == null || person == null || treeId == null)
+        ? const <FamilyStoryAskTarget>[]
+        : _buildStoryAskTargets(person: person, heroDisplayName: name);
+
     final action = await showFamilyStoryQuestionsSheet(
       context,
       personName: name,
       relation: relation,
+      storyRequestService: storyService,
+      treeId: treeId,
+      personId: person?.id,
+      askTargets: askTargets,
     );
     if (action == null || !mounted) return;
     switch (action.type) {
@@ -685,6 +758,11 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
           gender: gender,
           initialQuestion: action.question,
         );
+        break;
+      case FamilyStoryQuestionActionType.requestSent:
+        // Forces StoryRequestStatusLine to remount and refetch so «Ждём
+        // ответа …» shows up immediately instead of on next screen visit.
+        _refreshStoryRequestStatus();
         break;
     }
   }

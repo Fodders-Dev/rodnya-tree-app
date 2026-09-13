@@ -21,6 +21,7 @@ import '../backend/interfaces/relatives_cache_capable_family_tree_service.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
+import '../backend/interfaces/story_request_capable_family_tree_service.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
 import '../backend/models/branch_digest.dart';
@@ -47,6 +48,7 @@ import '../models/family_tree.dart';
 import '../models/person_dossier.dart';
 import '../models/person_duplicate_suggestion.dart';
 import '../models/relation_request.dart';
+import '../models/story_request.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../models/tree_change_record.dart';
 import '../models/user_profile.dart';
@@ -70,6 +72,7 @@ class CustomApiFamilyTreeService
         ExtendedNetworkCapableFamilyTreeService,
         OnboardingCapableFamilyTreeService,
         KinshipCheckCapableFamilyTreeService,
+        StoryRequestCapableFamilyTreeService,
         PersonTreeResolutionCapableFamilyTreeService,
         RelativesCacheCapableFamilyTreeService,
         SemyaCapableFamilyTreeService {
@@ -2743,6 +2746,250 @@ class CustomApiFamilyTreeService
         code = 'UNKNOWN';
     }
     return KinshipCheckError(code: code, message: e.message);
+  }
+
+  // ── MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §3.2): «Спросить историю» ──
+
+  @override
+  Future<StoryRequest?> createStoryRequest({
+    required String treeId,
+    required String personId,
+    required String targetUserId,
+    required StoryRequestQuestion question,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/story-requests',
+        body: {
+          'treeId': treeId,
+          'personId': personId,
+          'targetUserId': targetUserId,
+          'question': question.toJson(),
+        },
+      );
+      final requestRaw = response['request'];
+      if (requestRaw is! Map) return null;
+      return StoryRequest.fromJson(Map<String, dynamic>.from(requestRaw));
+    } on CustomApiException catch (e) {
+      throw _mapStoryRequestException(e, endpoint: 'create');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<List<StoryRequest>> listStoryRequests({
+    required String role,
+    StoryRequestStatus? status,
+  }) async {
+    try {
+      final path = _buildPathWithQuery('/v1/me/story-requests', {
+        'role': role,
+        if (status != null) 'status': status.serverValue,
+      });
+      final response = await _requestJson(method: 'GET', path: path);
+      final rawList = response['requests'];
+      if (rawList is! List) return const <StoryRequest>[];
+      return rawList
+          .whereType<Map>()
+          .map((e) => StoryRequest.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    } catch (_) {
+      return const <StoryRequest>[];
+    }
+  }
+
+  @override
+  Future<StoryRequest?> getStoryRequest({required String requestId}) async {
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/story-requests/$requestId',
+      );
+      final requestRaw = response['request'];
+      if (requestRaw is! Map) return null;
+      return StoryRequest.fromJson(Map<String, dynamic>.from(requestRaw));
+    } on CustomApiException catch (e) {
+      throw _mapStoryRequestException(e, endpoint: 'get');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<StoryRequest?> answerStoryRequest({
+    required String requestId,
+    required StoryRequestAnswerInput answer,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/story-requests/$requestId/answer',
+        body: answer.toJson(),
+      );
+      final requestRaw = response['request'];
+      if (requestRaw is! Map) return null;
+      return StoryRequest.fromJson(Map<String, dynamic>.from(requestRaw));
+    } on CustomApiException catch (e) {
+      throw _mapStoryRequestException(e, endpoint: 'answer');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<StoryRequest?> declineStoryRequest({required String requestId}) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/story-requests/$requestId/decline',
+      );
+      final requestRaw = response['request'];
+      if (requestRaw is! Map) return null;
+      return StoryRequest.fromJson(Map<String, dynamic>.from(requestRaw));
+    } on CustomApiException catch (e) {
+      throw _mapStoryRequestException(e, endpoint: 'decline');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<StoryRequest?> revokeStoryRequest({required String requestId}) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/story-requests/$requestId/revoke',
+      );
+      final requestRaw = response['request'];
+      if (requestRaw is! Map) return null;
+      return StoryRequest.fromJson(Map<String, dynamic>.from(requestRaw));
+    } on CustomApiException catch (e) {
+      throw _mapStoryRequestException(e, endpoint: 'revoke');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Map [CustomApiException.statusCode] к [StoryRequestError]. Verified
+  /// 2026-09-13 against the merged backend (story-request-routes.js) —
+  /// it sends only `{message}` on error (no machine `error` field, same
+  /// as kinship-checks), so `code` is coarse wherever two business errors
+  /// share a status: create's 400 covers both SELF_REQUEST_FORBIDDEN and
+  /// INVALID_QUESTION, its 404 covers both PERSON_NOT_FOUND and
+  /// TARGET_NOT_IN_TREE. The server-authored `message` always carries the
+  /// precise, user-facing text regardless.
+  StoryRequestError _mapStoryRequestException(
+    CustomApiException e, {
+    required String endpoint,
+  }) {
+    final status = e.statusCode;
+    String code;
+    String fallback;
+    switch (endpoint) {
+      case 'create':
+        switch (status) {
+          case 400:
+            code = 'INVALID_REQUEST';
+            fallback = 'Проверьте вопрос и адресата и попробуйте снова.';
+            break;
+          case 403:
+            code = 'FORBIDDEN';
+            fallback = 'Нет прав задать вопрос об этом человеке.';
+            break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Не нашли человека или адресата в этом дереве.';
+            break;
+          case 409:
+            code = 'DUPLICATE_PENDING';
+            fallback = 'Такой вопрос уже ждёт ответа.';
+            break;
+          case 429:
+            code = 'TOO_MANY_PENDING';
+            fallback = 'Слишком много открытых вопросов — дождитесь ответов.';
+            break;
+          default:
+            code = 'UNKNOWN';
+            fallback = 'Не удалось отправить вопрос. Попробуйте позже.';
+        }
+        break;
+      case 'answer':
+        switch (status) {
+          case 400:
+            code = 'INVALID_ANSWER';
+            fallback = 'Не получилось сохранить ответ — попробуйте ещё раз.';
+            break;
+          case 403:
+            code = 'NOT_TARGET';
+            fallback = 'Ответить может только тот, кому задали вопрос.';
+            break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Запрос не найден — возможно, его уже удалили.';
+            break;
+          case 409:
+            code = 'NOT_PENDING';
+            fallback = 'На этот вопрос уже ответили или он закрыт.';
+            break;
+          default:
+            code = 'UNKNOWN';
+            fallback = 'Не удалось отправить ответ. Попробуйте позже.';
+        }
+        break;
+      case 'decline':
+        switch (status) {
+          case 403:
+            code = 'NOT_TARGET';
+            fallback = 'Отклонить может только тот, кому задали вопрос.';
+            break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Запрос не найден — возможно, его уже удалили.';
+            break;
+          case 409:
+            code = 'NOT_PENDING';
+            fallback = 'Вопрос уже закрыт.';
+            break;
+          default:
+            code = 'UNKNOWN';
+            fallback = 'Не получилось отклонить вопрос. Попробуйте позже.';
+        }
+        break;
+      case 'revoke':
+        switch (status) {
+          case 403:
+            code = 'NOT_INITIATOR';
+            fallback = 'Отозвать вопрос может только тот, кто его задал.';
+            break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Запрос не найден — возможно, его уже удалили.';
+            break;
+          case 409:
+            code = 'NOT_PENDING';
+            fallback = 'Вопрос уже закрыт.';
+            break;
+          default:
+            code = 'UNKNOWN';
+            fallback = 'Не получилось отозвать вопрос. Попробуйте позже.';
+        }
+        break;
+      default: // 'get'
+        code = status == 404 ? 'NOT_FOUND' : 'UNKNOWN';
+        fallback = 'Не удалось загрузить вопрос.';
+    }
+
+    final serverMessage = e.message.trim();
+    final looksGeneric = serverMessage.isEmpty ||
+        serverMessage.startsWith('Ошибка backend') ||
+        serverMessage == 'Пустой ответ от backend';
+    return StoryRequestError(
+      code: code,
+      message: looksGeneric ? fallback : serverMessage,
+      statusCode: status,
+    );
   }
 
   // ---------- Phase B Ship FE1: семя read endpoints ----------

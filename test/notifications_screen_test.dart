@@ -286,6 +286,48 @@ void main() {
         reason: 'уведомление переехало в «Ранее», а не пропало');
   });
 
+  testWidgets(
+    'MVP-1 «Спросить историю»: 5 типов получают свою иконку/подпись, не «Уведомление»',
+    (tester) async {
+      await tester.pumpWidget(
+        await _buildNotificationsApp(
+          NotificationsScreen(
+            notificationLoader: () async => [
+              AppNotificationItem(
+                id: 'sreq-received',
+                type: 'story_request_received',
+                title: 'Артём хочет узнать историю',
+                body: 'Кто на фото?',
+                createdAt: DateTime(2026, 9, 13, 10),
+                data: const {'requestId': 'sreq-1'},
+                payload: '{}',
+              ),
+              AppNotificationItem(
+                id: 'sreq-answered',
+                type: 'story_request_answered',
+                title: 'Ответ на ваш вопрос от Лиды',
+                body: 'Кто на фото?',
+                createdAt: DateTime(2026, 9, 13, 11),
+                data: const {'requestId': 'sreq-1', 'personId': 'p-1'},
+                payload: '{}',
+              ),
+            ],
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Вопрос о семейной истории'), findsOneWidget);
+      expect(find.text('Ответ на ваш вопрос'), findsOneWidget);
+      expect(
+        find.byIcon(Icons.auto_stories_outlined),
+        findsNWidgets(2),
+        reason: 'обе карточки story_request_* используют одну иконку',
+      );
+      expect(find.textContaining('Уведомление ·'), findsNothing);
+    },
+  );
 }
 
 Future<List<AppNotificationItem>> _emptyLoader() async =>

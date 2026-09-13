@@ -43,6 +43,13 @@ IconData _notificationIconForType(String type) {
       return Icons.reply_outlined;
     case 'post_created':
       return Icons.post_add_outlined;
+    // MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §1).
+    case 'story_request_received':
+    case 'story_request_answered':
+    case 'story_request_declined':
+    case 'story_request_expired':
+    case 'story_request_revoked':
+      return Icons.auto_stories_outlined;
     default:
       return Icons.notifications_none;
   }
@@ -78,6 +85,16 @@ String _notificationLabelForType(String type) {
       return 'Ответ на комментарий';
     case 'post_created':
       return 'Новый пост';
+    case 'story_request_received':
+      return 'Вопрос о семейной истории';
+    case 'story_request_answered':
+      return 'Ответ на ваш вопрос';
+    case 'story_request_declined':
+      return 'Отказ ответить';
+    case 'story_request_expired':
+      return 'Вопрос без ответа';
+    case 'story_request_revoked':
+      return 'Вопрос отозван';
     default:
       return 'Уведомление';
   }

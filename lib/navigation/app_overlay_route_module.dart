@@ -23,6 +23,7 @@ import '../screens/public_tree_viewer_screen.dart';
 import '../screens/relative_details_screen.dart';
 import '../screens/semya_invitation_accept_screen.dart';
 import '../screens/send_relation_request_screen.dart';
+import '../screens/story_request_answer_screen.dart';
 import '../screens/story_viewer_screen.dart';
 import 'app_router_shared.dart';
 
@@ -470,6 +471,22 @@ class AppOverlayRouteModule {
               initialAction: initialAction,
             ),
             transitionsBuilder: AppRouteTransitions.slide,
+          );
+        },
+      ),
+      // MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.4):
+      // opened from the `story_request_received` notification tap and
+      // from «Мне задали вопрос» in the received-requests list.
+      GoRoute(
+        path: '/story-requests/:id/answer',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final requestId = state.pathParameters['id'] ?? '';
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            constrainWidth: true,
+            child: StoryRequestAnswerScreen(requestId: requestId),
+            transitionsBuilder: AppRouteTransitions.slideUp,
           );
         },
       ),

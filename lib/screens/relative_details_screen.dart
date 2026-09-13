@@ -25,6 +25,7 @@ import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dar
 import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/person_tree_resolution_capable_family_tree_service.dart';
+import '../backend/interfaces/story_request_capable_family_tree_service.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
@@ -47,6 +48,7 @@ import '../utils/relative_details_route.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/profile_biography_section.dart';
 import '../widgets/family_story_questions_sheet.dart';
+import '../widgets/story_request_status_line.dart';
 import '../models/family_story_question.dart';
 import 'profile_all_photos_screen.dart';
 import 'profile_article_editor_screen.dart';
@@ -159,6 +161,19 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
 
   FamilyPerson? _person;
   List<FamilyPerson> _treePeople = [];
+
+  // MVP-1 «Спросить историю»: bumped after a story-request is sent from
+  // this screen so StoryRequestStatusLine's key changes and it remounts
+  // (fresh fetch) instead of showing stale «нет открытых вопросов».
+  int _storyRequestStatusTick = 0;
+
+  // Small wrapper so _sections.dart (an `extension on _RelativeDetails-
+  // ScreenState`, not a State subclass itself) can trigger a rebuild
+  // without calling the @protected State.setState directly — that trips
+  // `invalid_use_of_protected_member` from an extension method.
+  void _refreshStoryRequestStatus() {
+    setState(() => _storyRequestStatusTick++);
+  }
   List<FamilyRelation> _relations = [];
   List<TreeChangeRecord> _historyRecords = [];
   UserProfile? _userProfile;
