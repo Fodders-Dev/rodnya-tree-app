@@ -371,8 +371,12 @@ Phase B фронт ЗАКРЫТ (FE1-FE10 + FE3b + mama-friendly polish chunk). 
 
 ### Закрытые окна
 
-* **SPEED-8b** (03.09 → 10.09): без инцидентов. Уборка как у SPEED-6/7
-  (бэкап-таблицы, `restore-tree-change-records-to-blob.js`) — отдельным шагом.
+* **SPEED-8b** (03.09 → 10.09): без инцидентов. 13.09 бэкап-таблица
+  `rodnya_state_tree_change_backups` удалена (точечный дамп
+  `/opt/rodnya/backups/manual/speed8b-tree-change-backups-table-20260913-142547.dump`);
+  скрипт `restore-tree-change-records-to-blob.js` оставлен в репо.
+  Бэкап-таблицы SPEED-6/7 (`_chat_backups`, `_notification_backups`) ещё лежат —
+  убрать по слову Артёма тем же способом.
 * **SPEED-8c** (04.09): журнал `slow-request` пуст; 12.09 — единичные всплески
   только от разового подметания 38 фикстур в смоук-дереве.
 * **SPEED-6/7** (27.08, 30.08): закрыты без инцидентов.
