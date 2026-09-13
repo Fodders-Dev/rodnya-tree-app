@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/story_request_capable_family_tree_service.dart';
 import '../models/story_request.dart';
 
@@ -43,12 +44,15 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
 
   StoryRequestCapableFamilyTreeService? _service() {
     if (widget.serviceOverride != null) return widget.serviceOverride;
-    // Production: the family tree service is registered under the base
-    // interface; only newer backends implement this capability.
-    if (GetIt.I.isRegistered<StoryRequestCapableFamilyTreeService>()) {
-      return GetIt.I<StoryRequestCapableFamilyTreeService>();
-    }
-    return null;
+    // Production registers ONE FamilyTreeServiceInterface singleton — new
+    // capabilities are additive `implements`, not separate GetIt
+    // registrations (see discover_relatives_screen.dart for the same
+    // pattern with KinshipCheckCapableFamilyTreeService).
+    if (!GetIt.I.isRegistered<FamilyTreeServiceInterface>()) return null;
+    final service = GetIt.I<FamilyTreeServiceInterface>();
+    return service is StoryRequestCapableFamilyTreeService
+        ? service as StoryRequestCapableFamilyTreeService
+        : null;
   }
 
   AuthServiceInterface? _auth() {
