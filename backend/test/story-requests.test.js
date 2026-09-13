@@ -593,7 +593,7 @@ test("POST .../answer: audio → article block with source + story_request_answe
       (n) => n.userId === alice.user.id && n.type === "story_request_answered",
     );
     assert.ok(notification);
-    assert.equal(notification.title, "Ответ на ваш вопрос от Bob");
+    assert.equal(notification.title, "Bob делится историей");
     // No gendered "ответил(а)" form anywhere in the copy (§1 decision).
     assert.doesNotMatch(notification.title, /\(а\)/);
     assert.equal(notification.data.articleBlockId, body.block.id);

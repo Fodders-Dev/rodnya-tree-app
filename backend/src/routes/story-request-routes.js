@@ -275,8 +275,9 @@ function registerStoryRequestRoutes(
     await createAndDispatchNotification({
       userId: outcome.request.requesterUserId,
       type: "story_request_answered",
-      // Gender-neutral by construction (§1 decision) — no "ответил(а)".
-      title: `Ответ на ваш вопрос от ${responderName}`,
+      // Без рода и без склонения имени: настоящее время «делится» не
+      // зависит ни от пола адресата, ни от падежа (имя — в именительном).
+      title: `${responderName} делится историей`,
       body: truncate(outcome.request.question.text, 80),
       data: {
         requestId: outcome.request.id,
@@ -361,9 +362,8 @@ function registerStoryRequestRoutes(
     await createAndDispatchNotification({
       userId: outcome.request.targetUserId,
       type: "story_request_revoked",
-      // Gender-neutral (§1 decision) — passive form agrees with «вопрос»,
-      // not with the initiator's gender.
-      title: `Вопрос от ${requesterName} отозван`,
+      // Настоящее время «отзывает» — без рода и без склонения имени.
+      title: `${requesterName} отзывает свой вопрос`,
       body: outcome.request.question.text,
       data: {requestId: outcome.request.id},
     });
