@@ -7,6 +7,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart';
 import 'package:rodnya/backend/models/profile_article.dart';
 import 'package:rodnya/widgets/article_audio_block.dart';
@@ -46,6 +47,13 @@ List<ArticleBlock> _allSevenTypes() => [
     ];
 
 void main() {
+  // MVP-1 story-request source caption formats the date via
+  // DateFormat(..., 'ru') — needs locale data loaded, same as every
+  // other RU-date-formatting widget test in this suite.
+  setUpAll(() async {
+    await initializeDateFormatting('ru');
+  });
+
   testWidgets('ArticleReadView renders all 7 types without edit affordances',
       (tester) async {
     await tester.pumpWidget(
@@ -229,6 +237,78 @@ void main() {
 
     expect(find.byKey(const Key('biography-add')), findsOneWidget);
     expect(find.byKey(const Key('biography-edit')), findsNothing); // no ✏️ yet
+  });
+
+  // MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.6): a block
+  // with `source` gets a «На вопрос {имя}, {дата}» caption, rendered once
+  // in the shared block loop (not per-type).
+  group('MVP-1 story-request source caption', () {
+    testWidgets('shows asker name (resolved via authorNames) + formatted date',
+        (tester) async {
+      final block = ArticleBlock(
+        id: 'au1',
+        type: 'audio',
+        content: ArticleBlock.audioContent(url: 'https://a/v.m4a', durationSec: 12),
+        createdAt: 't',
+        updatedAt: 't',
+        source: const ArticleBlockSource(
+          requestId: 'sreq-1',
+          question: 'Кто на фото?',
+          askedByUserId: 'u-artem',
+          askedAt: '2026-09-13T10:00:00Z',
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ArticleReadView(
+              blocks: [block],
+              authorNames: const {'u-artem': 'Артём'},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+
+      expect(find.text('На вопрос Артём, 13 сентября'), findsOneWidget);
+      expect(find.byKey(const Key('article-source-sreq-1')), findsOneWidget);
+    });
+
+    testWidgets('falls back to «родного» when the asker name is unresolved',
+        (tester) async {
+      final block = ArticleBlock(
+        id: 'p1',
+        type: 'paragraph',
+        content: ArticleBlock.paragraphContent('Моя история.'),
+        createdAt: 't',
+        updatedAt: 't',
+        source: const ArticleBlockSource(
+          requestId: 'sreq-2',
+          question: 'Q',
+          askedByUserId: 'u-unknown',
+          askedAt: '',
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: ArticleReadView(blocks: [block])),
+        ),
+      );
+      await tester.pump();
+
+      // Empty/unparseable askedAt → date suffix dropped, not a crash.
+      expect(find.text('На вопрос родного'), findsOneWidget);
+    });
+
+    testWidgets('block без source не получает подпись', (tester) async {
+      final block = _block('p1', 'paragraph', ArticleBlock.paragraphContent('Без вопроса.'));
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: ArticleReadView(blocks: [block]))),
+      );
+      await tester.pump();
+
+      expect(find.textContaining('На вопрос'), findsNothing);
+    });
   });
 }
 
