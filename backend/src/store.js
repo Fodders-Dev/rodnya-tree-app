@@ -161,6 +161,12 @@ const EMPTY_DB = {
   // DECISIONS.md 2026-05-13: kinshipChecks naming + state-based
   // idempotency.
   kinshipChecks: [],
+  // «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §1): просьба
+  // задать вопрос родному → ответ ложится блоком в статью героя. Pending
+  // → answered | declined | expired | revoked, 30d TTL (лениво при
+  // чтении, как kinshipChecks). Десятки записей — коллекция живёт в
+  // блобе, не в отдельной таблице.
+  storyRequests: [],
   // Phase 6 wizard progress per-user. State-based idempotency
   // gate для /onboarding/seed.
   onboardingStates: [],
@@ -294,6 +300,9 @@ function normalizeDbState(parsed) {
       : [],
     kinshipChecks: Array.isArray(parsed?.kinshipChecks)
       ? parsed.kinshipChecks
+      : [],
+    storyRequests: Array.isArray(parsed?.storyRequests)
+      ? parsed.storyRequests
       : [],
     onboardingStates: Array.isArray(parsed?.onboardingStates)
       ? parsed.onboardingStates
@@ -22094,6 +22103,395 @@ class FileStore {
     return {check: structuredClone(check)};
   }
 
+  // ── Story requests («Спросить историю» MVP-1) ───────────────────
+  // STORY-REQUEST-MVP1-BRIEF.md §1/§2. Pending → answered | declined |
+  // expired | revoked. Unlike kinshipChecks (plain _read/_write), every
+  // write here goes through `_mutate` — STORE-RACE hardening ALSO buys
+  // us an atomic one-shot claim for the lazy-expiry notification (see
+  // `_sweepExpiredStoryRequests`): two concurrent list/find calls from
+  // different users can never both dispatch `story_request_expired` for
+  // the same request, because the claim (`expiredNotifiedAt`) is set
+  // inside the same serialized read→write as the sweep itself.
+
+  static get _storyRequestTtlMs() {
+    return 30 * 86_400_000; // 30 days — decision §0.2 (elderly need slack; kinship uses 14d)
+  }
+
+  static get _storyRequestMaxPendingPerInitiator() {
+    return 20; // decision: >20 open requests per initiator → 429 TOO_MANY_PENDING
+  }
+
+  // Pure in-memory — safe inside _mutate's applyFn (no nested store calls).
+  // Transitions pending→expired past `expiresAt`, THEN separately claims
+  // one-shot notify duty for any expired-but-not-yet-notified request
+  // (covers both a fresh transition above and a prior crash that persisted
+  // status=expired but died before the caller dispatched the notification).
+  // Returns the claimed requests (route dispatches `story_request_expired`
+  // for each) — mutates `expiredNotifiedAt` atomically so the claim can
+  // never be taken twice.
+  _sweepExpiredStoryRequests(db) {
+    const now = Date.now();
+    const toNotify = [];
+    for (const request of db.storyRequests || []) {
+      if (request.status === "pending") {
+        const expiresAt = new Date(request.expiresAt || 0).getTime();
+        if (Number.isFinite(expiresAt) && now > expiresAt) {
+          request.status = "expired";
+          request.updatedAt = nowIso();
+        }
+      }
+      if (request.status === "expired" && !request.expiredNotifiedAt) {
+        request.expiredNotifiedAt = nowIso();
+        toNotify.push(request);
+      }
+    }
+    return toNotify;
+  }
+
+  // Target must be a member of the person's tree — either legacy
+  // (tree.creatorId / tree.memberIds) or, when the tree is bound to a
+  // семья (federated model), an active (non-hidden) семья member. Checked
+  // directly against `db` (no store-method call) so it stays safe inside
+  // `_mutate`'s applyFn.
+  _isUserInTreeOrSemya(db, tree, userId) {
+    if (!tree || !userId) return false;
+    const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+    if (tree.creatorId === userId || memberIds.includes(userId)) return true;
+    if (tree.semyaId) {
+      return (db.semyaMembers || []).some(
+        (m) => m.semyaId === tree.semyaId && m.userId === userId && !m.hiddenAt,
+      );
+    }
+    return false;
+  }
+
+  /// Create a pending story request. Cheap shape validation happens
+  /// BEFORE touching the DB (mirrors createKinshipCheck) so a malformed
+  /// call never enters the _mutate queue. DB-dependent checks (person/
+  /// tree exist, target membership, duplicate, rate-limit) run inside
+  /// _mutate against a fresh read.
+  ///
+  /// Errors: INVALID_INPUT, SELF_REQUEST_FORBIDDEN, INVALID_QUESTION,
+  /// PERSON_NOT_FOUND, TARGET_NOT_IN_TREE, DUPLICATE_PENDING,
+  /// TOO_MANY_PENDING. Route layer separately gates edit permission via
+  /// requireGraphPersonEdit BEFORE calling this (§1: "инициатор обязан
+  /// иметь право редактировать персону").
+  async createStoryRequest({treeId, personId, requesterUserId, targetUserId, question}) {
+    const normalizedTreeId = normalizeNullableString(treeId);
+    const normalizedPersonId = normalizeNullableString(personId);
+    const normalizedRequester = normalizeNullableString(requesterUserId);
+    const normalizedTarget = normalizeNullableString(targetUserId);
+    if (!normalizedTreeId || !normalizedPersonId || !normalizedRequester || !normalizedTarget) {
+      return {error: "INVALID_INPUT"};
+    }
+    if (normalizedRequester === normalizedTarget) {
+      return {error: "SELF_REQUEST_FORBIDDEN"};
+    }
+    const questionText = String(question?.text || "").trim();
+    if (questionText.length < 3 || questionText.length > 500) {
+      return {error: "INVALID_QUESTION"};
+    }
+    const themeKey = normalizeNullableString(question?.themeKey);
+    const sourceQuestionId = normalizeNullableString(question?.sourceQuestionId);
+
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      // Bundles a validation failure with whatever the sweep above did —
+      // skip() (no persist) only when NOTHING changed; otherwise the sweep's
+      // transitions/notify-claims still need to land even though THIS call
+      // is rejected.
+      const fail = (error) => {
+        const payload = {
+          error,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? payload : skip(payload);
+      };
+
+      const tree = (db.trees || []).find((t) => t.id === normalizedTreeId);
+      const person = this._findPersonRecordById(db, normalizedPersonId);
+      if (!tree || !person || person.treeId !== normalizedTreeId) {
+        return fail("PERSON_NOT_FOUND");
+      }
+      if (!this._isUserInTreeOrSemya(db, tree, normalizedTarget)) {
+        return fail("TARGET_NOT_IN_TREE");
+      }
+
+      db.storyRequests = db.storyRequests || [];
+      const duplicate = db.storyRequests.find(
+        (r) =>
+          r.treeId === normalizedTreeId &&
+          r.personId === normalizedPersonId &&
+          r.requesterUserId === normalizedRequester &&
+          r.targetUserId === normalizedTarget &&
+          r.status === "pending",
+      );
+      if (duplicate) {
+        return fail("DUPLICATE_PENDING");
+      }
+      const pendingCount = db.storyRequests.filter(
+        (r) => r.requesterUserId === normalizedRequester && r.status === "pending",
+      ).length;
+      if (pendingCount >= FileStore._storyRequestMaxPendingPerInitiator) {
+        return fail("TOO_MANY_PENDING");
+      }
+
+      const now = nowIso();
+      const request = {
+        id: `sreq_${crypto.randomUUID()}`,
+        treeId: normalizedTreeId,
+        personId: normalizedPersonId,
+        requesterUserId: normalizedRequester,
+        targetUserId: normalizedTarget,
+        question: {text: questionText, themeKey, sourceQuestionId},
+        status: "pending",
+        answer: null,
+        createdAt: now,
+        updatedAt: now,
+        expiresAt: new Date(Date.now() + FileStore._storyRequestTtlMs).toISOString(),
+        respondedAt: null,
+        // One-shot guard for the lazy-expiry notification — see
+        // _sweepExpiredStoryRequests.
+        expiredNotifiedAt: null,
+      };
+      db.storyRequests.push(request);
+      return {
+        request: structuredClone(request),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+    });
+  }
+
+  /// role: 'received' (target) | 'issued' (requester). Route validates
+  /// role presence/value (400 without role); unknown role defensively
+  /// falls back to 'received' here, mirroring listKinshipChecksForUser.
+  async listStoryRequestsForUser({userId, role, status}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return {requests: [], newlyExpired: []};
+    const field = role === "issued" ? "requesterUserId" : "targetUserId";
+    const normalizedStatus = status ? String(status) : null;
+
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      let filtered = (db.storyRequests || []).filter((r) => r[field] === normalizedUser);
+      if (normalizedStatus) {
+        filtered = filtered.filter((r) => r.status === normalizedStatus);
+      }
+      const result = {
+        requests: filtered.map((r) => structuredClone(r)),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+      return newlyExpired.length > 0 ? result : skip(result);
+    });
+  }
+
+  /// Visible ONLY to the requester or the target — returns request: null
+  /// for both "not found" and "found but not yours" (indistinguishable on
+  /// purpose: a third tree member must not learn a request between two
+  /// other members even exists).
+  async findStoryRequest({requestId, viewerUserId}) {
+    const normalizedId = normalizeNullableString(requestId);
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedId || !normalizedViewer) {
+      return {request: null, newlyExpired: []};
+    }
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const request = (db.storyRequests || []).find((r) => r.id === normalizedId);
+      const visible =
+        request &&
+        (request.requesterUserId === normalizedViewer || request.targetUserId === normalizedViewer);
+      const result = {
+        request: visible ? structuredClone(request) : null,
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+      return newlyExpired.length > 0 ? result : skip(result);
+    });
+  }
+
+  /// Target answers a pending request: appends a block to the hero's
+  /// article AND flips the request to 'answered' in the SAME _mutate
+  /// transaction (no nested store calls — inlines the equivalent of
+  /// appendArticleBlock's body using the same pure helpers it uses:
+  /// _resolveArticleContext / _ensureProfileArticle / createArticleBlockRecord).
+  ///
+  /// Permission note (§1, deliberate): the REQUESTER needed edit rights on
+  /// the person at creation time (checked at the route layer); the TARGET
+  /// does NOT need their own edit grant to answer — the pending request
+  /// itself IS the one-time permission slip Артём approved to write this
+  /// one block. Don't add a requireGraphPersonEdit check here for the
+  /// target; that would break the whole feature for anonymous-card /
+  /// no-grant addressees the request is specifically meant to reach.
+  ///
+  /// Errors: INVALID_INPUT, NOT_FOUND, NOT_TARGET, NOT_PENDING, INVALID_ANSWER.
+  async answerStoryRequest({requestId, actorUserId, answer}) {
+    const normalizedId = normalizeNullableString(requestId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedId || !normalizedActor) {
+      return {error: "INVALID_INPUT"};
+    }
+    const kind = String(answer?.kind || "").trim();
+    if (!["audio", "text", "photo"].includes(kind)) {
+      return {error: "INVALID_ANSWER"};
+    }
+
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const fail = (error) => {
+        const payload = {
+          error,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? payload : skip(payload);
+      };
+
+      const request = (db.storyRequests || []).find((r) => r.id === normalizedId);
+      if (!request) return fail("NOT_FOUND");
+      if (request.targetUserId !== normalizedActor) return fail("NOT_TARGET");
+      if (request.status !== "pending") return fail("NOT_PENDING");
+
+      // Map the answer's wire shape → an article block type/content. MVP-1
+      // decision §0.3/§0.4: audio stores no transcript (речь не
+      // расшифровывается), video is out of scope (no `video` block type
+      // exists yet — don't add one here).
+      let blockType;
+      let blockContent;
+      if (kind === "audio") {
+        const url = normalizeNullableString(answer?.mediaUrl);
+        if (!url) return fail("INVALID_ANSWER");
+        blockType = "audio";
+        blockContent = {url, durationSec: answer?.durationSec, transcript: null};
+      } else if (kind === "text") {
+        const text = String(answer?.text || "").trim();
+        if (!text) return fail("INVALID_ANSWER");
+        blockType = "paragraph";
+        blockContent = {spans: [text]};
+      } else {
+        const url = normalizeNullableString(answer?.mediaUrl);
+        if (!url) return fail("INVALID_ANSWER");
+        blockType = "photo";
+        blockContent = {url, caption: normalizeNullableString(answer?.caption)};
+      }
+
+      let block;
+      let ctx;
+      try {
+        ctx = this._resolveArticleContext(db, request.personId);
+        block = createArticleBlockRecord({
+          type: blockType,
+          content: blockContent,
+          actorUserId: normalizedActor,
+        });
+      } catch (error) {
+        if (error?.message === "PERSON_NOT_FOUND") return fail("NOT_FOUND");
+        return fail("INVALID_ANSWER");
+      }
+      // Additive, sits NEXT TO `content` (not inside it) — §1: normalizeArticleBlockContent
+      // stays untouched, existing blocks without `source` are unaffected.
+      // Lets the «Истории» section sign the block «На вопрос {Имя}, {дата}».
+      block.source = {
+        requestId: request.id,
+        question: structuredClone(request.question),
+        askedByUserId: request.requesterUserId,
+        askedAt: request.createdAt,
+      };
+
+      const article = this._ensureProfileArticle(db, request.personId, ctx);
+      article.blocks.push(block);
+      article.updatedAt = block.createdAt;
+      this._appendTreeChangeRecord(db, {
+        treeId: ctx.treeId,
+        actorId: normalizedActor,
+        type: "article.block-added",
+        personId: request.personId,
+        details: {blockId: block.id, blockType: block.type, storyRequestId: request.id},
+      });
+
+      const now = nowIso();
+      request.status = "answered";
+      request.answer = {
+        articleBlockId: block.id,
+        kind,
+        answeredByUserId: normalizedActor,
+        answeredAt: now,
+      };
+      request.respondedAt = now;
+      request.updatedAt = now;
+
+      return {
+        request: structuredClone(request),
+        block: structuredClone(block),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+    });
+  }
+
+  /// Target declines a pending request. Errors: INVALID_INPUT, NOT_FOUND,
+  /// NOT_TARGET, NOT_PENDING.
+  async declineStoryRequest({requestId, actorUserId}) {
+    const normalizedId = normalizeNullableString(requestId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedId || !normalizedActor) {
+      return {error: "INVALID_INPUT"};
+    }
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const fail = (error) => {
+        const payload = {
+          error,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? payload : skip(payload);
+      };
+      const request = (db.storyRequests || []).find((r) => r.id === normalizedId);
+      if (!request) return fail("NOT_FOUND");
+      if (request.targetUserId !== normalizedActor) return fail("NOT_TARGET");
+      if (request.status !== "pending") return fail("NOT_PENDING");
+
+      const now = nowIso();
+      request.status = "declined";
+      request.respondedAt = now;
+      request.updatedAt = now;
+      return {
+        request: structuredClone(request),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+    });
+  }
+
+  /// Initiator revokes own pending request. Errors: INVALID_INPUT,
+  /// NOT_FOUND, NOT_INITIATOR, NOT_PENDING. Deliberately does NOT set
+  /// `respondedAt` — that field means "the addressee acted"; a revoke is
+  /// the initiator's own action, so only `updatedAt` moves.
+  async revokeStoryRequest({requestId, actorUserId}) {
+    const normalizedId = normalizeNullableString(requestId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedId || !normalizedActor) {
+      return {error: "INVALID_INPUT"};
+    }
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const fail = (error) => {
+        const payload = {
+          error,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? payload : skip(payload);
+      };
+      const request = (db.storyRequests || []).find((r) => r.id === normalizedId);
+      if (!request) return fail("NOT_FOUND");
+      if (request.requesterUserId !== normalizedActor) return fail("NOT_INITIATOR");
+      if (request.status !== "pending") return fail("NOT_PENDING");
+
+      request.status = "revoked";
+      request.updatedAt = nowIso();
+      return {
+        request: structuredClone(request),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+    });
+  }
+
   // ── Retention for unbounded LOG / history collections ─────────────
   // These are NOT soft-delete tombstones (that is hardDeleteExpired's
   // job) but append-only logs/history that bloat the whole-document blob.
@@ -22116,6 +22514,7 @@ class FileStore {
       notificationsRead: 0,
       notificationsUnread: 0,
       treeChangeDetailsStripped: 0,
+      storyRequestsTerminal: 0,
     };
     const parseTs = (value) => {
       const t = value ? Date.parse(value) : NaN;
@@ -22250,6 +22649,35 @@ class FileStore {
         cutoffTs: nowTs - treeDetailMs,
         dryRun,
       });
+    }
+
+    // ── db.storyRequests: terminal-only TTL (STORY-REQUEST-MVP1-BRIEF.md
+    //   §2.3). Pending requests are NEVER trimmed here — only their own 30d
+    //   lazy expiry (_sweepExpiredStoryRequests) can end one; this sweep
+    //   only reclaims already-terminal rows (answered/declined/expired/
+    //   revoked) past a separate, longer retention window, mirroring
+    //   db.calls' terminal-only TTL above. Age is measured from `updatedAt`
+    //   (set on every terminal transition), falling back to `createdAt` for
+    //   a hypothetical row that somehow never got one.
+    const storyRequestsTtlMs =
+      Math.max(0, Number(retention.storyRequestsTerminalDays ?? 90)) * DAY;
+    if (
+      storyRequestsTtlMs > 0 &&
+      Array.isArray(db.storyRequests) &&
+      db.storyRequests.length
+    ) {
+      const remove = new Set();
+      for (const request of db.storyRequests) {
+        if (request.status === "pending") continue;
+        const ts = parseTs(request.updatedAt) ?? parseTs(request.createdAt);
+        if (ts !== null && nowTs - ts > storyRequestsTtlMs) {
+          remove.add(request);
+        }
+      }
+      counts.storyRequestsTerminal = remove.size;
+      if (!dryRun && remove.size) {
+        db.storyRequests = db.storyRequests.filter((r) => !remove.has(r));
+      }
     }
 
     return counts;

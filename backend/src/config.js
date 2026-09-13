@@ -216,6 +216,14 @@ function createConfig() {
     30,
     "RODNYA_TREE_CHANGE_DETAIL_RETENTION_DAYS",
   );
+  // «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §2.3): terminal
+  // storyRequests (answered/declined/expired/revoked) older than this are
+  // swept by the same hard-delete job — pending requests are never touched
+  // here (only their own 30d lazy expiry can end one).
+  const storyRequestsTerminalRetentionDays = readEnvNumber(
+    90,
+    "RODNYA_HARD_DELETE_STORY_REQUESTS_DAYS",
+  );
   const mediaBackend = String(
     readEnvAlias("RODNYA_MEDIA_BACKEND") || "local",
   )
@@ -435,6 +443,7 @@ function createConfig() {
     notificationsReadRetentionDays,
     notificationsUnreadRetentionDays,
     treeChangeDetailRetentionDays,
+    storyRequestsTerminalRetentionDays,
     // OTA-апдейтер sideload-сборок: значения отдаёт GET /v1/app/latest.
     latestAndroidUpdate: {
       versionCode: latestAndroidVersionCode,
