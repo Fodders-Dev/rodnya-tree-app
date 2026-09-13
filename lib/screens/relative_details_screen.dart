@@ -25,8 +25,10 @@ import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dar
 import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/person_tree_resolution_capable_family_tree_service.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/interfaces/story_request_capable_family_tree_service.dart';
 import '../backend/models/identity_field_conflict.dart';
+import '../backend/models/semya.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
@@ -161,6 +163,12 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
 
   FamilyPerson? _person;
   List<FamilyPerson> _treePeople = [];
+  // MVP-1.1 «Спросить историю»: члены семьи текущего дерева (не только те,
+  // у кого есть своя персона) — резолвится один раз здесь, чтобы
+  // _buildStoryAskTargets оставался синхронным и не дёргал сеть на тап.
+  // Бэкенд уже принимает любого члена семьи как адресата
+  // (store._isUserInTreeOrSemya) — правок бэкенда это не требует.
+  List<SemyaMembership> _semyaMembers = [];
 
   // MVP-1 «Спросить историю»: bumped after a story-request is sent from
   // this screen so StoryRequestStatusLine's key changes and it remounts
@@ -356,6 +364,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _errorKind = null;
       _person = null;
       _treePeople = [];
+      _semyaMembers = [];
       _relations = [];
       _historyRecords = [];
       _userProfile = null;
@@ -437,6 +446,32 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _treePeople = [];
       _relations = [];
       _currentUserPersonId = null;
+    }
+
+    // 1b. MVP-1.1 «Спросить историю»: члены семьи этого дерева, включая
+    // тех, у кого нет своей персоны в дереве (see _semyaMembers doc).
+    // Best-effort — сбой резолва семьи не должен ронять карточку, шаг
+    // «Кого спросить» просто останется как раньше (только персоны дерева).
+    if (_familyService is SemyaCapableFamilyTreeService) {
+      try {
+        final semyaService = _familyService as SemyaCapableFamilyTreeService;
+        final semyi = await semyaService.listMySemya();
+        Semya? semya;
+        for (final s in semyi) {
+          if (s.treeId == _currentTreeId) {
+            semya = s;
+            break;
+          }
+        }
+        _semyaMembers = semya == null
+            ? []
+            : await semyaService.listMembershipsForSemya(semya.id);
+      } catch (semyaError) {
+        debugPrint(
+          'Не удалось загрузить членов семьи дерева $_currentTreeId: $semyaError',
+        );
+        _semyaMembers = [];
+      }
     }
 
     try {
