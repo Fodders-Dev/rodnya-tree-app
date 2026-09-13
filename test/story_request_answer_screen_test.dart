@@ -237,6 +237,32 @@ void main() {
     expect(find.textContaining('Артём'), findsWidgets);
   });
 
+  testWidgets('«Прислать фото» → pick → upload → answerStoryRequest(photo)',
+      (tester) async {
+    final service = _FakeStoryRequestService(_pendingRequest());
+    final storage = _FakeStorage();
+    await _pumpScreen(
+      tester,
+      service: service,
+      storage: storage,
+      pickImageOverride: (_) async => XFile.fromData(
+        Uint8List.fromList(const [1, 2, 3]),
+        name: 'photo.jpg',
+        mimeType: 'image/jpeg',
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('story-answer-photo')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('story-answer-photo-gallery')));
+    await tester.pumpAndSettle();
+
+    expect(storage.uploadImageCalls, 1);
+    expect(service.calls.contains('answer:photo'), true);
+    expect(service.lastAnswer?.mediaUrl, 'https://img/story-photo.jpg');
+    expect(find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
+  });
+
   testWidgets('«Написать текстом» → type → «Сохранить» → answerStoryRequest(text)',
       (tester) async {
     final service = _FakeStoryRequestService(_pendingRequest());
