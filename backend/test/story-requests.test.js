@@ -405,7 +405,7 @@ test("POST /story-requests: success → 201 pending + story_request_received not
   }
 });
 
-test("POST /story-requests: duplicate pending (same triple) → 409 DUPLICATE_PENDING", async () => {
+test("POST /story-requests: duplicate pending (same triple + same question) → 409, другой вопрос → 201", async () => {
   const ctx = await startTestServer();
   try {
     const {alice, bob, tree, hero} = await seedTreeHeroAndMember(ctx, {
@@ -417,6 +417,13 @@ test("POST /story-requests: duplicate pending (same triple) → 409 DUPLICATE_PE
     assert.equal(first.status, 201);
     const second = await ask(ctx, alice.accessToken, body);
     assert.equal(second.status, 409);
+    // Другой вопрос той же паре про того же человека — не дубль (правило
+    // уточнено 13.09 на живой проверке: два вопроса бабушке за вечер — норма).
+    const other = await ask(ctx, alice.accessToken, {
+      ...body,
+      question: {text: "Какие семейные традиции были в вашей семье?"},
+    });
+    assert.equal(other.status, 201);
   } finally {
     await stopTestServer(ctx);
   }

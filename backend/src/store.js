@@ -22193,6 +22193,10 @@ class FileStore {
     }
     const themeKey = normalizeNullableString(question?.themeKey);
     const sourceQuestionId = normalizeNullableString(question?.sourceQuestionId);
+    // Дубль — это ТОТ ЖЕ вопрос той же паре про того же человека, а не любой
+    // открытый вопрос к ней: два разных вопроса бабушке за один вечер —
+    // нормальный сценарий, от спама защищает лимит открытых (TOO_MANY_PENDING).
+    const questionKey = questionText.toLowerCase().replace(/\s+/g, " ");
 
     return this._mutate((db, skip) => {
       const newlyExpired = this._sweepExpiredStoryRequests(db);
@@ -22224,7 +22228,8 @@ class FileStore {
           r.personId === normalizedPersonId &&
           r.requesterUserId === normalizedRequester &&
           r.targetUserId === normalizedTarget &&
-          r.status === "pending",
+          r.status === "pending" &&
+          String(r.question?.text || "").toLowerCase().replace(/\s+/g, " ") === questionKey,
       );
       if (duplicate) {
         return fail("DUPLICATE_PENDING");
