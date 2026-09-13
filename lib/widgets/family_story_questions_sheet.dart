@@ -361,7 +361,7 @@ class _FamilyStoryQuestionsSheetState
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Вопрос отправлен ${target.displayName}')),
+        SnackBar(content: Text('${target.displayName} получит ваш вопрос')),
       );
       Navigator.of(context).pop(
         FamilyStoryQuestionAction(

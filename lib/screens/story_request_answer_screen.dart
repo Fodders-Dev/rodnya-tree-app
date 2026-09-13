@@ -103,13 +103,20 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
     return null;
   }
 
+  // Вложения person/requester приходят только с GET; ответ на answer/
+  // decline — голый запрос. Имена кэшируем при загрузке, иначе экран
+  // «Спасибо» после ответа терял имя инициатора.
+  String? _cachedRequesterName;
+  String? _cachedPersonName;
+
   String get _requesterName {
-    final name = _request?.requester?.displayName?.trim();
+    final name =
+        (_request?.requester?.displayName ?? _cachedRequesterName)?.trim();
     return (name != null && name.isNotEmpty) ? name : 'Родной человек';
   }
 
   String get _personName {
-    final name = _request?.person?.displayName?.trim();
+    final name = (_request?.person?.displayName ?? _cachedPersonName)?.trim();
     return (name != null && name.isNotEmpty) ? name : 'этого человека';
   }
 
@@ -136,6 +143,9 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       }
       setState(() {
         _request = request;
+        _cachedRequesterName =
+            request.requester?.displayName ?? _cachedRequesterName;
+        _cachedPersonName = request.person?.displayName ?? _cachedPersonName;
         _state = request.isPending ? _ScreenState.main : _ScreenState.terminal;
       });
     } catch (e) {
@@ -196,7 +206,9 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
   }
 
   Future<void> _recordAudio() async {
-    final record = widget.audioRecordOverride ?? showAudioRecordSheet;
+    final record = widget.audioRecordOverride ??
+        (BuildContext ctx) =>
+            showAudioRecordSheet(ctx, confirmLabel: 'Сохранить');
     final result = await record(context);
     if (result == null || !mounted) return;
     final storage = _storage();
@@ -527,7 +539,7 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
           child: Column(
             children: [
               Text(
-                '$_requesterName спрашивает о $_personName',
+                'Спрашивает: $_requesterName\nО ком: $_personName',
                 key: const Key('story-answer-context'),
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyLarge?.copyWith(

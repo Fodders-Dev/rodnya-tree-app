@@ -1,6 +1,6 @@
 // «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §3.6): for the
 // INITIATOR only, a status line above «Семейные истории» tracking their
-// own open questions about this person — «Ждём ответа {имя} · Отозвать».
+// own open questions about this person — «Ждём ответа: {имя} · Отозвать».
 // Read-only viewers and the addressee never see this (it's the asker's
 // own bookkeeping, not a public thing on the card).
 //
@@ -137,7 +137,7 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'Ждём ответа ${_targetName(request)}',
+                      'Ждём ответа: ${_targetName(request)}',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),

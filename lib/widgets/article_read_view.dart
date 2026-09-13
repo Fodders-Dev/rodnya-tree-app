@@ -79,15 +79,17 @@ class ArticleReadView extends StatelessWidget {
   }
 
   /// «На вопрос {Имя}, {дата}» — who asked and when. Falls back to
-  /// «На вопрос родного» when the asker's name isn't in [authorNames]
+  /// «Ответ на вопрос родного» when the asker's name isn't in [authorNames]
   /// (viewer isn't in the asker's contact/relatives cache yet); the date
   /// is dropped instead of showing a raw parse failure.
   Widget _sourceCaption(BuildContext context, ArticleBlockSource source) {
     final theme = Theme.of(context);
     final askerName = authorNames[source.askedByUserId]?.trim();
+    // Имя — в именительном («Ответ на вопрос: Артём»), без склонения;
+    // когда имя неизвестно — «родного» в родительном читается естественно.
     final who = (askerName != null && askerName.isNotEmpty)
-        ? askerName
-        : 'родного';
+        ? ': $askerName'
+        : ' родного';
     final askedAt = parseDateTime(source.askedAt);
     final dateSuffix = askedAt == null
         ? ''
@@ -96,7 +98,7 @@ class ArticleReadView extends StatelessWidget {
       key: Key('article-source-${source.requestId}'),
       padding: const EdgeInsets.only(top: 2, bottom: 4),
       child: Text(
-        'На вопрос $who$dateSuffix',
+        'Ответ на вопрос$who$dateSuffix',
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
           fontStyle: FontStyle.italic,

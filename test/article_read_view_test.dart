@@ -241,7 +241,7 @@ void main() {
   });
 
   // MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.6): a block
-  // with `source` gets a «На вопрос {имя}, {дата}» caption, rendered once
+  // with `source` gets a «Ответ на вопрос: {имя}, {дата}» caption, rendered once
   // in the shared block loop (not per-type).
   group('MVP-1 story-request source caption', () {
     testWidgets('shows asker name (resolved via authorNames) + formatted date',
@@ -271,7 +271,7 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 20));
 
-      expect(find.text('На вопрос Артём, 13 сентября'), findsOneWidget);
+      expect(find.text('Ответ на вопрос: Артём, 13 сентября'), findsOneWidget);
       expect(find.byKey(const Key('article-source-sreq-1')), findsOneWidget);
     });
 
@@ -298,7 +298,7 @@ void main() {
       await tester.pump();
 
       // Empty/unparseable askedAt → date suffix dropped, not a crash.
-      expect(find.text('На вопрос родного'), findsOneWidget);
+      expect(find.text('Ответ на вопрос родного'), findsOneWidget);
     });
 
     testWidgets('block без source не получает подпись', (tester) async {

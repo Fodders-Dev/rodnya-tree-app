@@ -245,7 +245,7 @@ void main() {
       expect(service.lastQuestion?.text, isNotEmpty);
       expect(result?.type, FamilyStoryQuestionActionType.requestSent);
       expect(result?.request?.id, 'sreq-new');
-      expect(find.text('Вопрос отправлен Артём'), findsOneWidget);
+      expect(find.text('Артём получит ваш вопрос'), findsOneWidget);
     },
   );
 

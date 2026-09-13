@@ -1,5 +1,5 @@
 // «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §3.6):
-// StoryRequestStatusLine — the initiator-only «Ждём ответа {имя} ·
+// StoryRequestStatusLine — the initiator-only «Ждём ответа: {имя} ·
 // Отозвать» line above «Семейные истории».
 
 import 'package:flutter/material.dart';
@@ -98,7 +98,7 @@ StoryRequest _pending({
 }
 
 void main() {
-  testWidgets('shows «Ждём ответа {имя}» for a pending issued request about this person',
+  testWidgets('shows «Ждём ответа: {имя}» for a pending issued request about this person',
       (tester) async {
     final service = _FakeService([_pending(id: 'sreq-1', personId: 'p-1')]);
     await tester.pumpWidget(
@@ -114,7 +114,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Ждём ответа Артём'), findsOneWidget);
+    expect(find.text('Ждём ответа: Артём'), findsOneWidget);
     expect(find.byKey(const Key('story-request-revoke-sreq-1')), findsOneWidget);
   });
 

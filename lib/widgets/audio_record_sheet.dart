@@ -31,17 +31,24 @@ const int _maxRecordSeconds = 15 * 60; // Profile Q7
 
 /// Shows the voice-recording sheet. Returns the recorded artifact, or
 /// null if cancelled / permission denied.
-Future<AudioRecordResult?> showAudioRecordSheet(BuildContext context) {
+/// [confirmLabel] — подпись кнопки подтверждения: в редакторе статьи запись
+/// «вставляется» в текст, в ответе на вопрос — «сохраняется» как история.
+Future<AudioRecordResult?> showAudioRecordSheet(
+  BuildContext context, {
+  String confirmLabel = 'Вставить',
+}) {
   return showModalBottomSheet<AudioRecordResult>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (_) => const _AudioRecordSheet(),
+    builder: (_) => _AudioRecordSheet(confirmLabel: confirmLabel),
   );
 }
 
 class _AudioRecordSheet extends StatefulWidget {
-  const _AudioRecordSheet();
+  const _AudioRecordSheet({this.confirmLabel = 'Вставить'});
+
+  final String confirmLabel;
 
   @override
   State<_AudioRecordSheet> createState() => _AudioRecordSheetState();
@@ -225,7 +232,7 @@ class _AudioRecordSheetState extends State<_AudioRecordSheet> {
             FilledButton(
               key: const Key('audio-record-done'),
               onPressed: _accept,
-              child: const Text('Вставить'),
+              child: Text(widget.confirmLabel),
             ),
           ],
         ),
