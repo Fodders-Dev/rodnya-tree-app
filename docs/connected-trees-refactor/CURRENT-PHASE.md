@@ -375,8 +375,10 @@ Phase B фронт ЗАКРЫТ (FE1-FE10 + FE3b + mama-friendly polish chunk). 
   `rodnya_state_tree_change_backups` удалена (точечный дамп
   `/opt/rodnya/backups/manual/speed8b-tree-change-backups-table-20260913-142547.dump`);
   скрипт `restore-tree-change-records-to-blob.js` оставлен в репо.
-  Бэкап-таблицы SPEED-6/7 (`_chat_backups`, `_notification_backups`) ещё лежат —
-  убрать по слову Артёма тем же способом.
+  Бэкап-таблицы SPEED-6/7 (`_chat_backups`, `_notification_backups`) удалены
+  13.09 тем же способом (дамп
+  `/opt/rodnya/backups/manual/speed6-7-backup-tables-20260913-181145.dump`).
+  Пустые `*_backups` после рестарта — норма: `CREATE TABLE IF NOT EXISTS` на буте.
 * **SPEED-8c** (04.09): журнал `slow-request` пуст; 12.09 — единичные всплески
   только от разового подметания 38 фикстур в смоук-дереве.
 * **SPEED-6/7** (27.08, 30.08): закрыты без инцидентов.
