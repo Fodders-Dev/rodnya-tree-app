@@ -354,33 +354,43 @@ Phase B фронт ЗАКРЫТ (FE1-FE10 + FE3b + mama-friendly polish chunk). 
 
 ## Observation windows (active)
 
-* **SPEED-8b observation**: 2026-09-03 → ~2026-09-10. Пред-деплойный дамп
-  `/opt/rodnya/backups/manual/pre-speed8b-20260903-203120.dump`, откат —
-  `backend/scripts/restore-tree-change-records-to-blob.js`. После окна —
-  уборка как у SPEED-6/7 (бэкап-таблицы, откат-скрипт). SPEED-6/7 окна
-  закрыты без инцидентов.
-* **SPEED-8c**: наблюдение по журналу `slow-request` (порог 500 мс) — с
-  деплоя 04.09 10:26 пусто.
+* **SPEED-15** (корзина/диагностика/сессии вне JSONB): 2026-09-11 → ~2026-09-18.
+  Дамп `/opt/rodnya/backups/manual/pre-speed15-20260911-133419.dump`, откат —
+  `backend/scripts/restore-{sessions,client-diagnostics,deleted-persons}-to-blob.js`
+  при остановленном бэкенде, **сессии первыми** (иначе старый код перезальёт
+  `auth_sessions` пустым блобом — массовый логаут). Контрольный рестарт 11.09
+  прошёл без потери сессий. После окна — уборка бэкап-таблиц
+  `_deleted_persons_backups` / `_client_diagnostics_backups` / `_sessions_backups`
+  и ветки `perf/speed15-shrink-blob`.
+* **SPEED-16** (сметание корзины в таблице, обрезка `legacyPersonIds`):
+  2026-09-11 → ~2026-09-18. Откат — revert кода; данных восстанавливать нечего.
+  Первый прогон джоба 12.09 подтверждён (8 строк корзины из таблицы). После
+  окна — ветка `perf/speed16-graph-tombstones`.
+* **Фикстуры прод-смоука** (13.09): через ~30 дней в `hard_delete_run` ждать
+  `deletedPersons` ≈ 8/сутки вместо 12; остатки в смоук-дереве не копятся.
 
-* **Phase 6 observation**: 2026-05-14 → 2026-05-28 (2 weeks).
-  Метрики per MERGE-CHECKLIST-PHASE-6 §5:
-  * register → wizard finish >70%
-  * wizard finish → tree view >90%
-  * discover funnel (FAB → submit) >40%
-  * kinship acceptance rate (informational)
-  * 5xx rate <0.1%
-  Flagless (additive feature) — observation = passive metric monitoring,
-  no code flip needed.
+### Закрытые окна
 
-  > ⚠️ Day 8 peek (2026-05-22): organic adoption минимальный
-  > (1 real user из 5 registrations, hit chunk 4a bug before fix
-  > deploy). Server-side state correct (`currentStep: "welcome"` для
-  > всех 5), automatic retry slot ready на next login. Review window
-  > likely inconclusive — sample too small. См. DECISIONS 2026-05-22
-  > "Phase 6 observation early peek".
+* **SPEED-8b** (03.09 → 10.09): без инцидентов. Уборка как у SPEED-6/7
+  (бэкап-таблицы, `restore-tree-change-records-to-blob.js`) — отдельным шагом.
+* **SPEED-8c** (04.09): журнал `slow-request` пуст; 12.09 — единичные всплески
+  только от разового подметания 38 фикстур в смоук-дереве.
+* **SPEED-6/7** (27.08, 30.08): закрыты без инцидентов.
+* **Phase 6** (2026-05-14 → 05-28): выборка слишком мала, окно неубедительно —
+  см. DECISIONS 2026-05-22 «Phase 6 observation early peek». Метрики
+  (register → wizard finish >70%, wizard → tree >90%, discover funnel >40%,
+  5xx <0.1%) остаются ориентиром для следующего замера.
 
 ## Pending — нужен Артёмов design call
 
+* **Данные прода (деструктивно, только по явному OK)**: зомби-звонки и
+  аккаунты `codex-web-*`.
+* **Доставка приглашений**: провайдер email или SMS.
+* **«Спросить историю»**: продуктовый сценарий (см. лейтмотив — семейная память).
+* **Скорость, следующие кандидаты** (без измеренной боли не начинать):
+  `circleMembers` (223 КБ, 14 % блоба, гибрид авто/custom — отдельный проект),
+  `users` из JSONB (133 КБ, приём как у сессий, но с наложением при чтении),
+  персоны из блоба (самое дорогое, только по «го»).
 * **Phase 6.5** (post-observation, conditional):
   * Identity-suggestions push notification (DECISIONS
     2026-05-14 «identity-suggestions push deferred»).
