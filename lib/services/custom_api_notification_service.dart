@@ -1336,6 +1336,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       case 'kinship_check_confirmed':
       case 'kinship_check_declined':
       case 'kinship_check_expired':
+      // MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §1) — same
+      // bucket as kinship-checks: warm family context, not urgent.
+      case 'story_request_received':
+      case 'story_request_answered':
+      case 'story_request_declined':
+      case 'story_request_expired':
+      case 'story_request_revoked':
         return _channelIdSocial;
       default:
         return _channelIdSystem;
@@ -1979,6 +1986,40 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
     if (type == 'kinship_check_declined' || type == 'kinship_check_expired') {
       _navigateOverHome(router, '/discover/relatives');
+      return;
+    }
+
+    // MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §1 route
+    // table + §3.5): received → the voice-first answer screen (needs
+    // just requestId); answered/declined/expired → back to the hero's
+    // page, where the answer (or the initiator's status line) lives.
+    // `revoked` carries only `requestId` per contract (no treeId/
+    // personId) — there's nowhere useful to deep-link the addressee to,
+    // so it deliberately falls through to the generic treeId tail below
+    // (a no-op, since that payload has no treeId either) rather than
+    // guessing a destination.
+    if (type == 'story_request_received') {
+      final requestId = rootPayload['requestId']?.toString() ??
+          data['requestId']?.toString() ??
+          '';
+      if (requestId.isNotEmpty) {
+        _navigateOverHome(router, '/story-requests/$requestId/answer');
+      }
+      return;
+    }
+    if (type == 'story_request_answered' ||
+        type == 'story_request_declined' ||
+        type == 'story_request_expired') {
+      final personId =
+          rootPayload['personId']?.toString() ?? data['personId']?.toString();
+      final treeId =
+          rootPayload['treeId']?.toString() ?? data['treeId']?.toString();
+      if (personId != null && personId.isNotEmpty) {
+        _navigateOverHome(
+          router,
+          relativeDetailsRoute(personId, treeId: treeId),
+        );
+      }
       return;
     }
 
