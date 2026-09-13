@@ -668,54 +668,31 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     );
   }
 
-  /// MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.3):
-  /// candidates for the «Кого спросить» step — «сам(а) {герой}» (when the
-  /// person being asked about has their own linked account and it isn't
-  /// the viewer) followed by other tree members with an account. Reuses
-  /// `_treePeople` (already loaded for relation labels — see `_load`
-  /// above), no separate fetch. Empty when the capability is absent or
-  /// there's simply nobody with an account to ask yet — the sheet then
-  /// behaves exactly as before this feature existed.
+  /// MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.3), extended
+  /// MVP-1.1: candidates for the «Кого спросить» step — «сам(а) {герой}»
+  /// (when the person being asked about has their own linked account and
+  /// it isn't the viewer), then other tree members with an account, then
+  /// remaining семья members who have no persona of their own in this
+  /// tree (backend already accepts any семья member as addressee, see
+  /// `store._isUserInTreeOrSemya` — no backend change needed here). Reuses
+  /// `_treePeople`/`_semyaMembers` (already loaded in `_load` above), no
+  /// separate fetch on tap. Empty when there's simply nobody to ask yet —
+  /// the sheet then behaves exactly as before this feature existed.
+  ///
+  /// Delegates to the top-level `buildStoryAskTargets` so the merge/dedup
+  /// logic is unit-testable without a widget tree (see
+  /// test/family_story_ask_targets_test.dart).
   List<FamilyStoryAskTarget> _buildStoryAskTargets({
     required FamilyPerson person,
     required String heroDisplayName,
   }) {
-    final currentUserId = _authService.currentUserId;
-    final heroUserId = person.userId;
-    final targets = <FamilyStoryAskTarget>[];
-    if (heroUserId != null &&
-        heroUserId.isNotEmpty &&
-        heroUserId != currentUserId) {
-      targets.add(FamilyStoryAskTarget(
-        userId: heroUserId,
-        displayName: '${_selfAskPrefix(person.gender)} $heroDisplayName',
-        photoUrl: person.photoUrl,
-        isHero: true,
-      ));
-    }
-    final seen = targets.map((t) => t.userId).toSet();
-    for (final p in _treePeople) {
-      final uid = p.userId;
-      if (uid == null || uid.isEmpty) continue;
-      if (uid == currentUserId || !seen.add(uid)) continue;
-      targets.add(FamilyStoryAskTarget(userId: uid, displayName: p.name, photoUrl: p.photoUrl));
-    }
-    return targets;
-  }
-
-  /// «Сама Лида» / «Сам Артём» — gender-aware so the chip doesn't read
-  /// like a form field («сам(а)»). Falls back to the slash notation only
-  /// when gender genuinely isn't known.
-  String _selfAskPrefix(Gender gender) {
-    switch (gender) {
-      case Gender.female:
-        return 'Сама';
-      case Gender.male:
-        return 'Сам';
-      case Gender.other:
-      case Gender.unknown:
-        return 'Сам(а)';
-    }
+    return buildStoryAskTargets(
+      heroPerson: person,
+      heroDisplayName: heroDisplayName,
+      treePeople: _treePeople,
+      semyaMembers: _semyaMembers,
+      currentUserId: _authService.currentUserId,
+    );
   }
 
   Future<void> _askFamilyStory({
@@ -2709,5 +2686,81 @@ class _HeroActionTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// MVP-1.1 «Спросить историю»: pure, synchronous merge for the «Кого
+/// спросить» step's chip list (STORY-REQUEST-MVP1-BRIEF.md §3.3 + семья
+/// extension — see docs/connected-trees-refactor/CURRENT-PHASE.md).
+/// Order: герой (if their account isn't the viewer's) → tree members with
+/// their own person in this tree → remaining семья members who have no
+/// persona of their own here. Deduped by userId, viewer excluded
+/// throughout. The backend already accepts any семья member as an
+/// addressee (`store._isUserInTreeOrSemya`) — this only surfaces them
+/// client-side. Top-level (not an instance method) so it's unit-testable
+/// without a widget tree — see test/family_story_ask_targets_test.dart.
+List<FamilyStoryAskTarget> buildStoryAskTargets({
+  required FamilyPerson heroPerson,
+  required String heroDisplayName,
+  required List<FamilyPerson> treePeople,
+  required List<SemyaMembership> semyaMembers,
+  required String? currentUserId,
+}) {
+  final heroUserId = heroPerson.userId;
+  final targets = <FamilyStoryAskTarget>[];
+  if (heroUserId != null &&
+      heroUserId.isNotEmpty &&
+      heroUserId != currentUserId) {
+    targets.add(FamilyStoryAskTarget(
+      userId: heroUserId,
+      displayName: '${_selfAskPrefix(heroPerson.gender)} $heroDisplayName',
+      photoUrl: heroPerson.photoUrl,
+      isHero: true,
+    ));
+  }
+  final seen = targets.map((t) => t.userId).toSet();
+  for (final p in treePeople) {
+    final uid = p.userId;
+    if (uid == null || uid.isEmpty) continue;
+    if (uid == currentUserId || !seen.add(uid)) continue;
+    targets.add(
+      FamilyStoryAskTarget(userId: uid, displayName: p.name, photoUrl: p.photoUrl),
+    );
+  }
+  for (final m in semyaMembers) {
+    final uid = m.userId;
+    if (uid.isEmpty) continue;
+    if (uid == currentUserId || !seen.add(uid)) continue;
+    targets.add(
+      FamilyStoryAskTarget(
+        userId: uid,
+        displayName: _semyaMemberDisplayName(m),
+        photoUrl: m.avatarUrl,
+      ),
+    );
+  }
+  return targets;
+}
+
+/// Chip label for a семья member with no persona in this tree. Deliberately
+/// NOT `SemyaMembership.displayLabel` (which falls back to the raw userId)
+/// — a bare id in a chip is confusing product copy, not a person's name.
+String _semyaMemberDisplayName(SemyaMembership membership) {
+  final name = membership.displayName?.trim();
+  return (name != null && name.isNotEmpty) ? name : 'Участник семьи';
+}
+
+/// «Сама Лида» / «Сам Артём» — gender-aware so the chip doesn't read like
+/// a form field («сам(а)»). Falls back to the slash notation only when
+/// gender genuinely isn't known.
+String _selfAskPrefix(Gender gender) {
+  switch (gender) {
+    case Gender.female:
+      return 'Сама';
+    case Gender.male:
+      return 'Сам';
+    case Gender.other:
+    case Gender.unknown:
+      return 'Сам(а)';
   }
 }
