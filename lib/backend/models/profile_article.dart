@@ -8,6 +8,8 @@
 // paragraph + header; other types parse + round-trip untouched so the
 // editor never drops blocks it can't yet edit (media lands in 2b).
 
+import '../../models/story_request.dart';
+
 class ProfileArticle {
   const ProfileArticle({
     this.id,
@@ -254,14 +256,22 @@ class ArticleBlockSource {
   });
 
   final String requestId;
-  final String question;
+
+  /// Full `{text, themeKey, sourceQuestionId}` — the backend stores a
+  /// `structuredClone` of the StoryRequest's own question object here
+  /// (story-request-routes.js `answerStoryRequest`), NOT a bare string.
+  /// Verified against the merged backend contract 2026-09-13.
+  final StoryRequestQuestion question;
   final String askedByUserId;
   final String askedAt;
 
   factory ArticleBlockSource.fromJson(Map<String, dynamic> json) {
+    final questionRaw = json['question'];
     return ArticleBlockSource(
       requestId: (json['requestId'] ?? '').toString(),
-      question: (json['question'] ?? '').toString(),
+      question: questionRaw is Map
+          ? StoryRequestQuestion.fromJson(Map<String, dynamic>.from(questionRaw))
+          : const StoryRequestQuestion(text: ''),
       askedByUserId: (json['askedByUserId'] ?? '').toString(),
       askedAt: (json['askedAt'] ?? '').toString(),
     );

@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart';
 import 'package:rodnya/backend/models/profile_article.dart';
+import 'package:rodnya/models/story_request.dart';
 import 'package:rodnya/widgets/article_audio_block.dart';
 import 'package:rodnya/widgets/article_gallery_block.dart';
 import 'package:rodnya/widgets/article_photo_block.dart';
@@ -253,7 +254,7 @@ void main() {
         updatedAt: 't',
         source: const ArticleBlockSource(
           requestId: 'sreq-1',
-          question: 'Кто на фото?',
+          question: StoryRequestQuestion(text: 'Кто на фото?'),
           askedByUserId: 'u-artem',
           askedAt: '2026-09-13T10:00:00Z',
         ),
@@ -284,7 +285,7 @@ void main() {
         updatedAt: 't',
         source: const ArticleBlockSource(
           requestId: 'sreq-2',
-          question: 'Q',
+          question: StoryRequestQuestion(text: 'Q'),
           askedByUserId: 'u-unknown',
           askedAt: '',
         ),

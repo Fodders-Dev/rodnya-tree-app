@@ -2872,12 +2872,14 @@ class CustomApiFamilyTreeService
     }
   }
 
-  /// Map [CustomApiException.statusCode] к [StoryRequestError]. Contract
-  /// §1 sends only `{message}` on error (no machine `error` field, same
-  /// as kinship-checks) — `code` is therefore coarse where two business
-  /// errors share a status (e.g. create's 404 covers both
-  /// PERSON_NOT_FOUND and TARGET_NOT_IN_TREE); the server-authored
-  /// `message` carries the precise, user-facing distinction.
+  /// Map [CustomApiException.statusCode] к [StoryRequestError]. Verified
+  /// 2026-09-13 against the merged backend (story-request-routes.js) —
+  /// it sends only `{message}` on error (no machine `error` field, same
+  /// as kinship-checks), so `code` is coarse wherever two business errors
+  /// share a status: create's 400 covers both SELF_REQUEST_FORBIDDEN and
+  /// INVALID_QUESTION, its 404 covers both PERSON_NOT_FOUND and
+  /// TARGET_NOT_IN_TREE. The server-authored `message` always carries the
+  /// precise, user-facing text regardless.
   StoryRequestError _mapStoryRequestException(
     CustomApiException e, {
     required String endpoint,
@@ -2889,8 +2891,8 @@ class CustomApiFamilyTreeService
       case 'create':
         switch (status) {
           case 400:
-            code = 'INVALID_QUESTION';
-            fallback = 'Вопрос должен быть от 3 до 500 символов.';
+            code = 'INVALID_REQUEST';
+            fallback = 'Проверьте вопрос и адресата и попробуйте снова.';
             break;
           case 403:
             code = 'FORBIDDEN';
@@ -2923,6 +2925,10 @@ class CustomApiFamilyTreeService
             code = 'NOT_TARGET';
             fallback = 'Ответить может только тот, кому задали вопрос.';
             break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Запрос не найден — возможно, его уже удалили.';
+            break;
           case 409:
             code = 'NOT_PENDING';
             fallback = 'На этот вопрос уже ответили или он закрыт.';
@@ -2938,6 +2944,10 @@ class CustomApiFamilyTreeService
             code = 'NOT_TARGET';
             fallback = 'Отклонить может только тот, кому задали вопрос.';
             break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Запрос не найден — возможно, его уже удалили.';
+            break;
           case 409:
             code = 'NOT_PENDING';
             fallback = 'Вопрос уже закрыт.';
@@ -2952,6 +2962,10 @@ class CustomApiFamilyTreeService
           case 403:
             code = 'NOT_INITIATOR';
             fallback = 'Отозвать вопрос может только тот, кто его задал.';
+            break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Запрос не найден — возможно, его уже удалили.';
             break;
           case 409:
             code = 'NOT_PENDING';

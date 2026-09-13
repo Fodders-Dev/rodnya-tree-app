@@ -16,9 +16,13 @@ abstract class StoryRequestCapableFamilyTreeService {
   /// `requireGraphPersonEdit`) — the request itself is what lets the
   /// addressee write into the article later without that right.
   ///
-  /// Throws [StoryRequestError] for:
+  /// Throws [StoryRequestError] with code INVALID_REQUEST for both of
+  /// these (backend answers both with 400 and no separate machine code,
+  /// only a distinguishing `message`):
   ///   - SELF_REQUEST_FORBIDDEN (targetUserId == caller)
   ///   - INVALID_QUESTION (trimmed text outside 3…500 chars)
+  ///
+  /// Also throws for:
   ///   - FORBIDDEN (caller can't edit [personId])
   ///   - NOT_FOUND (person unknown, or target not a member of this
   ///     tree/семья — contract §1 distinguishes these only by message

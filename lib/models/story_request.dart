@@ -347,11 +347,12 @@ class StoryRequestError implements UserFacingApiException, Exception {
     this.statusCode,
   });
 
-  /// SELF_REQUEST_FORBIDDEN | INVALID_QUESTION | FORBIDDEN | NOT_FOUND
-  /// (герой либо адресат не найдены/не в дереве — контракт различает их
-  /// только текстом `message`, не отдельным машинным полем, как и у
-  /// kinship-checks) | DUPLICATE_PENDING | TOO_MANY_PENDING | NOT_TARGET
-  /// | NOT_INITIATOR | NOT_PENDING | INVALID_ANSWER | NETWORK | UNKNOWN.
+  /// INVALID_REQUEST (create 400 — covers both SELF_REQUEST_FORBIDDEN and
+  /// INVALID_QUESTION, contract doesn't distinguish by status) |
+  /// FORBIDDEN | NOT_FOUND (герой либо адресат не найдены/не в дереве —
+  /// тоже различаются только текстом `message`, как и у kinship-checks)
+  /// | DUPLICATE_PENDING | TOO_MANY_PENDING | NOT_TARGET | NOT_INITIATOR
+  /// | NOT_PENDING | INVALID_ANSWER | NETWORK | UNKNOWN.
   final String code;
   @override
   final String message;
