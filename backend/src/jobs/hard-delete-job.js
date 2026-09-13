@@ -77,6 +77,7 @@ async function runHardDeleteJob({store, config, runtimeInfo, override = {}} = {}
         notifReadDays: config.notificationsReadRetentionDays,
         notifUnreadDays: config.notificationsUnreadRetentionDays,
         treeChangeDetailDays: config.treeChangeDetailRetentionDays,
+        storyRequestsTerminalDays: config.storyRequestsTerminalRetentionDays,
       },
     });
     logEvent("log", "hard_delete_run", {

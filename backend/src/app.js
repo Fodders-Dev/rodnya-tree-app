@@ -42,6 +42,9 @@ const {registerGraphRoutes} = require("./routes/graph-routes");
 const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
 const {registerOnboardingRoutes} = require("./routes/onboarding-routes");
 const {registerKinshipChecksRoutes} = require("./routes/kinship-checks-routes");
+const {
+  registerStoryRequestRoutes,
+} = require("./routes/story-request-routes");
 const {registerSemyaRoutes} = require("./routes/semya-routes");
 const {registerMembershipRoutes} = require("./routes/membership-routes");
 const {
@@ -2962,6 +2965,16 @@ function createApp({
   registerKinshipChecksRoutes(app, {
     store,
     requireAuth,
+    createAndDispatchNotification,
+  });
+
+  // «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md). requireGraphPersonEdit
+  // threaded so the route can gate request-creation on the initiator's
+  // person-edit rights before store.createStoryRequest ever runs.
+  registerStoryRequestRoutes(app, {
+    store,
+    requireAuth,
+    requireGraphPersonEdit,
     createAndDispatchNotification,
   });
 
