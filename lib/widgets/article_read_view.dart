@@ -8,8 +8,10 @@
 // chrome. Playback (audio) and full-screen (gallery) stay available.
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../backend/models/profile_article.dart';
+import '../utils/date_parser.dart';
 import 'article_audio_block.dart';
 import 'article_gallery_block.dart';
 import 'article_photo_block.dart';
@@ -26,6 +28,8 @@ class ArticleReadView extends StatelessWidget {
   /// userId → display name. When a header-delimited section has two or
   /// more distinct *resolvable* authors, a «Соавторы: …» line is rendered
   /// under it (Viewer §3.1). Unresolvable authors are silently skipped.
+  /// Also resolves [ArticleBlockSource.askedByUserId] for the «На
+  /// вопрос …» caption (MVP-1 story-requests) — one shared name map.
   final Map<String, String> authorNames;
 
   @override
@@ -51,6 +55,13 @@ class ArticleReadView extends StatelessWidget {
         if (name != null) sectionAuthors.add(name);
       }
       children.add(_block(context, block));
+      // MVP-1 «Спросить историю»: signed once here for every block type
+      // (not duplicated inside each _block branch) — «На вопрос Артёма,
+      // 13 сентября» under the answer it produced.
+      final source = block.source;
+      if (source != null) {
+        children.add(_sourceCaption(context, source));
+      }
     }
     flushSection();
 
@@ -65,6 +76,33 @@ class ArticleReadView extends StatelessWidget {
     if (id == null) return null;
     final name = authorNames[id];
     return (name != null && name.trim().isNotEmpty) ? name.trim() : null;
+  }
+
+  /// «На вопрос {Имя}, {дата}» — who asked and when. Falls back to
+  /// «На вопрос родного» when the asker's name isn't in [authorNames]
+  /// (viewer isn't in the asker's contact/relatives cache yet); the date
+  /// is dropped instead of showing a raw parse failure.
+  Widget _sourceCaption(BuildContext context, ArticleBlockSource source) {
+    final theme = Theme.of(context);
+    final askerName = authorNames[source.askedByUserId]?.trim();
+    final who = (askerName != null && askerName.isNotEmpty)
+        ? askerName
+        : 'родного';
+    final askedAt = parseDateTime(source.askedAt);
+    final dateSuffix = askedAt == null
+        ? ''
+        : ', ${DateFormat('d MMMM', 'ru').format(toLocalForDisplay(askedAt))}';
+    return Padding(
+      key: Key('article-source-${source.requestId}'),
+      padding: const EdgeInsets.only(top: 2, bottom: 4),
+      child: Text(
+        'На вопрос $who$dateSuffix',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          fontStyle: FontStyle.italic,
+        ),
+      ),
+    );
   }
 
   Widget _coauthorsLine(BuildContext context, List<String> names) {

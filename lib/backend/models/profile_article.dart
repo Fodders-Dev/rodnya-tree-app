@@ -55,6 +55,7 @@ class ArticleBlock {
     this.authorUserId,
     required this.createdAt,
     required this.updatedAt,
+    this.source,
   });
 
   final String id;
@@ -66,6 +67,12 @@ class ArticleBlock {
   final String? authorUserId;
   final String createdAt;
   final String updatedAt;
+
+  /// «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §1): additive
+  /// top-level field — sibling of `content`, NOT inside it, so
+  /// `normalizeArticleBlockContent` on the backend stays untouched.
+  /// `null` for every block not created by answering a story request.
+  final ArticleBlockSource? source;
 
   /// Plain text of a paragraph — span texts joined (mention → fallback,
   /// link → text). Phase 2a edits collapse to a single text span; the
@@ -148,10 +155,14 @@ class ArticleBlock {
       authorUserId: authorUserId ?? this.authorUserId,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      // source is never edited client-side — a patched block keeps
+      // pointing at the question that produced it.
+      source: source,
     );
   }
 
   factory ArticleBlock.fromJson(Map<String, dynamic> json) {
+    final sourceRaw = json['source'];
     return ArticleBlock(
       id: (json['id'] ?? '').toString(),
       type: (json['type'] ?? '').toString(),
@@ -162,6 +173,9 @@ class ArticleBlock {
       authorUserId: _nullableString(json['authorUserId']),
       createdAt: (json['createdAt'] ?? '').toString(),
       updatedAt: (json['updatedAt'] ?? '').toString(),
+      source: sourceRaw is Map
+          ? ArticleBlockSource.fromJson(Map<String, dynamic>.from(sourceRaw))
+          : null,
     );
   }
 
@@ -224,6 +238,33 @@ class ArticleBlock {
     required List<Map<String, dynamic>> items,
   }) {
     return {'items': items};
+  }
+}
+
+/// «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §1): stamped on
+/// the article block an answer creates, so the «Истории» section can
+/// sign it «На вопрос Артёма, 13 сентября» without a separate lookup.
+/// Lives next to `content`, never inside it.
+class ArticleBlockSource {
+  const ArticleBlockSource({
+    required this.requestId,
+    required this.question,
+    required this.askedByUserId,
+    required this.askedAt,
+  });
+
+  final String requestId;
+  final String question;
+  final String askedByUserId;
+  final String askedAt;
+
+  factory ArticleBlockSource.fromJson(Map<String, dynamic> json) {
+    return ArticleBlockSource(
+      requestId: (json['requestId'] ?? '').toString(),
+      question: (json['question'] ?? '').toString(),
+      askedByUserId: (json['askedByUserId'] ?? '').toString(),
+      askedAt: (json['askedAt'] ?? '').toString(),
+    );
   }
 }
 
