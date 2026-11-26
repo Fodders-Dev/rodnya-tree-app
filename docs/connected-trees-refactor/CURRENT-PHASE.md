@@ -4,6 +4,17 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
+## Status update: 2026-11-26
+
+* **Релиз `1.0.48+56` — аудит и стабилизация кодовой базы (волны 0–4) + паритет LiveKit с Desk**:
+  * **Wave 0 (`02e79744`)**: закрыты окна наблюдения SPEED-15/16 и smoke-fixture.
+  * **Wave 1 (`f18b106a`)**: concurrency хранилища, транзакционная синхронизация проекций, безопасность пересборки сессий, hard-delete и `RealtimeHub`.
+  * **Wave 2 (`50d4705f`)**: безопасность API и IDOR-проверки, федеративные роли семей, валидация Story Requests, LiveKit-звонки (`departure_timeout`, busy/block/group-reject).
+  * **Wave 3 (`d5566dfc`)**: клиентские исправления Story Requests, `ProfileArticleEditor`, изоляция 403/сессий (`_sessionGeneration`), кэши и deep links (`/browse/`, `/reset-password`, MAX redirect).
+  * **Wave 4 (`5d67bcea`, `765dd6a`, `34a95d8`)**: жизненный цикл звонков/PiP/аудио/вибрации/`RodnyaCallForegroundBridge.kt`, чаты и вложения, UX ключевых экранов, детерминированный `nowProvider` для зонда календаря (`secondary_lists_density_test`), а также фикс `tool/sync_web_shell_assets.js`, сохраняющий web CanvasKit-шейдеры, tree-shaken шрифты (~66 КБ) и `FontManifest.json`.
+  * **Desk LiveKit parity (`09cbbcc5` в `agy/desk-polish-20261122`)**: `departure_timeout: 15`, `roomAdmin` + Twirp `listRooms`/`removeParticipant`/`deleteRoom`, очистка `<video>`-треков, одновременные плитки камеры/экрана и guard по `callEpoch`.
+  * **Приёмка перед вливом в `main`**: `flutter analyze` (0 проблем), полный `flutter test` (**1592/1592** + 1 skipped), `npm --prefix backend test` (**833/833**), релизная сборка `flutter build web --release` + локальный браузерный смоук, `flutter build apk --flavor dev --debug --no-pub`.
+
 ## Status update: 2026-09-13
 
 * **31.08 — переезд прода в РФ** (152-ФЗ): 77.91.113.109 (HOSTKEY), PG16,
