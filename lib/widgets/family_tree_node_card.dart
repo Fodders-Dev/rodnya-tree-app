@@ -87,19 +87,16 @@ class FamilyTreeNodeCard extends StatelessWidget {
     // isForeignNode=false для self-node).
     final Color surfaceColor;
     if (isForeignNode) {
-      // Cool grey-blue tint vs default surface. Blended onto opaque surfaceStrong
-      // so edge connectors panning underneath stay hidden.
-      surfaceColor = Color.alphaBlend(
-        tokens.surfaceForeignTint.withValues(alpha: 0.92),
-        tokens.surfaceStrong.withValues(alpha: 1.0),
-      );
+      // Cool grey-blue tint vs default warm. Same opacity as default
+      // surface чтобы не ломать shadow / border interplay.
+      surfaceColor = tokens.surfaceForeignTint.withValues(alpha: 0.92);
     } else if (isCurrentUserNode) {
       surfaceColor = Color.alphaBlend(
         tokens.accentSoft.withValues(alpha: 0.72),
         tokens.surfaceStrong.withValues(alpha: 1.0),
       );
     } else {
-      surfaceColor = tokens.surfaceStrong.withValues(alpha: 0.96);
+      surfaceColor = tokens.surfaceStrong.withValues(alpha: 0.92);
     }
 
     // Reference `.tn-card.sel`: accent border + 2.5px ring + drop shadow.
