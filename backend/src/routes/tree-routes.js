@@ -1182,8 +1182,54 @@ function registerTreeRoutes(
       actorId,
     });
 
+    const personsById = new Map();
+    if (records.length > 0 && typeof store.listPersons === "function") {
+      try {
+        const persons = await store.listPersons(tree.id);
+        for (const person of persons) {
+          if (person?.id && person?.name) {
+            personsById.set(person.id, person.name);
+          }
+        }
+      } catch (_) {}
+    }
+
+    const actorsById = new Map();
+    const actorIds = [
+      ...new Set(
+        records
+          .map((record) => String(record?.actorId || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (actorIds.length > 0 && typeof store.findUserById === "function") {
+      const actorUsers = await Promise.all(
+        actorIds.map((id) => store.findUserById(id).catch(() => null)),
+      );
+      for (const user of actorUsers) {
+        if (!user?.id) continue;
+        const p = user.profile || {};
+        const name =
+          String(p.displayName || "").trim() ||
+          [p.lastName, p.firstName, p.middleName]
+            .filter((part) => typeof part === "string" && part.trim())
+            .map((part) => part.trim())
+            .join(" ");
+        if (name) {
+          actorsById.set(user.id, name);
+        }
+      }
+    }
+
     res.json({
-      records: records.map(mapTreeChangeRecord),
+      records: records.map((record) =>
+        mapTreeChangeRecord(record, {
+          actorName: actorsById.get(record.actorId) || null,
+          personName: record.personId
+            ? personsById.get(record.personId) || null
+            : null,
+        }),
+      ),
     });
   });
 

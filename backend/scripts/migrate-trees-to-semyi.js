@@ -108,7 +108,7 @@ function planMigration(db) {
     const semyaId = uuid();
     const semya = {
       id: semyaId,
-      name: "Моя семья",
+      name: (tree.name && String(tree.name).trim()) || "Моя семья",
       ownerId: creatorId,
       treeId: tree.id,
       description: null,

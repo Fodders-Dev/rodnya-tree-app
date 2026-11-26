@@ -344,7 +344,7 @@ function registerPollRoutes(
         await createAndDispatchNotification({
           userId: updated.authorId,
           type: "poll_response",
-          title: `${responderName} ответил в опросе`,
+          title: `${responderName}: новый ответ в опросе`,
           body: updated.question,
           data: {
             pollId: updated.id,

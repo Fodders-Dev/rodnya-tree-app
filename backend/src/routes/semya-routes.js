@@ -29,11 +29,11 @@ function registerSemyaRoutes(
   app,
   {store, requireAuth, requireSemyaAccess},
 ) {
-  function mapSemya(semya) {
+  function mapSemya(semya, resolvedName = null) {
     if (!semya) return null;
     return {
       id: semya.id,
-      name: semya.name,
+      name: resolvedName || semya.name,
       ownerId: semya.ownerId,
       treeId: semya.treeId,
       description: semya.description ?? null,
@@ -41,6 +41,48 @@ function registerSemyaRoutes(
       updatedAt: semya.updatedAt,
       deletedAt: semya.deletedAt ?? null,
     };
+  }
+
+  async function resolveSemyaListNames(semyi) {
+    if (!Array.isArray(semyi) || semyi.length === 0) {
+      return [];
+    }
+    const unresolvedTreeIds = [
+      ...new Set(
+        semyi
+          .filter((entry) => {
+            const trimmed = String(entry?.name || "").trim();
+            return (!trimmed || trimmed === "Моя семья") && entry?.treeId;
+          })
+          .map((entry) => entry.treeId),
+      ),
+    ];
+    const treesById = new Map();
+    if (
+      unresolvedTreeIds.length > 0 &&
+      typeof store.findTree === "function"
+    ) {
+      const trees = await Promise.all(
+        unresolvedTreeIds.map((id) => store.findTree(id).catch(() => null)),
+      );
+      for (const tree of trees) {
+        if (tree?.id) {
+          treesById.set(tree.id, tree);
+        }
+      }
+    }
+    return semyi.map((entry) => {
+      const trimmed = String(entry?.name || "").trim();
+      if (!trimmed || trimmed === "Моя семья") {
+        const treeName = String(
+          treesById.get(entry?.treeId)?.name || "",
+        ).trim();
+        if (treeName && treeName !== "Моя семья") {
+          return mapSemya(entry, treeName);
+        }
+      }
+      return mapSemya(entry);
+    });
   }
 
   // POST /v1/semya — create семья referencing existing tree.
@@ -117,7 +159,8 @@ function registerSemyaRoutes(
   // GET /v1/me/semya — list семья membership of current user.
   app.get("/v1/me/semya", requireAuth, async (req, res) => {
     const semyi = await store.listSemyiForUser(req.auth.user.id);
-    res.json({semyi: semyi.map(mapSemya)});
+    const mapped = await resolveSemyaListNames(semyi);
+    res.json({semyi: mapped});
   });
 
   // GET /v1/semya/:id — details (viewer+ access).
@@ -126,7 +169,8 @@ function registerSemyaRoutes(
       requiredRole: "viewer",
     });
     if (!access) return;
-    res.json({semya: mapSemya(access.semya), membership: access.membership});
+    const [mappedSemya] = await resolveSemyaListNames([access.semya]);
+    res.json({semya: mappedSemya, membership: access.membership});
   });
 
   // PATCH /v1/semya/:id — rename / re-describe (owner only).
