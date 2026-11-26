@@ -946,7 +946,9 @@ class CustomApiChatService
         error,
         fallbackMessage: 'Не удалось обновить список чатов.',
       );
-      controller.addError(error, stackTrace);
+      if (!controller.isClosed && controller.hasListener) {
+        controller.addError(error, stackTrace);
+      }
     } catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
         await _stopChatPreviewsUpdates();
@@ -959,7 +961,9 @@ class CustomApiChatService
         error,
         fallbackMessage: 'Не удалось обновить список чатов.',
       );
-      controller.addError(error, stackTrace);
+      if (!controller.isClosed && controller.hasListener) {
+        controller.addError(error, stackTrace);
+      }
     }
   }
 
@@ -1261,7 +1265,9 @@ class CustomApiChatService
         error,
         fallbackMessage: 'Не удалось обновить счётчик непрочитанных.',
       );
-      controller.addError(error, stackTrace);
+      if (!controller.isClosed && controller.hasListener) {
+        controller.addError(error, stackTrace);
+      }
     } catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
         await _stopTotalUnreadUpdates();
@@ -1274,7 +1280,9 @@ class CustomApiChatService
         error,
         fallbackMessage: 'Не удалось обновить счётчик непрочитанных.',
       );
-      controller.addError(error, stackTrace);
+      if (!controller.isClosed && controller.hasListener) {
+        controller.addError(error, stackTrace);
+      }
     }
   }
 

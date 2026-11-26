@@ -6,11 +6,12 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../backend/backend_runtime_config.dart';
+import '../backend/models/semya.dart';
+import '../utils/app_version_label.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../services/rustore_service.dart';
@@ -131,13 +132,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _storefrontConfig.isRustore && _storefrontConfig.enableRustoreReview;
 
   Future<void> _loadAppVersion() async {
-    final packageInfo = await PackageInfo.fromPlatform();
+    final label = await loadAppVersionLabel();
     if (!mounted) {
       return;
     }
     setState(() {
-      _appVersionLabel =
-          'Версия ${packageInfo.version} (сборка ${packageInfo.buildNumber})';
+      _appVersionLabel = label;
     });
   }
 
@@ -245,7 +245,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     final capable = service as SemyaCapableFamilyTreeService;
     try {
-      final semyi = await capable.listMySemya();
+      var semyi = await capable.listMySemya();
+      if (!mounted) return;
+      if (semyi.any((entry) =>
+          entry.name.trim().isEmpty || entry.name.trim() == 'Моя семья')) {
+        try {
+          final trees = await service.getUserTrees();
+          final treeNamesById = <String, String>{
+            for (final tree in trees)
+              if (tree.name.trim().isNotEmpty &&
+                  tree.name.trim() != 'Моя семья')
+                tree.id: tree.name.trim(),
+          };
+          semyi = semyi.map((entry) {
+            final current = entry.name.trim();
+            if (current.isEmpty || current == 'Моя семья') {
+              final resolved = treeNamesById[entry.treeId];
+              if (resolved != null) {
+                return Semya(
+                  id: entry.id,
+                  name: resolved,
+                  ownerId: entry.ownerId,
+                  treeId: entry.treeId,
+                  description: entry.description,
+                  createdAt: entry.createdAt,
+                  updatedAt: entry.updatedAt,
+                  deletedAt: entry.deletedAt,
+                );
+              }
+            }
+            return entry;
+          }).toList(growable: false);
+        } catch (_) {
+          // Best-effort: fallback to raw Semya names when tree lookup fails.
+        }
+      }
       if (!mounted) return;
       if (semyi.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -1,20 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 import '../theme/app_theme.dart';
+import '../utils/app_version_label.dart';
 
 /// "О приложении" — двухколоночный layout на десктопе (бренд-блок
 /// слева, ссылки/контакты справа), компактный одностолбцовый на phone.
 /// Использует RodnyaDesignTokens вместо generic Material grey/primary
 /// чтобы попасть в дизайн-систему остальных экранов.
-class AboutScreen extends StatelessWidget {
+class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
 
-  Future<String> _loadVersionLabel() async {
-    final packageInfo = await PackageInfo.fromPlatform();
-    return 'Версия ${packageInfo.version} (сборка ${packageInfo.buildNumber})';
-  }
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<AboutScreen> {
+  late final Future<String> _versionFuture = loadAppVersionLabel();
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +62,7 @@ class AboutScreen extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _BrandBlock(tokens: tokens, theme: theme, future: _loadVersionLabel()),
+        _BrandBlock(tokens: tokens, theme: theme, future: _versionFuture),
         const SizedBox(height: 20),
         _DescriptionBlock(theme: theme, tokens: tokens),
         const SizedBox(height: 16),
@@ -87,7 +89,7 @@ class AboutScreen extends StatelessWidget {
               _BrandBlock(
                 tokens: tokens,
                 theme: theme,
-                future: _loadVersionLabel(),
+                future: _versionFuture,
               ),
               const SizedBox(height: 24),
               _DescriptionBlock(theme: theme, tokens: tokens),
@@ -150,7 +152,12 @@ class _BrandBlock extends StatelessWidget {
         FutureBuilder<String>(
           future: future,
           builder: (context, snapshot) {
-            final label = snapshot.data ?? 'Версия загружается…';
+            final label = snapshot.hasError
+                ? kFallbackAppVersionLabel
+                : (snapshot.data ??
+                    (snapshot.connectionState == ConnectionState.done
+                        ? kFallbackAppVersionLabel
+                        : 'Версия загружается…'));
             return Text(
               label,
               style: theme.textTheme.bodyMedium?.copyWith(

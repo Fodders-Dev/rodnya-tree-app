@@ -332,8 +332,10 @@ class CustomApiCallService
       request.body = jsonEncode(body);
     }
 
-    final streamedResponse = await _httpClient.send(request);
-    final response = await http.Response.fromStream(streamedResponse);
+    final streamedResponse =
+        await _httpClient.send(request).timeout(const Duration(seconds: 12));
+    final response = await http.Response.fromStream(streamedResponse)
+        .timeout(const Duration(seconds: 12));
     final decodedBody = response.body.isEmpty
         ? const <String, dynamic>{}
         : (tryDecodeJsonMap(response.body) ?? const <String, dynamic>{});
