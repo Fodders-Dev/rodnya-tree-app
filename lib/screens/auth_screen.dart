@@ -53,9 +53,8 @@ class _AuthScreenState extends State<AuthScreen> {
   // Согласие при регистрации: обязательный чекбокс — без него кнопка
   // «Создать аккаунт» неактивна; версия документов уходит на бэк.
   bool _acceptedTerms = false;
-  late final TapGestureRecognizer _termsLinkRecognizer =
-      TapGestureRecognizer()
-        ..onTap = () => GoRouter.of(context).push('/terms');
+  late final TapGestureRecognizer _termsLinkRecognizer = TapGestureRecognizer()
+    ..onTap = () => GoRouter.of(context).push('/terms');
   late final TapGestureRecognizer _privacyLinkRecognizer =
       TapGestureRecognizer()
         ..onTap = () => GoRouter.of(context).push('/privacy');
@@ -152,8 +151,7 @@ class _AuthScreenState extends State<AuthScreen> {
   /// needed here — _providersAvailability.max остаётся accessible
   /// caller'у когда / если MAX button gets reintroduced.
   bool get _showGoogleButton =>
-      _supportsGoogleAuth &&
-      (_providersAvailability?.google ?? true);
+      _supportsGoogleAuth && (_providersAvailability?.google ?? true);
   bool get _showTelegramButton => _providersAvailability?.telegram ?? true;
   bool get _showVkButton => _providersAvailability?.vk ?? true;
 
@@ -169,10 +167,12 @@ class _AuthScreenState extends State<AuthScreen> {
       // Cold-start case: the app was launched by tapping the deep
       // link → fetch initial URI and dispatch.
       final initial = await appLinks.getInitialLink();
+      if (!mounted) return;
       if (initial != null) {
         unawaited(_dispatchOauthDeepLink(initial));
       }
       _appLinkSubscription = appLinks.uriLinkStream.listen((uri) {
+        if (!mounted) return;
         unawaited(_dispatchOauthDeepLink(uri));
       });
     } catch (error) {
@@ -187,8 +187,7 @@ class _AuthScreenState extends State<AuthScreen> {
     // picked up the verified intent filter; the https path is the
     // only one another app can't intercept (Digital Asset Links
     // gives us exclusive ownership of /oauth/* on rodnya-tree.ru).
-    final isCustomScheme =
-        uri.scheme == 'rodnya' && uri.host == 'oauth';
+    final isCustomScheme = uri.scheme == 'rodnya' && uri.host == 'oauth';
     final isVerifiedHttps = uri.scheme == 'https' &&
         uri.host == 'rodnya-tree.ru' &&
         uri.path.startsWith('/oauth/');
@@ -225,6 +224,9 @@ class _AuthScreenState extends State<AuthScreen> {
       _isGoogleLoading || _isTelegramLoading || _isVkLoading || _isMaxLoading;
 
   Future<void> _submit() async {
+    if (_isLoading || _isAnySocialLoading) {
+      return;
+    }
     _clearSessionIssue();
     setState(() {
       _hasSubmitted = true;
@@ -376,6 +378,10 @@ class _AuthScreenState extends State<AuthScreen> {
       }
 
       if (_authService.currentUserId != null) {
+        if (GetIt.I.isRegistered<TreeProvider>()) {
+          await GetIt.I<TreeProvider>().loadInitialTree();
+        }
+        if (!mounted) return;
         context.go(_resolvePostAuthRedirect());
       }
     } on EmailProviderMismatchException catch (mismatch) {
@@ -478,8 +484,7 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      final telegramStartUrl =
-          await authService.resolveTelegramLoginStartUrl();
+      final telegramStartUrl = await authService.resolveTelegramLoginStartUrl();
       final started = await launchUrl(
         Uri.parse(telegramStartUrl),
         mode: LaunchMode.platformDefault,
@@ -492,6 +497,19 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _authError(
+              e,
+              fallbackMessage: 'Не удалось начать вход через Telegram.',
+            ),
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -531,6 +549,19 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _authError(
+              e,
+              fallbackMessage: 'Не удалось начать вход через VK ID.',
+            ),
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -1144,7 +1175,6 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-
   String _authError(Object error, {required String fallbackMessage}) {
     return describeUserFacingError(
       authService: _authService,
@@ -1215,62 +1245,62 @@ class _AuthScreenState extends State<AuthScreen> {
     return Scaffold(
       body: DismissKeyboardOnTap(
         child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.colorScheme.primary.withValues(alpha: 0.14),
-              const Color(0xFFF7F2E8),
-              theme.colorScheme.secondary.withValues(alpha: 0.08),
-            ],
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                theme.colorScheme.primary.withValues(alpha: 0.14),
+                const Color(0xFFF7F2E8),
+                theme.colorScheme.secondary.withValues(alpha: 0.08),
+              ],
+            ),
           ),
-        ),
-        child: SafeArea(
-          // UX audit 2026-05-25 Screen 1.1 (ed62ba6): Samsung S20 FE с
-          // active Android call/status pill clip'ил hero — user видел
-          // только «...дерево.» tail of headline. Default SafeArea
-          // полагается на MediaQuery.padding, который на Android при
-          // call-pill активном иногда reports lower than actual safe
-          // area. `minimum: EdgeInsets.only(top: 12)` устанавливает
-          // floor — даже если system padding несоответствует, hero
-          // получает breathing room above. Bottom intentionally
-          // omitted — keyboard / nav bar handled другими mechanisms.
-          minimum: const EdgeInsets.only(top: 12),
-          child: Column(
-            children: [
-              const OfflineIndicator(),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final isWide = constraints.maxWidth >= 960;
-                    return Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: isWide ? 1260 : 520,
-                        ),
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: isWide ? 24 : 16,
-                            // Compact bumped 16 → 20 — extra breathing
-                            // perч после SafeArea minimum (per Audit
-                            // 1.1). Wide unchanged — большой viewport
-                            // не has the same clip risk.
-                            vertical: isWide ? 28 : 20,
+          child: SafeArea(
+            // UX audit 2026-05-25 Screen 1.1 (ed62ba6): Samsung S20 FE с
+            // active Android call/status pill clip'ил hero — user видел
+            // только «...дерево.» tail of headline. Default SafeArea
+            // полагается на MediaQuery.padding, который на Android при
+            // call-pill активном иногда reports lower than actual safe
+            // area. `minimum: EdgeInsets.only(top: 12)` устанавливает
+            // floor — даже если system padding несоответствует, hero
+            // получает breathing room above. Bottom intentionally
+            // omitted — keyboard / nav bar handled другими mechanisms.
+            minimum: const EdgeInsets.only(top: 12),
+            child: Column(
+              children: [
+                const OfflineIndicator(),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isWide = constraints.maxWidth >= 960;
+                      return Center(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: isWide ? 1260 : 520,
                           ),
-                          child: isWide
-                              ? _buildWideLayout(theme)
-                              : _buildCompactLayout(theme),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isWide ? 24 : 16,
+                              // Compact bumped 16 → 20 — extra breathing
+                              // perч после SafeArea minimum (per Audit
+                              // 1.1). Wide unchanged — большой viewport
+                              // не has the same clip risk.
+                              vertical: isWide ? 28 : 20,
+                            ),
+                            child: isWide
+                                ? _buildWideLayout(theme)
+                                : _buildCompactLayout(theme),
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -1434,8 +1464,7 @@ class _AuthScreenState extends State<AuthScreen> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.eco_outlined,
-                      size: 18, color: Colors.white),
+                  const Icon(Icons.eco_outlined, size: 18, color: Colors.white),
                   const SizedBox(width: 8),
                   Text(
                     'РОДНЯ',
@@ -1878,8 +1907,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 InkWell(
                   key: const Key('auth-consent-toggle'),
                   borderRadius: BorderRadius.circular(12),
-                  onTap: () =>
-                      setState(() => _acceptedTerms = !_acceptedTerms),
+                  onTap: () => setState(() => _acceptedTerms = !_acceptedTerms),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Row(
@@ -2002,9 +2030,8 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: buildGoogleSignInAction(
                     theme: theme,
                     isLoading: _isGoogleLoading,
-                    enabled: !_isLoading &&
-                        !_isTelegramLoading &&
-                        !_isVkLoading,
+                    enabled:
+                        !_isLoading && !_isTelegramLoading && !_isVkLoading,
                     onPressed: _signInWithGoogle,
                     useNativeWebButton: true,
                   ),
@@ -2033,8 +2060,10 @@ class _AuthScreenState extends State<AuthScreen> {
                       isLoading: _isGoogleLoading,
                       onTap: () {
                         if (_isLoading ||
+                            _isGoogleLoading ||
                             _isTelegramLoading ||
-                            _isVkLoading) {
+                            _isVkLoading ||
+                            _isMaxLoading) {
                           return;
                         }
                         _signInWithGoogle();
@@ -2072,9 +2101,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       icon: Icons.qr_code_2_rounded,
                       isLoading: false,
                       semanticsLabel: 'Войти по QR-коду',
-                      onTap: _isLoading
-                          ? null
-                          : () => context.push('/auth/qr'),
+                      onTap: _isLoading ? null : () => context.push('/auth/qr'),
                     ),
                 ],
               ),
@@ -2082,56 +2109,56 @@ class _AuthScreenState extends State<AuthScreen> {
               // При регистрации согласие — явный чекбокс выше; пассивная
               // строка остаётся только для входа.
               if (_isLogin)
-              Wrap(
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    'Продолжая, вы соглашаетесь с ',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontSize: 14,
-                      color: secondaryTextColor,
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      'Продолжая, вы соглашаетесь с ',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 14,
+                        color: secondaryTextColor,
+                      ),
                     ),
-                  ),
-                  TextButton(
-                    onPressed: () => GoRouter.of(context).push('/privacy'),
-                    style: TextButton.styleFrom(
-                      minimumSize: Size.zero,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: const TextStyle(fontSize: 14),
+                    TextButton(
+                      onPressed: () => GoRouter.of(context).push('/privacy'),
+                      style: TextButton.styleFrom(
+                        minimumSize: Size.zero,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(fontSize: 14),
+                      ),
+                      child: const Text('Политикой'),
                     ),
-                    child: const Text('Политикой'),
-                  ),
-                  Text(
-                    ' и ',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontSize: 14,
-                      color: secondaryTextColor,
+                    Text(
+                      ' и ',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 14,
+                        color: secondaryTextColor,
+                      ),
                     ),
-                  ),
-                  TextButton(
-                    onPressed: () => GoRouter.of(context).push('/terms'),
-                    style: TextButton.styleFrom(
-                      minimumSize: Size.zero,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: const TextStyle(fontSize: 14),
+                    TextButton(
+                      onPressed: () => GoRouter.of(context).push('/terms'),
+                      style: TextButton.styleFrom(
+                        minimumSize: Size.zero,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(fontSize: 14),
+                      ),
+                      child: const Text('Условиями'),
                     ),
-                    child: const Text('Условиями'),
-                  ),
-                  Text(
-                    '.',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontSize: 14,
-                      color: secondaryTextColor,
+                    Text(
+                      '.',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 14,
+                        color: secondaryTextColor,
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
             ],
           ),
         ),

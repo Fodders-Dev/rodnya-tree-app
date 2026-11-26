@@ -52,6 +52,7 @@ import '../models/story_request.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../models/tree_change_record.dart';
 import '../models/user_profile.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import 'custom_api_auth_service.dart';
 import 'local_storage_service.dart';
@@ -121,6 +122,7 @@ class CustomApiFamilyTreeService
   final Map<String, DateTime> _relativesCacheStamps = <String, DateTime>{};
   final Map<String, Future<List<FamilyPerson>>> _relativesInFlight =
       <String, Future<List<FamilyPerson>>>{};
+  final Map<String, int> _treeCacheGeneration = <String, int>{};
   static const Duration _relativesCacheTtl = Duration(seconds: 30);
   late final StreamController<List<TreeInvitation>>
       _pendingInvitationsController =
@@ -191,49 +193,80 @@ class CustomApiFamilyTreeService
     if (inFlight != null) {
       return inFlight;
     }
-    final future = _fetchRelatives(treeId);
-    _relativesInFlight[treeId] = future;
-    unawaited(future.whenComplete(() {
-      if (identical(_relativesInFlight[treeId], future)) {
+    final generation = _treeCacheGeneration[treeId] ?? 0;
+    late final Future<List<FamilyPerson>> tracked;
+    tracked = _fetchRelatives(treeId, generation: generation).whenComplete(() {
+      if (identical(_relativesInFlight[treeId], tracked)) {
         _relativesInFlight.remove(treeId);
       }
-    }));
-    return future;
+    });
+    _relativesInFlight[treeId] = tracked;
+    return tracked;
   }
 
-  Future<List<FamilyPerson>> _fetchRelatives(String treeId) async {
+  Future<List<FamilyPerson>> _fetchRelatives(
+    String treeId, {
+    required int generation,
+  }) async {
     final response = await _requestJson(
       method: 'GET',
       path: '/v1/trees/$treeId/persons',
     );
 
     final relatives = _personListFromResponse(response);
+    if (generation != (_treeCacheGeneration[treeId] ?? 0)) {
+      return relatives;
+    }
     for (final person in relatives) {
       _personTreeIds[person.id] = treeId;
     }
     await _cachePersons(relatives);
-    _relativesCache[treeId] = relatives;
-    _relativesCacheStamps[treeId] = _clock();
+    if (generation == (_treeCacheGeneration[treeId] ?? 0)) {
+      _relativesCache[treeId] = relatives;
+      _relativesCacheStamps[treeId] = _clock();
+    }
     return relatives;
   }
 
   /// Single choke point for treeId-scoped cache invalidation. Clears
   /// both the graph-snapshot cache (pre-existing) and the
-  /// getRelatives() short-TTL cache above, so every call site below
-  /// that used to invalidate just the former now keeps both in sync
-  /// with a one-line change. Also reachable from outside this class
-  /// via [invalidateRelativesCache] — see
-  /// RelativesCacheCapableFamilyTreeService.
+  /// getRelatives() short-TTL cache above, and bumps generation so any
+  /// in-flight fetch cannot write stale data back into cache.
   void _invalidateTreeCaches(String treeId) {
+    _treeCacheGeneration[treeId] = (_treeCacheGeneration[treeId] ?? 0) + 1;
     _graphSnapshotCache.remove(treeId);
     _relativesCache.remove(treeId);
     _relativesCacheStamps.remove(treeId);
+    _relativesInFlight.remove(treeId);
+  }
+
+  void _invalidateAllTreeCaches() {
+    final treeIds = <String>{
+      ..._graphSnapshotCache.keys,
+      ..._relativesCache.keys,
+      ..._relativesInFlight.keys,
+      ..._treeCacheGeneration.keys,
+    };
+    for (final id in treeIds) {
+      _treeCacheGeneration[id] = (_treeCacheGeneration[id] ?? 0) + 1;
+    }
+    _graphSnapshotCache.clear();
+    _relativesCache.clear();
+    _relativesCacheStamps.clear();
+    _relativesInFlight.clear();
   }
 
   @override
   void invalidateRelativesCache(String treeId) {
-    _relativesCache.remove(treeId);
-    _relativesCacheStamps.remove(treeId);
+    _invalidateTreeCaches(treeId);
+  }
+
+  Future<void> resetForSignOut() async {
+    _invalidateAllTreeCaches();
+    _personTreeIds.clear();
+    _pendingInvitationsPollingTimer?.cancel();
+    _pendingInvitationsPollingTimer = null;
+    _pendingInvitationsPollingStarted = false;
   }
 
   /// Phase 0 cross-tree picker: surface relatives the user already
@@ -452,6 +485,7 @@ class CustomApiFamilyTreeService
         : const <FamilyPerson>[];
     final rawRelations = response['relations'];
     final bridgedRelationCount = rawRelations is List ? rawRelations.length : 0;
+    _invalidateTreeCaches(targetTreeId);
     return BulkImportResult(
       persons: persons,
       bridgedRelationCount: bridgedRelationCount,
@@ -527,10 +561,10 @@ class CustomApiFamilyTreeService
         if (cached != null) {
           final cachedSnapshot = TreeGraphSnapshot.fromJson(
             cached,
-            personParser:
-                (json) => _personFromJson(json, fallbackTreeId: treeId),
-            relationParser:
-                (json) => _relationFromJson(json, fallbackTreeId: treeId),
+            personParser: (json) =>
+                _personFromJson(json, fallbackTreeId: treeId),
+            relationParser: (json) =>
+                _relationFromJson(json, fallbackTreeId: treeId),
           );
           _graphSnapshotCache[treeId] = cachedSnapshot;
           for (final person in cachedSnapshot.people) {
@@ -557,8 +591,8 @@ class CustomApiFamilyTreeService
       final snapshot = TreeGraphSnapshot.fromJson(
         snapshotJson,
         personParser: (json) => _personFromJson(json, fallbackTreeId: treeId),
-        relationParser:
-            (json) => _relationFromJson(json, fallbackTreeId: treeId),
+        relationParser: (json) =>
+            _relationFromJson(json, fallbackTreeId: treeId),
       );
       _graphSnapshotCache[treeId] = snapshot;
       for (final person in snapshot.people) {
@@ -1108,6 +1142,7 @@ class CustomApiFamilyTreeService
         'response': RelationRequest.requestStatusToString(response),
       },
     );
+    _invalidateAllTreeCaches();
   }
 
   @override
@@ -1260,6 +1295,7 @@ class CustomApiFamilyTreeService
       await localStorageService.deleteRelationsByTreeId(treeId);
     }
 
+    _invalidateTreeCaches(treeId);
     _personTreeIds.removeWhere((_, cachedTreeId) => cachedTreeId == treeId);
   }
 
@@ -1635,10 +1671,13 @@ class CustomApiFamilyTreeService
       );
     }
 
-    final dynamic decoded = jsonDecode(response.body);
-    final payload = decoded is Map<String, dynamic>
-        ? decoded
-        : <String, dynamic>{'data': decoded};
+    final payload = tryDecodeJsonMap(response.body);
+    if (payload == null) {
+      throw CustomApiException(
+        'Сервер вернул некорректный ответ (${response.statusCode})',
+        statusCode: response.statusCode,
+      );
+    }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return payload;
@@ -1663,8 +1702,8 @@ class CustomApiFamilyTreeService
     }
 
     if (response.body.isNotEmpty) {
-      final dynamic decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic>) {
+      final decoded = tryDecodeJsonMap(response.body);
+      if (decoded != null) {
         throw CustomApiException(
           decoded['message']?.toString() ??
               'Ошибка backend (${response.statusCode})',
@@ -3125,8 +3164,7 @@ class CustomApiFamilyTreeService
     try {
       final response = await _requestJson(
         method: 'DELETE',
-        path:
-            '/v1/semya/${semyaId.trim()}/invitation/${invitationId.trim()}',
+        path: '/v1/semya/${semyaId.trim()}/invitation/${invitationId.trim()}',
       );
       final invRaw = response['invitation'];
       if (invRaw is! Map<String, dynamic>) {
@@ -3210,6 +3248,7 @@ class CustomApiFamilyTreeService
           'sourcePersonId': personId,
         },
       );
+      _invalidateAllTreeCaches();
       return SemyaPullPersonResult.fromJson(response);
     } on CustomApiException catch (e) {
       throw _mapSemyaException(e, endpoint: 'pull_person');
@@ -3462,6 +3501,7 @@ class CustomApiFamilyTreeService
         path: '/v1/me/semya/$trimmed/hide-filter',
         body: body,
       );
+      _invalidateAllTreeCaches();
       final raw = response['hiddenPersonIds'];
       if (raw is! List) return const <String>[];
       return raw
@@ -3639,6 +3679,7 @@ class CustomApiFamilyTreeService
         method: 'POST',
         path: '/v1/deleted-persons/$trimmed/restore',
       );
+      _invalidateAllTreeCaches();
     } on CustomApiException catch (e) {
       throw _mapDeletedItemException(e);
     }
@@ -3820,19 +3861,45 @@ class CustomApiFamilyTreeService
     required String endpoint,
   }) {
     final status = e.statusCode;
+    final lower = e.message.toLowerCase();
     String code;
     switch (status) {
       case 400:
         code = 'INVALID_INPUT';
         break;
       case 403:
-        code = 'FORBIDDEN';
+        if (endpoint == 'accept_invitation' &&
+            (lower.contains('адресовано') || lower.contains('recipient'))) {
+          code = 'WRONG_RECIPIENT';
+        } else {
+          code = 'FORBIDDEN';
+        }
         break;
       case 404:
-        code = 'SEMYA_NOT_FOUND';
+        if (endpoint.contains('invitation') || lower.contains('приглаш')) {
+          code = 'INVITATION_NOT_FOUND';
+        } else if (endpoint.contains('browse_token') ||
+            lower.contains('ссылк') ||
+            lower.contains('токен')) {
+          code = 'TOKEN_NOT_FOUND';
+        } else {
+          code = 'SEMYA_NOT_FOUND';
+        }
         break;
       case 409:
-        code = 'TREE_ALREADY_BOUND';
+        if (endpoint.contains('invitation') ||
+            lower.contains('принято') ||
+            lower.contains('отклонено') ||
+            lower.contains('отозван')) {
+          code = 'INVITATION_NOT_PENDING';
+        } else if (endpoint.contains('browse_token')) {
+          code = 'TOKEN_ALREADY_REVOKED';
+        } else {
+          code = 'TREE_ALREADY_BOUND';
+        }
+        break;
+      case 410:
+        code = lower.contains('семь') ? 'SEMYA_DELETED' : 'INVITATION_EXPIRED';
         break;
       default:
         code = 'UNKNOWN';

@@ -154,12 +154,21 @@
         // route. Avoids loops if Flutter ever pushes path back.
         var isInvitePath = /(?:^|\/)invite\/?$/.test(path);
         var hasInviteParams = /[?&](?:treeId|personId)=/.test(search);
-        var alreadyHashed = /^#\/invite/.test(hash);
-        if (isInvitePath && hasInviteParams && !alreadyHashed) {
-          var basePath = path.replace(/\/?invite\/?$/, '/');
-          if (!basePath || basePath === '') basePath = '/';
-          if (!basePath.endsWith('/')) basePath += '/';
-          window.location.replace(basePath + '#/invite' + search);
+        var alreadyHashed = /^#\//.test(hash);
+        if (!alreadyHashed) {
+          if (isInvitePath && hasInviteParams) {
+            var basePath = path.replace(/\/?invite\/?$/, '/');
+            if (!basePath || basePath === '') basePath = '/';
+            if (!basePath.endsWith('/')) basePath += '/';
+            window.location.replace(basePath + '#/invite' + search);
+            return;
+          }
+          var deepRouteMatch = path.match(/(\/(?:reset-password|browse\/[^/]+|invite\/[^/]+|story-requests\/[^/]+\/answer)\/?)$/);
+          if (deepRouteMatch) {
+            var routeBase = path.slice(0, path.length - deepRouteMatch[1].length) || '/';
+            if (!routeBase.endsWith('/')) routeBase += '/';
+            window.location.replace(routeBase + '#' + deepRouteMatch[1] + search);
+          }
         }
       } catch (_) {
         // Never block app boot on a redirect heuristic.

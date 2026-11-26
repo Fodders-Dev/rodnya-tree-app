@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import '../models/call_invite.dart';
@@ -35,6 +36,39 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
   Offset? _offset;
 
   @override
+  void initState() {
+    super.initState();
+    widget.coordinator.addListener(_handleCoordinatorChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant CallFloatingPip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.coordinator, widget.coordinator)) {
+      oldWidget.coordinator.removeListener(_handleCoordinatorChanged);
+      widget.coordinator.addListener(_handleCoordinatorChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.coordinator.removeListener(_handleCoordinatorChanged);
+    super.dispose();
+  }
+
+  void _handleCoordinatorChanged() {
+    if (!mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    } else {
+      setState(() {});
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -56,7 +90,7 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
               top: offset.dy,
               width: _cardSize.width,
               height: _cardSize.height,
-              child: _buildCard(context, constraints.biggest),
+              child: _buildCard(context, constraints.biggest, fallbackOffset),
             ),
           ],
         );
@@ -64,7 +98,7 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
     );
   }
 
-  Widget _buildCard(BuildContext context, Size bounds) {
+  Widget _buildCard(BuildContext context, Size bounds, Offset fallbackOffset) {
     final theme = Theme.of(context);
     final remoteVideoTrack = _remoteVideoTrack(widget.coordinator.room);
     final isVideo = widget.call.mediaMode.isVideo;
@@ -79,8 +113,11 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
     final canJoinActive = uid != null &&
         widget.call.state == CallState.active &&
         widget.call.session == null &&
-        !widget.call.isOutgoingFor(uid) &&
-        widget.call.participantIds.contains(uid);
+        widget.coordinator.room == null &&
+        widget.call.participantIds.contains(uid) &&
+        (!widget.call.isOutgoingFor(uid) ||
+            widget.call.joinedOnAnotherDevice ||
+            widget.coordinator.joinedOnAnotherDevice);
     final connectionQuality = widget.coordinator.displayedConnectionQuality;
     final statusColor = isRinging
         ? const Color(0xFFFFB020)
@@ -110,10 +147,13 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
       label: 'Мини-окно звонка',
       child: GestureDetector(
         onTap: widget.onRestore,
+        onPanStart: (_) {
+          _offset ??= fallbackOffset;
+        },
         onPanUpdate: (details) {
           setState(() {
             _offset = _clampOffset(
-              (_offset ?? Offset.zero) + details.delta,
+              (_offset ?? fallbackOffset) + details.delta,
               bounds,
             );
           });
@@ -255,7 +295,8 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
                               icon: Icons.call_rounded,
                               backgroundColor: const Color(0xFF22C55E),
                               onPressed: () => unawaited(
-                                widget.coordinator.joinActiveCall(widget.call.id),
+                                widget.coordinator
+                                    .joinActiveCall(widget.call.id),
                               ),
                             ),
                             const SizedBox(width: 8),

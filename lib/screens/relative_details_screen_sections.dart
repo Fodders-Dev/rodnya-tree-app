@@ -103,7 +103,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 label: const Text('Повторить'),
               ),
               OutlinedButton.icon(
-                onPressed: () => context.pop(),
+                onPressed: _navigateBack,
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Назад'),
               ),
@@ -117,7 +117,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 'Возможно, эту карточку удалили.',
             actions: [
               OutlinedButton.icon(
-                onPressed: () => context.pop(),
+                onPressed: _navigateBack,
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Назад'),
               ),
@@ -131,7 +131,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 'Загляните позже или напишите ему.',
             actions: [
               OutlinedButton.icon(
-                onPressed: () => context.pop(),
+                onPressed: _navigateBack,
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Назад'),
               ),
@@ -152,7 +152,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
             label: const Text('Обновить'),
           ),
           OutlinedButton.icon(
-            onPressed: () => context.pop(),
+            onPressed: _navigateBack,
             icon: const Icon(Icons.arrow_back),
             label: const Text('Назад'),
           ),
@@ -260,7 +260,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               // up immediately (see _askFamilyStory).
               if (_person != null && _currentTreeId != null)
                 StoryRequestStatusLine(
-                  key: ValueKey('story-status-${person.id}-$_storyRequestStatusTick'),
+                  key: ValueKey(
+                      'story-status-${person.id}-$_storyRequestStatusTick'),
                   personId: person.id,
                 ),
               // «Семейные истории» — read-first article (§3.1 order: шапка →
@@ -268,6 +269,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               // suppressed: the header's primary CTA already offers it.
               if (_person != null)
                 ProfileBiographySection(
+                  key: ValueKey('bio-${person.id}-$_biographyRefreshVersion'),
                   personId: person.id,
                   fullName: fullName,
                   relation: directRelationLabel,
@@ -522,7 +524,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                     child: _HeroActionTile(
                       key: const Key('profile-invite'),
                       icon: Icons.person_add_alt_1_outlined,
-                      label: _isGeneratingLink ? 'Готовим…' : 'Пригласить в Родню',
+                      label:
+                          _isGeneratingLink ? 'Готовим…' : 'Пригласить в Родню',
                       onTap: _isGeneratingLink
                           ? null
                           : _generateAndShareInviteLink,
@@ -643,15 +646,15 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     return 'лет';
   }
 
-  void _openBiographyEditor({
+  Future<void> _openBiographyEditor({
     required String name,
     String? relation,
     String? gender,
     FamilyStoryQuestion? initialQuestion,
-  }) {
+  }) async {
     final person = _person;
     if (person == null) return;
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ProfileArticleEditorScreen(
           personId: person.id,
@@ -666,6 +669,9 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         ),
       ),
     );
+    if (mounted) {
+      _bumpBiographyRefreshVersion();
+    }
   }
 
   /// MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.3), extended
@@ -705,9 +711,14 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final storyService = _familyService is StoryRequestCapableFamilyTreeService
         ? _familyService as StoryRequestCapableFamilyTreeService
         : null;
-    final askTargets = (storyService == null || person == null || treeId == null)
-        ? const <FamilyStoryAskTarget>[]
-        : _buildStoryAskTargets(person: person, heroDisplayName: name);
+    final allAskTargets =
+        (storyService == null || person == null || treeId == null)
+            ? const <FamilyStoryAskTarget>[]
+            : _buildStoryAskTargets(person: person, heroDisplayName: name);
+    final canSaveAnswer = _canDirectEditProfile();
+    final askTargets = _canEditOrDelete()
+        ? allAskTargets
+        : allAskTargets.where((t) => t.isHero).toList(growable: false);
 
     final action = await showFamilyStoryQuestionsSheet(
       context,
@@ -717,6 +728,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       treeId: treeId,
       personId: person?.id,
       askTargets: askTargets,
+      canSaveAnswer: canSaveAnswer,
     );
     if (action == null || !mounted) return;
     switch (action.type) {
@@ -729,7 +741,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         );
         break;
       case FamilyStoryQuestionActionType.saveAnswer:
-        _openBiographyEditor(
+        if (!canSaveAnswer) break;
+        await _openBiographyEditor(
           name: name,
           relation: relation,
           gender: gender,
@@ -769,15 +782,17 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Вопрос готов к отправке.'),
-          action: SnackBarAction(
-            label: 'Сохранить ответ',
-            onPressed: () => _openBiographyEditor(
-              name: name,
-              relation: relation,
-              gender: gender,
-              initialQuestion: question,
-            ),
-          ),
+          action: _canDirectEditProfile()
+              ? SnackBarAction(
+                  label: 'Сохранить ответ',
+                  onPressed: () => _openBiographyEditor(
+                    name: name,
+                    relation: relation,
+                    gender: gender,
+                    initialQuestion: question,
+                  ),
+                )
+              : null,
         ),
       );
     } catch (error) {
@@ -786,15 +801,17 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Не удалось открыть отправку.'),
-          action: SnackBarAction(
-            label: 'Сохранить ответ',
-            onPressed: () => _openBiographyEditor(
-              name: name,
-              relation: relation,
-              gender: gender,
-              initialQuestion: question,
-            ),
-          ),
+          action: _canDirectEditProfile()
+              ? SnackBarAction(
+                  label: 'Сохранить ответ',
+                  onPressed: () => _openBiographyEditor(
+                    name: name,
+                    relation: relation,
+                    gender: gender,
+                    initialQuestion: question,
+                  ),
+                )
+              : null,
         ),
       );
     }
@@ -917,6 +934,16 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       final uid = person.userId;
       if (uid != null && uid.isNotEmpty && person.name.trim().isNotEmpty) {
         map[uid] = person.name.trim();
+      }
+    }
+    for (final member in _semyaMembers) {
+      final uid = member.userId;
+      final displayName = member.displayName?.trim();
+      if (uid.isNotEmpty &&
+          displayName != null &&
+          displayName.isNotEmpty &&
+          !map.containsKey(uid)) {
+        map[uid] = displayName;
       }
     }
     return map;
@@ -2714,7 +2741,7 @@ List<FamilyStoryAskTarget> buildStoryAskTargets({
     targets.add(FamilyStoryAskTarget(
       userId: heroUserId,
       displayName: '${_selfAskPrefix(heroPerson.gender)} $heroDisplayName',
-      photoUrl: heroPerson.photoUrl,
+      photoUrl: normalizePhotoUrl(heroPerson.photoUrl),
       isHero: true,
     ));
   }
@@ -2724,7 +2751,10 @@ List<FamilyStoryAskTarget> buildStoryAskTargets({
     if (uid == null || uid.isEmpty) continue;
     if (uid == currentUserId || !seen.add(uid)) continue;
     targets.add(
-      FamilyStoryAskTarget(userId: uid, displayName: p.name, photoUrl: p.photoUrl),
+      FamilyStoryAskTarget(
+          userId: uid,
+          displayName: p.name,
+          photoUrl: normalizePhotoUrl(p.photoUrl)),
     );
   }
   for (final m in semyaMembers) {
@@ -2735,7 +2765,7 @@ List<FamilyStoryAskTarget> buildStoryAskTargets({
       FamilyStoryAskTarget(
         userId: uid,
         displayName: _semyaMemberDisplayName(m),
-        photoUrl: m.avatarUrl,
+        photoUrl: normalizePhotoUrl(m.avatarUrl),
       ),
     );
   }

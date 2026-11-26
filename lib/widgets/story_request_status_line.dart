@@ -33,8 +33,7 @@ class StoryRequestStatusLine extends StatefulWidget {
   final AuthServiceInterface? authServiceOverride;
 
   @override
-  State<StoryRequestStatusLine> createState() =>
-      _StoryRequestStatusLineState();
+  State<StoryRequestStatusLine> createState() => _StoryRequestStatusLineState();
 }
 
 class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
@@ -102,15 +101,36 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
     try {
       final updated = await service.revokeStoryRequest(requestId: request.id);
       if (!mounted) return;
+      if (updated == null) {
+        setState(() => _revoking.remove(request.id));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось отозвать вопрос. Попробуйте ещё раз.'),
+          ),
+        );
+        return;
+      }
       setState(() {
         _revoking.remove(request.id);
-        if (updated == null || !updated.isPending) {
+        if (!updated.isPending) {
           _pendingForPerson =
               _pendingForPerson.where((r) => r.id != request.id).toList();
         }
       });
+    } on StoryRequestError catch (e) {
+      if (!mounted) return;
+      setState(() => _revoking.remove(request.id));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
     } catch (_) {
-      if (mounted) setState(() => _revoking.remove(request.id));
+      if (!mounted) return;
+      setState(() => _revoking.remove(request.id));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось отозвать вопрос. Попробуйте ещё раз.'),
+        ),
+      );
     }
   }
 

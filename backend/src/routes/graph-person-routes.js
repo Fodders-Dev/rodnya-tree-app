@@ -227,7 +227,9 @@ function registerGraphPersonRoutes(app, {store, requireAuth, requireGraphPersonR
     const previewIds = Array.from(
       new Set(grants.map((entry) => entry.graphPersonId).filter(Boolean)),
     );
-    const previews = await store.previewGraphPersonsByIds(previewIds);
+    const previews = await store.previewGraphPersonsByIds(previewIds, {
+      viewerUserId: req.auth.user.id,
+    });
     const previewById = new Map(previews.map((entry) => [entry.id, entry]));
 
     res.json({

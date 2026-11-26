@@ -195,20 +195,10 @@ function registerTreeRoutes(
   });
 
   app.delete("/v1/trees/:treeId", requireAuth, async (req, res) => {
-    const tree = await store.findTree(req.params.treeId);
+    const tree = await requireTreeAccess(req, res, req.params.treeId, {
+      requiredRole: "viewer",
+    });
     if (!tree) {
-      res.status(404).json({message: "Дерево не найдено"});
-      return;
-    }
-
-    const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
-    const members = Array.isArray(tree.members) ? tree.members : [];
-    const hasAccess =
-      tree.creatorId === req.auth.user.id ||
-      memberIds.includes(req.auth.user.id) ||
-      members.includes(req.auth.user.id);
-    if (!hasAccess) {
-      res.status(403).json({message: "Доступ к дереву запрещён"});
       return;
     }
 
@@ -502,7 +492,9 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/persons/:personId/link-identity",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      const tree = await requireTreeAccess(req, res, req.params.treeId, {
+        requiredRole: "editor",
+      });
       if (!tree) return;
       const targetTreeIdRaw = req.body?.targetTreeId;
       const targetPersonIdRaw = req.body?.targetPersonId;
@@ -516,8 +508,10 @@ function registerTreeRoutes(
         });
         return;
       }
-      // Auth: verify the user can access the target tree too.
-      const targetTree = await requireTreeAccess(req, res, targetTreeId);
+      // Auth: verify the user can edit the target tree too.
+      const targetTree = await requireTreeAccess(req, res, targetTreeId, {
+        requiredRole: "editor",
+      });
       if (!targetTree) return;
 
       // Phase 3.2 (DECISIONS.md ответ C): identity link = merge,
@@ -686,7 +680,9 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/conflicts/:conflictId/resolve",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      const tree = await requireTreeAccess(req, res, req.params.treeId, {
+        requiredRole: "editor",
+      });
       if (!tree) return;
       const choiceRaw = req.body?.choice;
       const choice = typeof choiceRaw === "string" ? choiceRaw.trim() : "";
@@ -747,7 +743,9 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/persons/import",
     requireAuth,
     async (req, res) => {
-      const targetTree = await requireTreeAccess(req, res, req.params.treeId);
+      const targetTree = await requireTreeAccess(req, res, req.params.treeId, {
+        requiredRole: "editor",
+      });
       if (!targetTree) return;
 
       const sourceTreeIdRaw = req.body?.sourceTreeId;
@@ -811,7 +809,9 @@ function registerTreeRoutes(
   );
 
   app.post("/v1/trees/:treeId/persons", requireAuth, async (req, res) => {
-    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    const tree = await requireTreeAccess(req, res, req.params.treeId, {
+      requiredRole: "editor",
+    });
     if (!tree) {
       return;
     }
@@ -1296,7 +1296,9 @@ function registerTreeRoutes(
   );
 
   app.post("/v1/trees/:treeId/relations", requireAuth, async (req, res) => {
-    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    const tree = await requireTreeAccess(req, res, req.params.treeId, {
+      requiredRole: "editor",
+    });
     if (!tree) {
       return;
     }
@@ -1399,7 +1401,9 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/relations/:relationId",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      const tree = await requireTreeAccess(req, res, req.params.treeId, {
+        requiredRole: "editor",
+      });
       if (!tree) {
         return;
       }

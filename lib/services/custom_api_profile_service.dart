@@ -14,6 +14,7 @@ import '../models/family_person.dart';
 import '../models/profile_contribution.dart';
 import '../models/profile_note.dart';
 import '../models/user_profile.dart';
+import '../utils/safe_json_decode.dart';
 import 'custom_api_auth_service.dart';
 
 class CustomApiProfileService implements ProfileServiceInterface {
@@ -254,8 +255,18 @@ class CustomApiProfileService implements ProfileServiceInterface {
     return coverPhotoUrl;
   }
 
+  Future<void> resetForSignOut() async {
+    for (final controller in _noteControllers.values) {
+      if (!controller.isClosed) {
+        await controller.close();
+      }
+    }
+    _noteControllers.clear();
+  }
+
   @override
   Future<void> updateUserProfile(String userId, UserProfile profile) async {
+    final cachedForm = _getCachedProfileForm(userId: userId);
     final formData = ProfileFormData(
       userId: userId,
       email: profile.email,
@@ -271,6 +282,7 @@ class CustomApiProfileService implements ProfileServiceInterface {
       photoUrl: profile.photoURL,
       coverPhotoUrl: profile.coverPhotoURL,
       gender: profile.gender ?? Gender.unknown,
+      maidenName: profile.maidenName,
       birthDate: profile.birthDate,
       birthPlace: profile.birthPlace ?? '',
       bio: profile.bio,
@@ -284,7 +296,7 @@ class CustomApiProfileService implements ProfileServiceInterface {
       religion: profile.religion,
       interests: profile.interests,
       profileContributionPolicy: profile.profileContributionPolicy,
-      primaryTrustedChannel: null,
+      primaryTrustedChannel: cachedForm?.primaryTrustedChannel,
       profileVisibilityScopes:
           profile.profileVisibilityScopes ?? _defaultProfileVisibilityScopes,
       profileVisibilityTreeIds:
@@ -482,10 +494,13 @@ class CustomApiProfileService implements ProfileServiceInterface {
       );
     }
 
-    final dynamic decoded = jsonDecode(response.body);
-    final payload = decoded is Map<String, dynamic>
-        ? decoded
-        : <String, dynamic>{'data': decoded};
+    final payload = tryDecodeJsonMap(response.body);
+    if (payload == null) {
+      throw CustomApiException(
+        'Сервер вернул некорректный ответ (${response.statusCode})',
+        statusCode: response.statusCode,
+      );
+    }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return payload;
@@ -510,10 +525,10 @@ class CustomApiProfileService implements ProfileServiceInterface {
     }
 
     if (response.body.isNotEmpty) {
-      final dynamic decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic>) {
+      final payload = tryDecodeJsonMap(response.body);
+      if (payload != null) {
         throw CustomApiException(
-          decoded['message']?.toString() ??
+          payload['message']?.toString() ??
               'Ошибка backend (${response.statusCode})',
           statusCode: response.statusCode,
         );
@@ -565,6 +580,7 @@ class CustomApiProfileService implements ProfileServiceInterface {
         'countryName': data.countryName,
         'city': data.city,
         'photoUrl': data.photoUrl,
+        'coverPhotoUrl': data.coverPhotoUrl,
         'gender': data.gender.name,
         'maidenName': data.maidenName,
         'birthDate': data.birthDate?.toIso8601String(),

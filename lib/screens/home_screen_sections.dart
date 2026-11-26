@@ -748,16 +748,18 @@ extension _HomeScreenSections on _HomeScreenState {
     // Phase E2: gatherings land in the same feed as posts (E2c), so a
     // successful create refreshes it just like a post does.
     final result = await context.push('/gathering/create');
+    if (!mounted) return;
     if (result == true) {
-      await _loadPosts(branchId: _selectedFeedBranchId);
+      await _loadPostsWithSidecars(branchId: _selectedFeedBranchId);
     }
   }
 
   Future<void> _openCreatePoll() async {
     // Phase E5d: polls share the feed too; refresh on a successful create.
     final result = await context.push('/poll/create');
+    if (!mounted) return;
     if (result == true) {
-      await _loadPosts(branchId: _selectedFeedBranchId);
+      await _loadPostsWithSidecars(branchId: _selectedFeedBranchId);
     }
   }
 

@@ -11,6 +11,7 @@ import '../models/comment.dart';
 import '../models/media_upload_progress.dart';
 import '../models/post.dart';
 import '../models/reaction_summary.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import 'custom_api_auth_service.dart';
 
@@ -488,7 +489,7 @@ class CustomApiPostService implements PostServiceInterface {
   }
 
   Future<bool> _shouldRefreshAndRetry(CustomApiPostException error) async {
-    if (error.statusCode != 401 && error.statusCode != 403) {
+    if (error.statusCode != 401) {
       return false;
     }
     await _authService.refreshSession();
@@ -498,10 +499,18 @@ class CustomApiPostService implements PostServiceInterface {
   dynamic _handleResponse(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       if (response.body.isEmpty) return <String, dynamic>{};
-      return jsonDecode(response.body);
+      final decoded = tryDecodeJsonValue(response.body);
+      if (decoded == null) {
+        throw CustomApiPostException(
+          'Post Service Error: некорректный ответ сервера (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
+      }
+      return decoded;
     }
 
-    final errorData = response.body.isNotEmpty ? jsonDecode(response.body) : {};
+    final errorData =
+        tryDecodeJsonMap(response.body) ?? const <String, dynamic>{};
     throw CustomApiPostException(
       errorData['message']?.toString() ??
           'Post Service Error: ${response.statusCode}',

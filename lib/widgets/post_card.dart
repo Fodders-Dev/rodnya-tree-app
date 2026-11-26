@@ -182,18 +182,19 @@ class _PostCardState extends State<PostCard>
         _commentCount = updatedPost.commentCount;
       });
     } catch (e) {
+      if (!mounted) {
+        return;
+      }
       // Revert to the last confirmed state if the backend rejected the like.
       setState(() {
         _isLikedByCurrentUser = wasLiked;
         _likeCount = previousLikeCount;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-                  humanizeError(e, fallback: 'Не удалось обновить реакцию.'))),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                humanizeError(e, fallback: 'Не удалось обновить реакцию.'))),
+      );
     }
   }
 

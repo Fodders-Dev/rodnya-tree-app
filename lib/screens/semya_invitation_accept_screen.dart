@@ -20,6 +20,8 @@
 //                              либо revoked. Differentiate via message keyword.
 //   • Прочие (network etc.) → generic «Не удалось принять приглашение»
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -27,6 +29,7 @@ import 'package:go_router/go_router.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/models/semya.dart';
+import '../providers/tree_provider.dart';
 import '../services/semya_invitation_deep_link_service.dart';
 
 class SemyaInvitationAcceptScreen extends StatefulWidget {
@@ -95,6 +98,9 @@ class _SemyaInvitationAcceptScreenState
       final result = await service.acceptInvitation(trimmed);
       // Clear persisted token — accepted successfully.
       deepLinkSvc.clearPendingToken();
+      if (GetIt.I.isRegistered<TreeProvider>()) {
+        unawaited(GetIt.I<TreeProvider>().refreshAvailableTrees());
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -123,7 +129,8 @@ class _SemyaInvitationAcceptScreenState
         _processing = false;
         _errorMessage = friendly;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendly)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(friendly)));
     } catch (error) {
       if (!mounted) return;
       setState(() {

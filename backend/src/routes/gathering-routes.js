@@ -63,8 +63,12 @@ function registerGatheringRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, gathering.treeId);
-    if (!tree) {
+    const canView = await store.canUserViewScopedItem({
+      item: gathering,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этой встрече"});
       return;
     }
 
@@ -294,8 +298,12 @@ function registerGatheringRoutes(
         return;
       }
 
-      const tree = await requireTreeAccess(req, res, gathering.treeId);
-      if (!tree) {
+      const canView = await store.canUserViewScopedItem({
+        item: gathering,
+        userId: req.auth.user.id,
+      });
+      if (!canView) {
+        res.status(403).json({message: "Нет доступа к этой встрече"});
         return;
       }
 

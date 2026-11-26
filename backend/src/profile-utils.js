@@ -339,6 +339,82 @@ function sanitizeUserProfilePreview(user) {
   };
 }
 
+function sanitizeProfileUpdatePayload(rawBody = {}) {
+  if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+    return {};
+  }
+  const allowedStringKeys = new Set([
+    "firstName",
+    "lastName",
+    "middleName",
+    "displayName",
+    "username",
+    "phoneNumber",
+    "countryCode",
+    "countryName",
+    "city",
+    "gender",
+    "maidenName",
+    "birthDate",
+    "birthPlace",
+    "bio",
+    "familyStatus",
+    "aboutFamily",
+    "education",
+    "work",
+    "hometown",
+    "languages",
+    "values",
+    "religion",
+    "interests",
+  ]);
+  const urlKeys = new Set(["photoUrl", "coverPhotoUrl"]);
+  const next = {};
+  for (const key of allowedStringKeys) {
+    if (!(key in rawBody)) continue;
+    const val = rawBody[key];
+    if (val === null) {
+      next[key] = null;
+    } else if (typeof val === "string") {
+      const limit = key === "bio" || key === "aboutFamily" ? 2000 : 300;
+      next[key] = val.slice(0, limit);
+    }
+  }
+  for (const key of urlKeys) {
+    if (!(key in rawBody)) continue;
+    const val = rawBody[key];
+    if (val === null || val === "") {
+      next[key] = null;
+    } else if (typeof val === "string") {
+      const trimmed = val.trim();
+      if (trimmed.length <= 2048) {
+        const normalized = normalizePublicUrl(trimmed);
+        if (normalized !== undefined) {
+          next[key] = normalized;
+        }
+      }
+    }
+  }
+  if ("profileContributionPolicy" in rawBody) {
+    next.profileContributionPolicy = normalizeProfileContributionPolicy(
+      rawBody.profileContributionPolicy,
+    );
+  }
+  if ("primaryTrustedChannel" in rawBody) {
+    next.primaryTrustedChannel = normalizePrimaryTrustedChannel(
+      rawBody.primaryTrustedChannel,
+    );
+  }
+  if (
+    "profileVisibility" in rawBody &&
+    rawBody.profileVisibility &&
+    typeof rawBody.profileVisibility === "object"
+  ) {
+    next.profileVisibility = normalizeProfileVisibility(rawBody.profileVisibility);
+  }
+  return next;
+}
+
 module.exports = {
   DEFAULT_PROFILE_VISIBILITY,
   PROFILE_CONTRIBUTION_POLICIES,
@@ -352,5 +428,6 @@ module.exports = {
   normalizePublicUrl,
   normalizePublicUrlList,
   sanitizeProfile,
+  sanitizeProfileUpdatePayload,
   sanitizeUserProfilePreview,
 };

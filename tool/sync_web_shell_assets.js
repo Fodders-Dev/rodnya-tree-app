@@ -54,6 +54,27 @@ async function copyRecursive(sourcePath, targetPath) {
   await fs.copyFile(sourcePath, targetPath);
 }
 
+async function copyMissingRecursive(sourcePath, targetPath) {
+  const stats = await fs.stat(sourcePath);
+  if (stats.isDirectory()) {
+    await ensureDir(targetPath);
+    const entries = await fs.readdir(sourcePath, {withFileTypes: true});
+    for (const entry of entries) {
+      await copyMissingRecursive(
+        path.join(sourcePath, entry.name),
+        path.join(targetPath, entry.name),
+      );
+    }
+    return;
+  }
+
+  if (await pathExists(targetPath)) {
+    return;
+  }
+  await ensureDir(path.dirname(targetPath));
+  await fs.copyFile(sourcePath, targetPath);
+}
+
 async function collectAssetFiles(rootPath, currentPath = rootPath) {
   const entries = await fs.readdir(currentPath, {withFileTypes: true});
   const files = [];
@@ -202,21 +223,33 @@ async function writeGeneratedManifests(repoRoot) {
     assetFiles,
   );
 
-  await fs.writeFile(
-    path.join(assetRoot, "AssetManifest.json"),
-    `${JSON.stringify(assetManifest)}\n`,
-    "utf8",
+  const assetManifestJsonPath = path.join(assetRoot, "AssetManifest.json");
+  if (!await pathExists(assetManifestJsonPath)) {
+    await fs.writeFile(
+      assetManifestJsonPath,
+      `${JSON.stringify(assetManifest)}\n`,
+      "utf8",
+    );
+  }
+  const assetManifestBinJsonPath = path.join(
+    assetRoot,
+    "AssetManifest.bin.json",
   );
-  await fs.writeFile(
-    path.join(assetRoot, "AssetManifest.bin.json"),
-    `${JSON.stringify(assetManifest)}\n`,
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(assetRoot, "FontManifest.json"),
-    `${JSON.stringify(fontManifest)}\n`,
-    "utf8",
-  );
+  if (!await pathExists(assetManifestBinJsonPath)) {
+    await fs.writeFile(
+      assetManifestBinJsonPath,
+      `${JSON.stringify(assetManifest)}\n`,
+      "utf8",
+    );
+  }
+  const fontManifestPath = path.join(assetRoot, "FontManifest.json");
+  if (!await pathExists(fontManifestPath)) {
+    await fs.writeFile(
+      fontManifestPath,
+      `${JSON.stringify(fontManifest)}\n`,
+      "utf8",
+    );
+  }
 
   return {
     assetCount: assetFiles.length,
@@ -249,12 +282,17 @@ async function main() {
 
   const flutterAssetSource = await resolveFlutterAssetSource(repoRoot);
   if (flutterAssetSource) {
-    for (const entry of ["assets", "fonts", "packages", "shaders"]) {
+    // Never copy desktop/Android Impeller shaders (`IPLR`) or overwrite web
+    // tree-shaken fonts built by `flutter build web`.
+    for (const entry of ["assets", "fonts", "packages"]) {
       const sourcePath = path.join(flutterAssetSource, entry);
       if (!await pathExists(sourcePath)) {
         continue;
       }
-      await copyRecursive(sourcePath, path.join(buildWebAssetRoot, entry));
+      await copyMissingRecursive(
+        sourcePath,
+        path.join(buildWebAssetRoot, entry),
+      );
     }
   }
 

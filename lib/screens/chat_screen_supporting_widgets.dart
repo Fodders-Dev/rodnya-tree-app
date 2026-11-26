@@ -144,6 +144,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
       } else if (widget.path != null) {
         await player.play(DeviceFileSource(widget.path!));
       }
+      if (!mounted) return;
       await player.setPlaybackRate(_playbackRate);
     } catch (e) {
       debugPrint('Error playing audio: $e');
@@ -3100,6 +3101,7 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
       // V3 (ревью FR5): НЕ форсим луп — кружок играет один раз, тап =
       // play/pause (как в Telegram). Звук включён, мьют — вторичным контролом.
       await controller.setVolume(1);
+      if (!mounted) return;
       // C2c: один inline-плеер за раз — паузим другой кружок/голосовое.
       _InlineMediaPlayback.activate(this, _pauseSelf);
       await controller.play();
@@ -3612,8 +3614,13 @@ class _SwipeDownDismissibleImageState extends State<_SwipeDownDismissibleImage>
     }
 
     tween.addListener(listener);
-    await _snap.forward();
-    tween.removeListener(listener);
+    try {
+      await _snap.forward();
+    } on TickerCanceled {
+      // Widget disposed mid-animation — safe to ignore.
+    } finally {
+      tween.removeListener(listener);
+    }
   }
 
   @override

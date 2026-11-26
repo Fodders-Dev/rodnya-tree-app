@@ -150,6 +150,8 @@ class CustomApiRealtimeService {
   Timer? _reconnectTimer;
   bool _isConnecting = false;
   bool _disposed = false;
+  bool _manuallyDisconnected = false;
+  int _connectEpoch = 0;
   int _consecutiveFailures = 0;
 
   Stream<CustomApiRealtimeEvent> get events => _eventsController.stream;
@@ -166,11 +168,17 @@ class CustomApiRealtimeService {
 
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _manuallyDisconnected = false;
+    final epoch = ++_connectEpoch;
     _isConnecting = true;
     try {
       final uri = _buildUri(accessToken);
       final channel = _channelFactory(uri);
       await channel.ready;
+      if (_disposed || _manuallyDisconnected || epoch != _connectEpoch) {
+        unawaited(channel.sink.close());
+        return;
+      }
       _consecutiveFailures = 0;
       _channel = channel;
       _channelSubscription = channel.stream.listen(
@@ -180,13 +188,17 @@ class CustomApiRealtimeService {
         cancelOnError: true,
       );
     } catch (_) {
-      _scheduleReconnect();
+      if (!_disposed && !_manuallyDisconnected && epoch == _connectEpoch) {
+        _scheduleReconnect();
+      }
     } finally {
       _isConnecting = false;
     }
   }
 
   Future<void> disconnect() async {
+    _manuallyDisconnected = true;
+    _connectEpoch++;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _consecutiveFailures = 0;
@@ -274,7 +286,12 @@ class CustomApiRealtimeService {
       return;
     }
 
-    final dynamic decoded = jsonDecode(rawEvent);
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(rawEvent);
+    } on FormatException {
+      return;
+    }
     if (decoded is! Map<String, dynamic>) {
       return;
     }

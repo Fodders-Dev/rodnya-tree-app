@@ -344,6 +344,18 @@ function registerPostRoutes(
     res.status(201).json(mapPost(post, 0));
   });
 
+  async function requirePostVisibility(req, res, post) {
+    const canView = await store.canUserViewScopedItem({
+      item: post,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этой публикации"});
+      return false;
+    }
+    return true;
+  }
+
   app.delete("/v1/posts/:postId", requireAuth, async (req, res) => {
     const post = await store.findPost(req.params.postId);
     if (!post) {
@@ -351,8 +363,7 @@ function registerPostRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, post.treeId);
-    if (!tree) {
+    if (!(await requirePostVisibility(req, res, post))) {
       return;
     }
 
@@ -372,8 +383,7 @@ function registerPostRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, post.treeId);
-    if (!tree) {
+    if (!(await requirePostVisibility(req, res, post))) {
       return;
     }
 
@@ -454,8 +464,7 @@ function registerPostRoutes(
         return;
       }
 
-      const tree = await requireTreeAccess(req, res, post.treeId);
-      if (!tree) {
+      if (!(await requirePostVisibility(req, res, post))) {
         return;
       }
 
@@ -535,8 +544,7 @@ function registerPostRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, post.treeId);
-    if (!tree) {
+    if (!(await requirePostVisibility(req, res, post))) {
       return;
     }
 
@@ -552,8 +560,7 @@ function registerPostRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, post.treeId);
-    if (!tree) {
+    if (!(await requirePostVisibility(req, res, post))) {
       return;
     }
 
@@ -568,8 +575,7 @@ function registerPostRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, post.treeId);
-    if (!tree) {
+    if (!(await requirePostVisibility(req, res, post))) {
       return;
     }
 
@@ -670,8 +676,7 @@ function registerPostRoutes(
         return;
       }
 
-      const tree = await requireTreeAccess(req, res, post.treeId);
-      if (!tree) {
+      if (!(await requirePostVisibility(req, res, post))) {
         return;
       }
 

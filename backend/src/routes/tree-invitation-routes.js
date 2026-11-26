@@ -35,7 +35,9 @@ function registerTreeInvitationRoutes(
     "/v1/trees/:treeId/invitations",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      const tree = await requireTreeAccess(req, res, req.params.treeId, {
+        requiredRole: "editor",
+      });
       if (!tree) {
         return;
       }

@@ -87,6 +87,12 @@ function registerMembershipRoutes(
     const userId = String(req.body?.userId || "").trim();
     const role = String(req.body?.role || "").trim();
     const hasInviteGrant = req.body?.hasInviteGrant === true;
+    if (hasInviteGrant && access.membership.role !== "owner") {
+      res.status(403).json({
+        message: "Выдавать право приглашения может только владелец семьи",
+      });
+      return;
+    }
     if (!userId) {
       res.status(400).json({message: "Нужен userId"});
       return;

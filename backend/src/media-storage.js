@@ -12,7 +12,11 @@ const {
 const {Readable} = require("node:stream");
 
 function sanitizeRelativePath(inputValue) {
-  const rawValue = String(inputValue || "").trim().replace(/\\/g, "/");
+  const rawString = String(inputValue || "");
+  if (/[\x00-\x1f\x7f\\]/.test(rawString)) {
+    throw new Error("INVALID_MEDIA_PATH");
+  }
+  const rawValue = rawString.trim();
   const rawParts = rawValue.split("/").filter(Boolean);
   if (rawParts.some((part) => part === "." || part === "..")) {
     throw new Error("INVALID_MEDIA_PATH");
@@ -25,6 +29,74 @@ function sanitizeRelativePath(inputValue) {
   }
 
   return normalized;
+}
+
+const SAFE_INLINE_IMAGE_MIMES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "image/heic",
+  "image/heif",
+]);
+
+const SAFE_INLINE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".avif",
+  ".heic",
+  ".heif",
+  ".mp3",
+  ".m4a",
+  ".aac",
+  ".ogg",
+  ".opus",
+  ".wav",
+  ".mp4",
+  ".mov",
+  ".webm",
+]);
+
+function isSafeInlineMedia(contentType, filePath = "") {
+  const normalizedType = String(contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (normalizedType) {
+    if (SAFE_INLINE_IMAGE_MIMES.has(normalizedType)) {
+      return true;
+    }
+    if (
+      normalizedType.startsWith("audio/") ||
+      normalizedType.startsWith("video/")
+    ) {
+      return true;
+    }
+    return false;
+  }
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  return SAFE_INLINE_EXTENSIONS.has(ext);
+}
+
+function applySafeMediaDownloadHeaders(res, {contentType, filePath, existingContentDisposition} = {}) {
+  if (!res || typeof res.setHeader !== "function") {
+    return;
+  }
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader(
+    "content-security-policy",
+    "default-src 'none'; sandbox",
+  );
+  if (!isSafeInlineMedia(contentType, filePath)) {
+    res.setHeader("content-disposition", "attachment");
+  } else if (existingContentDisposition) {
+    res.setHeader("content-disposition", existingContentDisposition);
+  }
 }
 
 function resolveRequestOrigin(req, config) {
@@ -103,7 +175,7 @@ class LocalMediaStorage {
     }
   }
 
-  async saveObject({req, bucket, relativePath, contentType, fileBuffer}) {
+  async saveObject({req, bucket, relativePath, contentType, fileBuffer, uploaderUserId = null}) {
     const {safeBucket, safeRelativePath, resolvedPath} = this.resolveMediaFilePath(
       bucket,
       relativePath,
@@ -111,6 +183,15 @@ class LocalMediaStorage {
 
     await fs.mkdir(path.dirname(resolvedPath), {recursive: true});
     await fs.writeFile(resolvedPath, fileBuffer);
+    if (uploaderUserId || contentType) {
+      await fs.writeFile(
+        `${resolvedPath}.meta.json`,
+        JSON.stringify({
+          uploaderUserId: uploaderUserId ? String(uploaderUserId) : null,
+          contentType: contentType ? String(contentType) : null,
+        }),
+      );
+    }
 
     return {
       bucket: safeBucket,
@@ -121,7 +202,7 @@ class LocalMediaStorage {
     };
   }
 
-  async deleteObjectByUrl(urlValue) {
+  _extractBucketAndPathFromUrl(urlValue) {
     const url = new URL(urlValue);
     const mediaPrefix = "/media/";
     if (!url.pathname.startsWith(mediaPrefix)) {
@@ -131,8 +212,33 @@ class LocalMediaStorage {
     const relativePath = decodeURIComponent(url.pathname.slice(mediaPrefix.length));
     const [bucket, ...restParts] = relativePath.split("/").filter(Boolean);
     const mediaPath = restParts.join("/");
-    const {resolvedPath} = this.resolveMediaFilePath(bucket, mediaPath);
+    const resolved = this.resolveMediaFilePath(bucket, mediaPath);
+    return {
+      ...resolved,
+      bucket: resolved.safeBucket,
+      relativePath: resolved.safeRelativePath,
+    };
+  }
+
+  async getObjectOwnerInfo(urlValue) {
+    const {relativePath, resolvedPath} = this._extractBucketAndPathFromUrl(urlValue);
+    let uploaderUserId = null;
+    try {
+      const rawMeta = await fs.readFile(`${resolvedPath}.meta.json`, "utf8");
+      const parsed = JSON.parse(rawMeta);
+      if (parsed?.uploaderUserId) {
+        uploaderUserId = String(parsed.uploaderUserId).trim();
+      }
+    } catch (_) {
+      uploaderUserId = null;
+    }
+    return {relativePath, uploaderUserId};
+  }
+
+  async deleteObjectByUrl(urlValue) {
+    const {resolvedPath} = this._extractBucketAndPathFromUrl(urlValue);
     await fs.rm(resolvedPath, {force: true});
+    await fs.rm(`${resolvedPath}.meta.json`, {force: true});
   }
 
   async handleGetRequest(req, res) {
@@ -141,7 +247,21 @@ class LocalMediaStorage {
       .split("/")
       .filter(Boolean);
     const mediaPath = restParts.join("/");
+    if (mediaPath.endsWith(".meta.json")) {
+      throw new Error("MEDIA_FILE_NOT_FOUND");
+    }
     const {resolvedPath} = this.resolveMediaFilePath(bucket, mediaPath);
+    let storedContentType = null;
+    try {
+      const rawMeta = await fs.readFile(`${resolvedPath}.meta.json`, "utf8");
+      storedContentType = JSON.parse(rawMeta)?.contentType || null;
+    } catch (_) {
+      storedContentType = null;
+    }
+    applySafeMediaDownloadHeaders(res, {
+      contentType: storedContentType,
+      filePath: resolvedPath,
+    });
     res.sendFile(resolvedPath);
   }
 
@@ -258,7 +378,7 @@ class S3MediaStorage {
     }
   }
 
-  async saveObject({bucket, relativePath, contentType, fileBuffer}) {
+  async saveObject({bucket, relativePath, contentType, fileBuffer, uploaderUserId = null}) {
     const {safeBucket, safeRelativePath, objectKey} = this.buildObjectKey(
       bucket,
       relativePath,
@@ -270,6 +390,9 @@ class S3MediaStorage {
         Key: objectKey,
         Body: fileBuffer,
         ContentType: contentType ? String(contentType) : undefined,
+        ...(uploaderUserId
+          ? {Metadata: {"uploader-user-id": String(uploaderUserId)}}
+          : {}),
       }),
     );
 
@@ -288,22 +411,47 @@ class S3MediaStorage {
       .trim()
       .replace(/\/+$/, "");
 
+    let normalizedKey;
     if (publicBaseUrl && urlValue.startsWith(publicBaseUrl)) {
-      return decodeURIComponent(urlValue.slice(publicBaseUrl.length).replace(/^\/+/, ""));
+      const suffix = decodeURIComponent(
+        urlValue.slice(publicBaseUrl.length).replace(/^\/+/, ""),
+      );
+      normalizedKey = sanitizeRelativePath(suffix);
+    } else {
+      const pathname = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+      const pathParts = pathname.split("/").filter(Boolean);
+      if (pathParts[0] === this.bucket) {
+        pathParts.shift();
+      }
+      normalizedKey = sanitizeRelativePath(pathParts.join("/"));
     }
-
-    const pathname = decodeURIComponent(url.pathname).replace(/^\/+/, "");
-    const pathParts = pathname.split("/").filter(Boolean);
-    if (pathParts[0] === this.bucket) {
-      pathParts.shift();
-    }
-    const normalizedKey = pathParts.join("/");
 
     if (!this.hasAllowedPrefix(normalizedKey)) {
       throw new Error("UNSUPPORTED_MEDIA_URL");
     }
 
     return normalizedKey;
+  }
+
+  async getObjectOwnerInfo(urlValue) {
+    const objectKey = this.extractObjectKeyFromUrl(urlValue);
+    const afterPrefix = this.hasAllowedPrefix(objectKey)
+      ? objectKey.slice(this.prefix.length + 1)
+      : objectKey;
+    const [, ...restParts] = afterPrefix.split("/").filter(Boolean);
+    const relativePath = restParts.join("/");
+    let uploaderUserId = null;
+    try {
+      const head = await this._client.send(
+        new HeadObjectCommand({Bucket: this.bucket, Key: objectKey}),
+      );
+      if (head?.Metadata?.["uploader-user-id"]) {
+        uploaderUserId = String(head.Metadata["uploader-user-id"]).trim();
+      }
+    } catch (_) {
+      uploaderUserId = null;
+    }
+    return {relativePath, uploaderUserId};
   }
 
   resolveObjectKey(requestedPath) {
@@ -343,7 +491,7 @@ class S3MediaStorage {
     return objectKey;
   }
 
-  setObjectResponseHeaders(res, objectMetadata) {
+  setObjectResponseHeaders(res, objectMetadata, objectKey = "") {
     // Advertise byte-range support so clients (Android MediaPlayer /
     // audioplayers via UrlSource, video scrubbing, browsers) issue
     // Range requests instead of giving up. Required for non-faststart
@@ -364,9 +512,11 @@ class S3MediaStorage {
     if (objectMetadata.CacheControl) {
       res.setHeader("cache-control", objectMetadata.CacheControl);
     }
-    if (objectMetadata.ContentDisposition) {
-      res.setHeader("content-disposition", objectMetadata.ContentDisposition);
-    }
+    applySafeMediaDownloadHeaders(res, {
+      contentType: objectMetadata.ContentType,
+      filePath: objectKey,
+      existingContentDisposition: objectMetadata.ContentDisposition,
+    });
     if (objectMetadata.LastModified instanceof Date) {
       res.setHeader(
         "last-modified",
@@ -459,7 +609,7 @@ class S3MediaStorage {
         const headResponse = await this._client.send(
           new HeadObjectCommand({Bucket: this.bucket, Key: objectKey}),
         );
-        this.setObjectResponseHeaders(res, headResponse);
+        this.setObjectResponseHeaders(res, headResponse, objectKey);
         res.status(200).end();
         return;
       }
@@ -475,7 +625,7 @@ class S3MediaStorage {
       const objectResponse = await this._client.send(
         new GetObjectCommand(commandInput),
       );
-      this.setObjectResponseHeaders(res, objectResponse);
+      this.setObjectResponseHeaders(res, objectResponse, objectKey);
       if (rangeHeader && objectResponse.ContentRange) {
         res.setHeader("content-range", objectResponse.ContentRange);
         res.status(206);

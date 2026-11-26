@@ -44,6 +44,14 @@ class RealtimeHub {
     return 60_000;
   }
 
+  static get MAX_ACTIVE_CHATS_PER_USER() {
+    return 50;
+  }
+
+  static get HEARTBEAT_INTERVAL_MS() {
+    return 30_000;
+  }
+
   _scheduleSessionTouch(token, {userId = null} = {}) {
     if (typeof this.store?.touchSession !== "function") {
       return;
@@ -74,8 +82,52 @@ class RealtimeHub {
       maxPayload: 8 * 1024,
     });
 
+    const heartbeatTimer = setInterval(() => {
+      if (!this.wss) return;
+      for (const client of this.wss.clients) {
+        if (client.isAlive === false) {
+          try {
+            client.terminate?.();
+          } catch (_) {
+            // ignore terminate failure
+          }
+          continue;
+        }
+        client.isAlive = false;
+        try {
+          client.ping?.();
+        } catch (_) {
+          // ignore ping failure on closing socket
+        }
+      }
+    }, RealtimeHub.HEARTBEAT_INTERVAL_MS);
+    heartbeatTimer.unref?.();
+    this.wss.on("close", () => {
+      clearInterval(heartbeatTimer);
+    });
+
     this.wss.on("connection", async (socket, request) => {
       let userId = null;
+      let registered = false;
+      let closed = false;
+      socket.isAlive = true;
+
+      const onEarlyOrLateClose = () => {
+        if (closed) return;
+        closed = true;
+        if (registered && userId) {
+          void this._handleSocketClose(userId, socket);
+        }
+      };
+
+      socket.on("pong", () => {
+        socket.isAlive = true;
+      });
+      socket.on("close", onEarlyOrLateClose);
+      socket.on("error", (error) => {
+        this.logger.warn?.("[rodnya-backend] realtime socket error", error);
+        onEarlyOrLateClose();
+      });
 
       try {
         const url = new URL(request.url, "http://127.0.0.1");
@@ -90,12 +142,18 @@ class RealtimeHub {
         }
 
         const session = await this.store.findSession(token);
+        if (closed || socket.readyState !== socket.OPEN) {
+          return;
+        }
         if (!session) {
           socket.close(4401, "Session not found");
           return;
         }
 
         const user = await this.store.findUserById(session.userId);
+        if (closed || socket.readyState !== socket.OPEN) {
+          return;
+        }
         if (!user) {
           socket.close(4401, "User not found");
           return;
@@ -104,8 +162,13 @@ class RealtimeHub {
         userId = user.id;
         socket.publicSessionId = deriveSessionPublicId(token, instanceId);
         this._registerSocket(userId, socket);
+        registered = true;
         this._scheduleSessionTouch(token, {userId});
         const onlineUserIds = await this._collectOnlineParticipants(userId);
+        if (closed || socket.readyState !== socket.OPEN) {
+          onEarlyOrLateClose();
+          return;
+        }
 
         socket.send(
           JSON.stringify({
@@ -117,22 +180,24 @@ class RealtimeHub {
         );
 
         await this._broadcastPresenceUpdate(userId, true);
-
-        socket.on("close", () => {
-          void this._handleSocketClose(userId, socket);
-        });
-
-        socket.on("error", (error) => {
-          this.logger.warn?.("[rodnya-backend] realtime socket error", error);
-          void this._handleSocketClose(userId, socket);
-        });
+        if (closed || socket.readyState !== socket.OPEN) {
+          onEarlyOrLateClose();
+          return;
+        }
 
         socket.on("message", (rawMessage) => {
           void this._handleSocketMessage(userId, rawMessage, socket);
         });
       } catch (error) {
         this.logger.warn?.("[rodnya-backend] realtime connection failed", error);
-        socket.close(1011, "Realtime initialization failed");
+        if (registered && userId) {
+          await this._handleSocketClose(userId, socket);
+        }
+        try {
+          socket.close(1011, "Realtime initialization failed");
+        } catch (_) {
+          // ignore close failure on already-closed socket
+        }
       }
     });
   }
@@ -151,7 +216,7 @@ class RealtimeHub {
       ? null
       : JSON.stringify(payload);
     let sent = false;
-    for (const socket of sockets) {
+    for (const socket of Array.from(sockets)) {
       if (socket.readyState !== socket.OPEN) {
         continue;
       }
@@ -172,10 +237,53 @@ class RealtimeHub {
         }
         serializedPayload = JSON.stringify(builtPayload);
       }
-      socket.send(serializedPayload);
-      sent = true;
+      try {
+        socket.send(serializedPayload);
+        sent = true;
+      } catch (error) {
+        this.logger.warn?.(
+          "[rodnya-backend] realtime socket send failed",
+          error?.message || error,
+        );
+        this._unregisterSocket(userId, socket);
+        try {
+          socket.terminate?.();
+        } catch (_) {
+          // ignore terminate failure
+        }
+      }
     }
     return sent;
+  }
+
+  disconnectAllSessionsForUser(userId, {reason = "session.revoked"} = {}) {
+    const sockets = this.userSockets.get(userId);
+    if (!sockets || sockets.size === 0) {
+      return 0;
+    }
+    let closedCount = 0;
+    for (const socket of Array.from(sockets)) {
+      try {
+        if (socket.readyState === socket.OPEN) {
+          socket.send(
+            JSON.stringify({
+              type: "session.revoked",
+              reason,
+              revokedAt: new Date().toISOString(),
+            }),
+          );
+        }
+      } catch (_) {
+        // best-effort notification — close anyway
+      }
+      try {
+        socket.close(4403, reason);
+      } catch (_) {
+        // ignore close failures; socket close handler will clean up
+      }
+      closedCount += 1;
+    }
+    return closedCount;
   }
 
   disconnectSession(userId, sessionPublicId, {reason = "session.revoked"} = {}) {
@@ -453,7 +561,19 @@ class RealtimeHub {
       chats = new Map();
       this.userActiveChats.set(userId, chats);
     }
-    chats.set(chatId, Date.now());
+    const now = Date.now();
+    for (const [existingChatId, touchedAt] of chats.entries()) {
+      if (now - touchedAt > RealtimeHub.ACTIVE_CHAT_TTL_MS) {
+        chats.delete(existingChatId);
+      }
+    }
+    chats.delete(chatId);
+    while (chats.size >= RealtimeHub.MAX_ACTIVE_CHATS_PER_USER) {
+      const oldestKey = chats.keys().next().value;
+      if (oldestKey === undefined) break;
+      chats.delete(oldestKey);
+    }
+    chats.set(chatId, now);
   }
 
   _handleActiveChatClear(userId, payload) {
@@ -479,6 +599,15 @@ class RealtimeHub {
     const chat = await this.store.findChat(chatId);
     if (!chat || !Array.isArray(chat.participantIds) || !chat.participantIds.includes(userId)) {
       return;
+    }
+    if (
+      chat.type === "direct" &&
+      typeof this.store.isUserBlockedBetween === "function"
+    ) {
+      const otherId = chat.participantIds.find((id) => id && id !== userId);
+      if (otherId && (await this.store.isUserBlockedBetween(userId, otherId))) {
+        return;
+      }
     }
 
     const isTyping = payload.isTyping === true;

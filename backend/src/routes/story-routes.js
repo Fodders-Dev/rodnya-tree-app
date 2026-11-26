@@ -108,8 +108,12 @@ function registerStoryRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, story.treeId);
-    if (!tree) {
+    const canView = await store.canUserViewScopedItem({
+      item: story,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этой истории"});
       return;
     }
 
@@ -132,8 +136,12 @@ function registerStoryRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, story.treeId);
-    if (!tree) {
+    const canView = await store.canUserViewScopedItem({
+      item: story,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этой истории"});
       return;
     }
 

@@ -952,7 +952,8 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(color: theme.colorScheme.primary),
+                        borderSide:
+                            BorderSide(color: theme.colorScheme.primary),
                       ),
                     ),
                   ),
@@ -1440,7 +1441,7 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
                 borderSide: BorderSide(color: theme.colorScheme.primary),
               ),
             ),
-            items: _getRelationTypeItems(_selectedGender),
+            items: _getRelationTypeItems(anchorPerson.gender),
             onChanged: (newValue) {
               _updateSectionState(() {
                 _selectedRelationType = newValue;

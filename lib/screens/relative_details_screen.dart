@@ -160,6 +160,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   bool _isLoadingHistory = false;
   bool _isUpdatingIdentity = false;
   bool _isUpdatingPrivacy = false;
+  bool _dossierLoadFailed = false;
 
   FamilyPerson? _person;
   List<FamilyPerson> _treePeople = [];
@@ -174,6 +175,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   // this screen so StoryRequestStatusLine's key changes and it remounts
   // (fresh fetch) instead of showing stale «нет открытых вопросов».
   int _storyRequestStatusTick = 0;
+  int _biographyRefreshVersion = 0;
 
   // Small wrapper so _sections.dart (an `extension on _RelativeDetails-
   // ScreenState`, not a State subclass itself) can trigger a rebuild
@@ -182,6 +184,19 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   void _refreshStoryRequestStatus() {
     setState(() => _storyRequestStatusTick++);
   }
+
+  void _bumpBiographyRefreshVersion() {
+    setState(() => _biographyRefreshVersion++);
+  }
+
+  void _navigateBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/tree');
+    }
+  }
+
   List<FamilyRelation> _relations = [];
   List<TreeChangeRecord> _historyRecords = [];
   UserProfile? _userProfile;
@@ -474,15 +489,27 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       }
     }
 
+    _dossierLoadFailed = false;
     try {
       _dossier = await _familyService.getPersonDossier(
         _currentTreeId!,
         widget.personId,
       );
+      _dossierLoadFailed = false;
       _person = _dossier!.person;
       _userProfile = _dossier!.linkedProfile;
+    } on NoSuchMethodError {
+      _dossier = null;
+      _dossierLoadFailed = false;
+    } on UnimplementedError {
+      _dossier = null;
+      _dossierLoadFailed = false;
+    } on UnsupportedError {
+      _dossier = null;
+      _dossierLoadFailed = false;
     } catch (_) {
       _dossier = null;
+      _dossierLoadFailed = true;
     }
 
     // 2. Если есть userId, пытаемся загрузить UserProfile
@@ -680,7 +707,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         leading: IconButton(
           icon: Icon(Icons.arrow_back),
           tooltip: 'Назад',
-          onPressed: () => context.pop(),
+          onPressed: _navigateBack,
         ),
         actions: [
           // §3.1 top-right: ✏️ (structured-field edit) + ⋯ (everything
@@ -802,7 +829,15 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   }
 
   bool _canEditOrDelete() {
-    return _person != null && (_dossier?.canEditFamilyFields ?? true);
+    if (_person == null) {
+      return false;
+    }
+    if (_dossier != null) {
+      return _dossier!.canEditFamilyFields;
+    }
+    // Fail closed on real dossier fetch/403/network errors; only fall back to
+    // editable when the service doesn't implement getPersonDossier (legacy/test fakes).
+    return !_dossierLoadFailed;
   }
 
   /// Phase 3.4 chunk 5: открывает reusable conflict-resolution
@@ -1930,7 +1965,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         }
         if (mounted) {
           _showRelativeSnackBar('Карточка ${_person!.displayName} удалена.');
-          context.pop();
+          _navigateBack();
         }
       } catch (e) {
         debugPrint('Ошибка удаления родственника: $e');

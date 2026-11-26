@@ -251,6 +251,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _lastNameController.addListener(_updateRelationshipWidget);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final extra = widget.routeExtra;
       final query = widget.routeQueryParameters;
       debugPrint('AddRelativeScreen initState: extra = $extra');
@@ -510,15 +511,14 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       locale: const Locale('ru', 'RU'),
     );
 
-    if (picked != null) {
-      setState(() {
-        if (isBirthDate) {
-          _birthDate = picked;
-        } else {
-          _deathDate = picked;
-        }
-      });
-    }
+    if (!mounted || picked == null) return;
+    setState(() {
+      if (isBirthDate) {
+        _birthDate = picked;
+      } else {
+        _deathDate = picked;
+      }
+    });
   }
 
   Future<void> _pickMarriageDate() async {
@@ -530,28 +530,40 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       locale: const Locale('ru', 'RU'),
     );
 
-    if (picked != null) {
-      setState(() {
-        _marriageDate = picked;
-      });
-    }
+    if (!mounted || picked == null) return;
+    setState(() {
+      _marriageDate = picked;
+      if (_divorceDate != null && _divorceDate!.isBefore(picked)) {
+        _divorceDate = null;
+      }
+    });
   }
 
   /// F2: дата развода — для бывших союзов и «брак был, но закончился».
   Future<void> _pickDivorceDate() async {
+    final lastDate = DateTime.now();
+    final rawFirstDate = _marriageDate ?? kGenealogyFirstDate;
+    final firstDate = rawFirstDate.isAfter(lastDate) ? lastDate : rawFirstDate;
+    var initialDate = _divorceDate ?? _marriageDate ?? lastDate;
+    if (initialDate.isBefore(firstDate)) {
+      initialDate = firstDate;
+    }
+    if (initialDate.isAfter(lastDate)) {
+      initialDate = lastDate;
+    }
+
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: _divorceDate ?? _marriageDate ?? DateTime.now(),
-      firstDate: _marriageDate ?? kGenealogyFirstDate,
-      lastDate: DateTime.now(),
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
       locale: const Locale('ru', 'RU'),
     );
 
-    if (picked != null) {
-      setState(() {
-        _divorceDate = picked;
-      });
-    }
+    if (!mounted || picked == null) return;
+    setState(() {
+      _divorceDate = picked;
+    });
   }
 
   Future<void> _pickImportantEventDate(
@@ -563,7 +575,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       lastDate: DateTime(2100),
       locale: const Locale('ru', 'RU'),
     );
-    if (picked == null) {
+    if (!mounted || picked == null) {
       return;
     }
     setState(() {
@@ -596,7 +608,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             source: ImageSource.gallery,
             imageQuality: 88,
           );
-    if (picked == null) {
+    if (!mounted || picked == null) {
       return;
     }
 
@@ -663,6 +675,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   Future<void> _savePerson({
     _PostSaveAction action = _PostSaveAction.close,
   }) async {
+    if (_isLoading) return;
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
@@ -881,24 +894,13 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
           }
         } else {
           // 2. Добавление нового родственника
-          // addRelative теперь принимает только treeId и personData
-          final newPersonId = await _familyService.addRelative(
-            widget.treeId,
-            personData,
-          );
-          createdPersonId = newPersonId;
-          await _uploadQueuedMedia(newPersonId);
-
-          // Получаем ID текущего пользователя
           final userId = _authService.currentUserId;
           if (userId == null) {
             throw Exception('Не удалось получить ID текущего пользователя.');
           }
 
-          // Получаем выбранный тип отношения
           final relationType = _getRelationType();
 
-          // Определяем ID второго человека в связи (КОГО связываем с новым)
           final String person2Id;
           final String person2Name;
           final Gender? person2Gender;
@@ -919,33 +921,43 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             person2Gender = _gender;
           }
 
+          // Ask custom relation label BEFORE creating the person so cancelling
+          // never leaves an orphan record or clears queued media.
+          CustomRelationLabels? customLabels;
+          if (_selectedRelationType == RelationType.other) {
+            if (!mounted) {
+              return;
+            }
+            customLabels = await showCustomRelationLabelDialog(
+              context: context,
+              person1Name: _draftDisplayName,
+              person2Name: person2Name,
+              person1Gender: _selectedGender,
+              person2Gender: person2Gender,
+            );
+            if (!mounted) {
+              return;
+            }
+            if (customLabels == null) {
+              setState(() {
+                _isLoading = false;
+              });
+              return;
+            }
+          }
+
+          // addRelative теперь принимает только treeId и personData
+          final newPersonId = await _familyService.addRelative(
+            widget.treeId,
+            personData,
+          );
+          createdPersonId = newPersonId;
+          await _uploadQueuedMedia(newPersonId);
+
           // Если добавляем не к себе и не к текущему пользователю,
           // то создаем связь между новым человеком и тем, к кому добавляли (или с пользователем)
           if (newPersonId != person2Id) {
             try {
-              CustomRelationLabels? customLabels;
-              if (relationType == RelationType.other) {
-                if (!mounted) {
-                  return;
-                }
-                customLabels = await showCustomRelationLabelDialog(
-                  context: context,
-                  person1Name: _draftDisplayName,
-                  person2Name: person2Name,
-                  person1Gender: _selectedGender,
-                  person2Gender: person2Gender,
-                );
-                if (!mounted) {
-                  return;
-                }
-                if (customLabels == null) {
-                  setState(() {
-                    _isLoading = false;
-                  });
-                  return;
-                }
-              }
-
               // F2: даты союза уходят для всех союзных типов, включая
               // бывшие (бэк по ex-типу/дате развода сам выставит
               // unionStatus = past).
@@ -1471,6 +1483,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   Future<void> _loadUserGender() async {
     try {
       final currentUserProfile = await _profileService.getCurrentUserProfile();
+      if (!mounted) return;
       final genderStr = currentUserProfile?.gender;
       if (genderStr != null) {
         setState(() {

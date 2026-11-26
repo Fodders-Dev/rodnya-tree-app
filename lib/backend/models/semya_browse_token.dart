@@ -100,14 +100,25 @@ class SemyaBrowseTokenSummary {
   bool get isExpired => status == 'expired';
 
   factory SemyaBrowseTokenSummary.fromJson(Map<String, dynamic> json) {
+    final revokedAt = _nullableString(json['revokedAt']);
+    final expiresAtStr = (json['expiresAt'] ?? '').toString();
+    final rawStatus = _nullableString(json['status']);
+    final String resolvedStatus;
+    if (rawStatus != null && rawStatus.isNotEmpty) {
+      resolvedStatus = rawStatus;
+    } else if (revokedAt != null && revokedAt.isNotEmpty) {
+      resolvedStatus = 'revoked';
+    } else {
+      resolvedStatus = 'active';
+    }
     return SemyaBrowseTokenSummary(
       id: (json['id'] ?? '').toString(),
       semyaId: (json['semyaId'] ?? '').toString(),
       createdByUserId: (json['createdByUserId'] ?? '').toString(),
       createdAt: (json['createdAt'] ?? '').toString(),
-      expiresAt: (json['expiresAt'] ?? '').toString(),
-      status: (json['status'] ?? 'active').toString(),
-      revokedAt: _nullableString(json['revokedAt']),
+      expiresAt: expiresAtStr,
+      status: resolvedStatus,
+      revokedAt: revokedAt,
       lastUsedAt: _nullableString(json['lastUsedAt']),
     );
   }
@@ -169,7 +180,8 @@ class BrowsedSemyaTree {
       relations: relationsRaw is List
           ? relationsRaw
               .whereType<Map>()
-              .map((e) => BrowsedRelation.fromJson(Map<String, dynamic>.from(e)))
+              .map(
+                  (e) => BrowsedRelation.fromJson(Map<String, dynamic>.from(e)))
               .toList(growable: false)
           : const <BrowsedRelation>[],
       sessionExpiresAt: (browse['sessionExpiresAt'] ?? '').toString(),

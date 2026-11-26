@@ -581,6 +581,14 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
       // Re-pull the tree list when accepting so the freshly-joined
       // tree appears in «Другие» without a manual refresh.
       if (accept) {
+        if (GetIt.I.isRegistered<TreeProvider>()) {
+          await GetIt.I<TreeProvider>().refreshAvailableTrees();
+        } else {
+          try {
+            await context.read<TreeProvider>().refreshAvailableTrees();
+          } catch (_) {}
+        }
+        if (!mounted) return;
         await _loadUserTrees();
       }
       messenger.showSnackBar(

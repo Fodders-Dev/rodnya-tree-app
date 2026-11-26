@@ -21,6 +21,8 @@ class AppLinksDynamicLinkService implements DynamicLinkServiceInterface {
   StreamSubscription<Uri>? _subscription;
   bool _started = false;
   String? _lastHandledRoute;
+  DateTime? _lastHandledAt;
+  static const Duration _burstDedupWindow = Duration(seconds: 2);
 
   @override
   Future<void> startListening(GoRouter router) async {
@@ -52,10 +54,18 @@ class AppLinksDynamicLinkService implements DynamicLinkServiceInterface {
       return;
     }
     final route = routeForUri(uri);
-    if (route == null || route == _lastHandledRoute) {
+    if (route == null) {
+      return;
+    }
+    final now = DateTime.now();
+    final lastAt = _lastHandledAt;
+    if (route == _lastHandledRoute &&
+        lastAt != null &&
+        now.difference(lastAt) < _burstDedupWindow) {
       return;
     }
     _lastHandledRoute = route;
+    _lastHandledAt = now;
     router.go(route);
   }
 
@@ -93,6 +103,9 @@ class AppLinksDynamicLinkService implements DynamicLinkServiceInterface {
 
     if (path == '/invite') {
       return '/invite$query';
+    }
+    if (path == '/reset-password') {
+      return '/reset-password$query';
     }
     if (path.startsWith('/invite/') && path.length > '/invite/'.length) {
       return '$path$query';

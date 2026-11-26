@@ -1,3 +1,5 @@
+const {sanitizeProfileUpdatePayload} = require("../profile-utils");
+
 function registerProfileRoutes(
   app,
   {
@@ -73,15 +75,16 @@ function registerProfileRoutes(
   });
 
   app.put("/v1/profile/me/bootstrap", requireAuth, async (req, res) => {
+    const safePatch = sanitizeProfileUpdatePayload(req.body);
     const updatedUser = await store.updateProfile(req.auth.user.id, (profile) => ({
       ...profile,
-      ...req.body,
+      ...safePatch,
       displayName: composeDisplayName({
         ...profile,
-        ...req.body,
+        ...safePatch,
         displayName:
-          req.body.displayName !== undefined
-            ? req.body.displayName
+          safePatch.displayName !== undefined
+            ? safePatch.displayName
             : profile.displayName,
       }),
     }));
@@ -93,9 +96,10 @@ function registerProfileRoutes(
   });
 
   app.patch("/v1/profile/me", requireAuth, async (req, res) => {
+    const safePatch = sanitizeProfileUpdatePayload(req.body);
     const updatedUser = await store.updateProfile(req.auth.user.id, (profile) => ({
       ...profile,
-      ...req.body,
+      ...safePatch,
     }));
     const sanitizedProfile = sanitizeProfile(updatedUser.profile);
 

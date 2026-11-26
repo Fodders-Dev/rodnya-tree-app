@@ -59,6 +59,7 @@ Future<FamilyStoryQuestionAction?> showFamilyStoryQuestionsSheet(
   String? treeId,
   String? personId,
   List<FamilyStoryAskTarget> askTargets = const <FamilyStoryAskTarget>[],
+  bool canSaveAnswer = true,
 }) {
   return showModalBottomSheet<FamilyStoryQuestionAction>(
     context: context,
@@ -71,6 +72,7 @@ Future<FamilyStoryQuestionAction?> showFamilyStoryQuestionsSheet(
       treeId: treeId,
       personId: personId,
       askTargets: askTargets,
+      canSaveAnswer: canSaveAnswer,
     ),
   );
 }
@@ -85,6 +87,7 @@ class _FamilyStoryQuestionsSheet extends StatefulWidget {
     this.treeId,
     this.personId,
     this.askTargets = const <FamilyStoryAskTarget>[],
+    this.canSaveAnswer = true,
   });
 
   final String personName;
@@ -93,6 +96,7 @@ class _FamilyStoryQuestionsSheet extends StatefulWidget {
   final String? treeId;
   final String? personId;
   final List<FamilyStoryAskTarget> askTargets;
+  final bool canSaveAnswer;
 
   @override
   State<_FamilyStoryQuestionsSheet> createState() =>
@@ -207,21 +211,23 @@ class _FamilyStoryQuestionsSheetState
                         label: const Text('Отправить вопрос'),
                       ),
               ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  key: const Key('family-story-save-answer'),
-                  onPressed: () => Navigator.of(context).pop(
-                    FamilyStoryQuestionAction(
-                      type: FamilyStoryQuestionActionType.saveAnswer,
-                      question: _selected,
+              if (widget.canSaveAnswer) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    key: const Key('family-story-save-answer'),
+                    onPressed: () => Navigator.of(context).pop(
+                      FamilyStoryQuestionAction(
+                        type: FamilyStoryQuestionActionType.saveAnswer,
+                        question: _selected,
+                      ),
                     ),
+                    icon: const Icon(Icons.auto_stories_outlined, size: 18),
+                    label: const Text('Сохранить ответ'),
                   ),
-                  icon: const Icon(Icons.auto_stories_outlined, size: 18),
-                  label: const Text('Сохранить ответ'),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -417,10 +423,14 @@ class _TargetTile extends StatelessWidget {
               CircleAvatar(
                 radius: 18,
                 backgroundColor: primary.withValues(alpha: 0.14),
-                backgroundImage: (target.photoUrl != null &&
-                        target.photoUrl!.isNotEmpty)
-                    ? NetworkImage(target.photoUrl!)
-                    : null,
+                backgroundImage:
+                    (target.photoUrl != null && target.photoUrl!.isNotEmpty)
+                        ? NetworkImage(target.photoUrl!)
+                        : null,
+                onBackgroundImageError:
+                    (target.photoUrl != null && target.photoUrl!.isNotEmpty)
+                        ? (_, __) {}
+                        : null,
                 child: (target.photoUrl == null || target.photoUrl!.isEmpty)
                     ? Text(
                         target.displayName.isNotEmpty

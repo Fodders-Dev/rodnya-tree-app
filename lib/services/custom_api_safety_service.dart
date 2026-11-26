@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/safety_service_interface.dart';
 import '../models/user_block_record.dart';
+import '../utils/safe_json_decode.dart';
 import 'custom_api_auth_service.dart';
 
 class CustomApiSafetyService implements SafetyServiceInterface {
@@ -116,18 +117,18 @@ class CustomApiSafetyService implements SafetyServiceInterface {
       if (response.body.isEmpty) {
         return const <String, dynamic>{};
       }
-      final decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
+      final decoded = tryDecodeJsonMap(response.body);
+      if (decoded == null) {
+        throw CustomApiException(
+          'Safety Service Error: некорректный ответ сервера (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
       }
-      return const <String, dynamic>{};
+      return decoded;
     }
 
-    final decoded = response.body.isEmpty
-        ? const <String, dynamic>{}
-        : jsonDecode(response.body);
     final payload =
-        decoded is Map<String, dynamic> ? decoded : const <String, dynamic>{};
+        tryDecodeJsonMap(response.body) ?? const <String, dynamic>{};
     throw CustomApiException(
       payload['message']?.toString() ??
           'Safety Service Error: ${response.statusCode}',

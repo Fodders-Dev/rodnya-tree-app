@@ -51,7 +51,21 @@ class OnboardingController extends ChangeNotifier {
   OnboardingState _state = OnboardingState.fresh;
   bool _isLoading = true;
   bool _isSubmitting = false;
+  bool _disposed = false;
   String? _error;
+
+  void _safeNotify() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   // Ship FE9: pending семья invitations addressed к caller.
   // Resolved через GET /v1/me/pending-invitations on mount.
   List<SemyaInvitation> _pendingInvitations = const <SemyaInvitation>[];
@@ -96,8 +110,7 @@ class OnboardingController extends ChangeNotifier {
 
   /// Min 1 valid relative (имя + relationToMe заполнены).
   /// Optional — Q2 sub-decision: skip allowed.
-  bool get hasMinimumRelatives =>
-      _relatives.any((r) => r.isValid);
+  bool get hasMinimumRelatives => _relatives.any((r) => r.isValid);
 
   /// Profile step valid: name non-empty.
   bool get profileStepValid => _profileName.trim().isNotEmpty;
@@ -122,17 +135,19 @@ class OnboardingController extends ChangeNotifier {
     final svc = _resolveSemyaService();
     if (svc == null) return;
     _isLoadingInvitations = true;
-    notifyListeners();
+    _safeNotify();
     try {
       final list = await svc.listPendingInvitations();
+      if (_disposed) return;
       _pendingInvitations = List<SemyaInvitation>.unmodifiable(list);
     } catch (_) {
+      if (_disposed) return;
       // Graceful degradation — onboarding work continues с default
       // create flow если invitations fetch fails.
       _pendingInvitations = const <SemyaInvitation>[];
     } finally {
       _isLoadingInvitations = false;
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -144,34 +159,45 @@ class OnboardingController extends ChangeNotifier {
     final svc = _resolveSemyaService();
     if (svc == null) {
       _error = 'Сервис недоступен';
-      notifyListeners();
+      _safeNotify();
       return null;
     }
-    if (_isAccepting) return null;
+    if (_disposed || _isAccepting || _isSubmitting) return null;
     _isAccepting = true;
+    _isSubmitting = true;
     _error = null;
-    notifyListeners();
+    _safeNotify();
     try {
       final result = await svc.acceptInvitation(token);
+      if (_disposed) return null;
       // Mark onboarding skipped — recipient теперь in семья, не нужно
       // продолжать «create» wizard flow.
+      final onboardingSvc = _service;
+      if (onboardingSvc != null) {
+        try {
+          await onboardingSvc.skipOnboarding();
+        } catch (_) {}
+      }
       unawaited(_authService?.markOnboardingSkipped() ?? Future<void>.value());
       _isAccepting = false;
+      _isSubmitting = false;
       // Remove accepted invitation из local list к избежать stale UI.
       _pendingInvitations = _pendingInvitations
           .where((i) => i.token != token)
           .toList(growable: false);
-      notifyListeners();
+      _safeNotify();
       return result;
     } on SemyaError catch (e) {
       _error = e.message;
       _isAccepting = false;
-      notifyListeners();
+      _isSubmitting = false;
+      _safeNotify();
       return null;
     } catch (e) {
       _error = 'Не удалось принять приглашение: $e';
       _isAccepting = false;
-      notifyListeners();
+      _isSubmitting = false;
+      _safeNotify();
       return null;
     }
   }
@@ -180,26 +206,32 @@ class OnboardingController extends ChangeNotifier {
     final service = _service;
     if (service == null) {
       _isLoading = false;
-      notifyListeners();
+      _safeNotify();
       return;
     }
     try {
       final fetched = await service.getOnboardingState();
+      if (_disposed) return;
       if (fetched != null) {
-        _state = fetched;
+        if (fetched.currentStep == OnboardingStep.finish &&
+            _profileName.trim().isEmpty) {
+          _state = fetched.copyWith(currentStep: OnboardingStep.profile);
+        } else {
+          _state = fetched;
+        }
       }
     } catch (e) {
       _error = '$e';
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _safeNotify();
     }
   }
 
   Future<void> setStep(OnboardingStep step) async {
     if (_state.currentStep == step) return;
     _state = _state.copyWith(currentStep: step);
-    notifyListeners();
+    _safeNotify();
     final service = _service;
     if (service != null) {
       // Fire-and-forget update — UI doesn't block on persistence.
@@ -217,17 +249,18 @@ class OnboardingController extends ChangeNotifier {
   /// open, UI shows error.
   Future<bool> skipOnboarding() async {
     final service = _service;
-    if (service == null) return false;
+    if (service == null || _disposed) return false;
     if (_isSubmitting) return false;
     _isSubmitting = true;
     _error = null;
-    notifyListeners();
+    _safeNotify();
     try {
       final updated = await service.skipOnboarding();
+      if (_disposed) return false;
       if (updated == null) {
         _error = 'Не удалось сохранить — попробуйте ещё раз.';
         _isSubmitting = false;
-        notifyListeners();
+        _safeNotify();
         return false;
       }
       _state = updated;
@@ -235,12 +268,13 @@ class OnboardingController extends ChangeNotifier {
       // Local session mutation — fire-and-forget; auth service
       // persists через secure storage и broadcast'нёт subscribers.
       unawaited(_authService?.markOnboardingSkipped() ?? Future<void>.value());
-      notifyListeners();
+      _safeNotify();
       return true;
     } catch (e) {
+      if (_disposed) return false;
       _error = '$e';
       _isSubmitting = false;
-      notifyListeners();
+      _safeNotify();
       return false;
     }
   }
@@ -249,17 +283,17 @@ class OnboardingController extends ChangeNotifier {
 
   void setProfileName(String value) {
     _profileName = value;
-    notifyListeners();
+    _safeNotify();
   }
 
   void setProfileGender(String? value) {
     _profileGender = value;
-    notifyListeners();
+    _safeNotify();
   }
 
   void setProfileBirthDate(String? value) {
     _profileBirthDate = value;
-    notifyListeners();
+    _safeNotify();
   }
 
   // ── Relatives mutations ──────────────────────────────────────────
@@ -267,32 +301,32 @@ class OnboardingController extends ChangeNotifier {
   void setRelativeName(int index, String value) {
     if (index < 0 || index >= _relatives.length) return;
     _relatives[index] = _relatives[index].copyWith(name: value);
-    notifyListeners();
+    _safeNotify();
   }
 
   void setRelativeRelation(int index, OnboardingRelationToMe? value) {
     if (index < 0 || index >= _relatives.length) return;
     _relatives[index] = _relatives[index].copyWith(relationToMe: value);
-    notifyListeners();
+    _safeNotify();
   }
 
   void setRelativeBirthDate(int index, String? value) {
     if (index < 0 || index >= _relatives.length) return;
     _relatives[index] = _relatives[index].copyWith(birthDate: value);
-    notifyListeners();
+    _safeNotify();
   }
 
   void addRelativeSlot() {
     if (_relatives.length >= 5) return;
     _relatives.add(OnboardingRelativeDraft());
-    notifyListeners();
+    _safeNotify();
   }
 
   void removeRelativeSlot(int index) {
     if (index < 0 || index >= _relatives.length) return;
     if (_relatives.length <= 1) return;
     _relatives.removeAt(index);
-    notifyListeners();
+    _safeNotify();
   }
 
   // ── Submit ───────────────────────────────────────────────────────
@@ -302,15 +336,18 @@ class OnboardingController extends ChangeNotifier {
   /// Caller (wizard screen) navigates на /tree после successful submit.
   Future<bool> submit() async {
     final service = _service;
-    if (service == null) return false;
+    if (service == null || _disposed || _isSubmitting) return false;
     if (!profileStepValid) {
       _error = 'Имя обязательно';
-      notifyListeners();
+      if (_state.currentStep == OnboardingStep.finish) {
+        _state = _state.copyWith(currentStep: OnboardingStep.profile);
+      }
+      _safeNotify();
       return false;
     }
     _isSubmitting = true;
     _error = null;
-    notifyListeners();
+    _safeNotify();
     final payload = OnboardingSeedPayload(
       profile: OnboardingProfile(
         name: _profileName.trim(),
@@ -324,10 +361,11 @@ class OnboardingController extends ChangeNotifier {
     );
     try {
       final result = await service.seedOnboarding(payload: payload);
+      if (_disposed) return false;
       if (result == null) {
         _error = 'Не удалось сохранить — попробуйте ещё раз.';
         _isSubmitting = false;
-        notifyListeners();
+        _safeNotify();
         return false;
       }
       _state = _state.copyWith(
@@ -341,12 +379,13 @@ class OnboardingController extends ChangeNotifier {
       // (defensive: same path as skip, ensures resume banner hides
       // regardless of next refresh timing).
       unawaited(_authService?.markOnboardingSkipped() ?? Future<void>.value());
-      notifyListeners();
+      _safeNotify();
       return true;
     } catch (e) {
+      if (_disposed) return false;
       _error = '$e';
       _isSubmitting = false;
-      notifyListeners();
+      _safeNotify();
       return false;
     }
   }
@@ -355,25 +394,31 @@ class OnboardingController extends ChangeNotifier {
 /// Draft slot для relatives step. In-memory только (Q8 — form lost
 /// on abandon, resume restarts step).
 class OnboardingRelativeDraft {
+  static int _nextId = 0;
+
   OnboardingRelativeDraft({
+    String? id,
     this.name = '',
     this.relationToMe,
     this.gender,
     this.birthDate,
-  });
+  }) : id = id ?? 'draft_${++_nextId}';
 
+  final String id;
   String name;
   OnboardingRelationToMe? relationToMe;
   String? gender;
   String? birthDate;
 
   OnboardingRelativeDraft copyWith({
+    String? id,
     String? name,
     OnboardingRelationToMe? relationToMe,
     String? gender,
     String? birthDate,
   }) {
     return OnboardingRelativeDraft(
+      id: id ?? this.id,
       name: name ?? this.name,
       relationToMe: relationToMe ?? this.relationToMe,
       gender: gender ?? this.gender,
@@ -381,8 +426,7 @@ class OnboardingRelativeDraft {
     );
   }
 
-  bool get isValid =>
-      name.trim().isNotEmpty && relationToMe != null;
+  bool get isValid => name.trim().isNotEmpty && relationToMe != null;
 
   OnboardingRelative toRelative() {
     return OnboardingRelative(

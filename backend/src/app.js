@@ -558,16 +558,62 @@ function createApp({
     if (!busyCall) {
       return null;
     }
-    const expiredCall = await expireRingingCallIfNeeded(busyCall, {
-      reason: "missed",
-      eventType: "invite.missed",
-      extra: {
-        viewerUserId: userId,
-        chatId: chatId || busyCall.chatId,
-        source: "pre_invite_reconcile",
-      },
-    });
-    return expiredCall || busyCall;
+    if (busyCall.state === "ringing") {
+      const expiredCall = await expireRingingCallIfNeeded(busyCall, {
+        reason: "missed",
+        eventType: "invite.missed",
+        extra: {
+          viewerUserId: userId,
+          chatId: chatId || busyCall.chatId,
+          source: "pre_invite_reconcile",
+        },
+      });
+      return expiredCall || busyCall;
+    }
+    if (busyCall.state === "active") {
+      const acceptedAtMs = new Date(
+        busyCall.acceptedAt || busyCall.updatedAt || busyCall.createdAt || 0,
+      ).getTime();
+      const ageMs = Number.isFinite(acceptedAtMs) ? Date.now() - acceptedAtMs : 0;
+      const roomName = busyCall.roomName || `call_${busyCall.id}`;
+      let shouldEndStale = ageMs > 6 * 60 * 60 * 1000;
+      if (
+        !shouldEndStale &&
+        ageMs > 20_000 &&
+        resolvedLiveKitService.isConfigured &&
+        typeof resolvedLiveKitService.listRooms === "function"
+      ) {
+        try {
+          const rooms = await resolvedLiveKitService.listRooms([roomName]);
+          const room = Array.isArray(rooms)
+            ? rooms.find((r) => String(r?.name || "") === roomName)
+            : null;
+          if (!room || Number(room.numParticipants || 0) === 0) {
+            shouldEndStale = true;
+          }
+        } catch (_) {
+          // Best-effort LiveKit room check — don't drop call on transient error.
+        }
+      }
+      if (shouldEndStale && typeof store.endStaleCall === "function") {
+        const ended = await store.endStaleCall({
+          callId: busyCall.id,
+          reason: "room_gone",
+        });
+        if (ended) {
+          clearCallInviteTimeout(ended.id);
+          await publishCallState(ended);
+          if (
+            resolvedLiveKitService.isConfigured &&
+            typeof resolvedLiveKitService.deleteRoom === "function"
+          ) {
+            resolvedLiveKitService.deleteRoom(roomName).catch(() => {});
+          }
+          return null;
+        }
+      }
+    }
+    return busyCall;
   }
 
   async function restoreRingingCallTimeouts() {
@@ -620,7 +666,7 @@ function createApp({
     res.once("close", runTouch);
   }
 
-  app.set("trust proxy", true);
+  app.set("trust proxy", 1);
   app.use(cors({origin: config.corsOrigin}));
   app.use((req, res, next) => {
     const forwardedRequestId = String(req.get("x-request-id") || "").trim();
@@ -703,6 +749,16 @@ function createApp({
           } else {
             clearCallInviteTimeout(call.id);
           }
+          if (
+            ["ended", "missed", "rejected", "cancelled", "failed"].includes(
+              call.state,
+            ) &&
+            resolvedLiveKitService.isConfigured &&
+            typeof resolvedLiveKitService.deleteRoom === "function"
+          ) {
+            const callRoomName = call.roomName || `call_${call.id}`;
+            resolvedLiveKitService.deleteRoom(callRoomName).catch(() => {});
+          }
           logCallEvent("webhook.processed", call, {
             webhookEvent: String(event?.event || "").trim() || null,
             participantIdentity: participantIdentity || null,
@@ -746,33 +802,37 @@ function createApp({
       // Express матчит роуты нестрого: /v1/media/object/ попадает в тот же
       // хендлер, но строгие === в политике его не видели — запрос уезжал в
       // щедрый mutation-бакет мимо upload-лимита (ревью, P2).
-      const normalizedPathName = pathName.replace(/\/+$/, "") || "/";
-      if (pathName === "/health" || pathName === "/ready") {
+      const normalizedPathName =
+        pathName.replace(/\/+/g, "/").replace(/\/+$/, "") || "/";
+      if (normalizedPathName === "/health" || normalizedPathName === "/ready") {
         return null;
       }
-      if (pathName.startsWith("/media/")) {
+      if (normalizedPathName.startsWith("/media/")) {
         return null;
       }
-      if (pathName.startsWith("/storage/")) {
+      if (normalizedPathName.startsWith("/storage/")) {
         return null;
       }
       if (
-        pathName === "/v1/auth/login" ||
-        pathName === "/v1/auth/register" ||
-        pathName === "/v1/auth/password-reset" ||
-        pathName === "/v1/auth/refresh" ||
-        pathName === "/v1/auth/qr/start" ||
-        pathName === "/v1/auth/qr/approve" ||
-        pathName === "/v1/auth/qr/poll" ||
+        normalizedPathName === "/v1/auth/login" ||
+        normalizedPathName === "/v1/auth/register" ||
+        normalizedPathName === "/v1/auth/password-reset" ||
+        normalizedPathName === "/v1/auth/password-reset/request" ||
+        normalizedPathName === "/v1/auth/password-reset/confirm" ||
+        normalizedPathName === "/v1/invitations/pending/process" ||
+        normalizedPathName === "/v1/auth/refresh" ||
+        normalizedPathName === "/v1/auth/qr/start" ||
+        normalizedPathName === "/v1/auth/qr/approve" ||
+        normalizedPathName === "/v1/auth/qr/poll" ||
         // OAuth code-exchange endpoints — same brute-force surface as
         // /login. An attacker who steals a one-time auth code via a
         // sniffed SMS or phishing link can replay-attempt at the
         // exchange route without ever hitting /login, so they need to
         // sit in the same strict bucket.
-        pathName === "/v1/auth/google" ||
-        pathName === "/v1/auth/vk/exchange" ||
-        pathName === "/v1/auth/telegram/exchange" ||
-        pathName === "/v1/auth/max/exchange"
+        normalizedPathName === "/v1/auth/google" ||
+        normalizedPathName === "/v1/auth/vk/exchange" ||
+        normalizedPathName === "/v1/auth/telegram/exchange" ||
+        normalizedPathName === "/v1/auth/max/exchange"
       ) {
         return {bucket: "auth", limit: config.authRateLimitMax};
       }
@@ -782,7 +842,10 @@ function createApp({
       ) {
         return {bucket: "upload", limit: config.uploadRateLimitMax};
       }
-      if (pathName === "/v1/reports" || pathName.startsWith("/v1/blocks")) {
+      if (
+        normalizedPathName === "/v1/reports" ||
+        normalizedPathName.startsWith("/v1/blocks")
+      ) {
         return {bucket: "safety", limit: config.safetyRateLimitMax};
       }
       if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
@@ -1330,6 +1393,22 @@ function createApp({
       // audience the post was published into so the inbox can
       // render an «в Семья Кузнецовых» badge.
       "authorId",
+      // Story requests, profile articles, kinship checks, semya & calls
+      "personId",
+      "articleBlockId",
+      "kinshipCheckId",
+      "initiatorUserId",
+      "targetUserId",
+      "semyaId",
+      "inviterUserId",
+      "acceptedByUserId",
+      "role",
+      "gatheringId",
+      "pollId",
+      "fromUserId",
+      "kind",
+      "blockId",
+      "callState",
     ];
 
     // Array-valued data fields. Sanitized member-by-member as
@@ -1935,7 +2014,7 @@ function createApp({
     };
   }
 
-  async function requireTreeAccess(req, res, treeId) {
+  async function requireTreeAccess(req, res, treeId, {requiredRole = "viewer"} = {}) {
     const tree = await store.findTree(treeId);
     if (!tree) {
       res.status(404).json({message: "Семейное дерево не найдено"});
@@ -1982,12 +2061,22 @@ function createApp({
         res.status(403).json({message: "Доступ к дереву запрещён"});
         return null;
       }
-      // Любая роль (viewer/editor/owner) даёт read access к tree.
-      // Granular per-mutation gating — existing
-      // requireGraphPersonEdit + tree-routes-specific checks (Ship 6+).
+      const roleRank = {viewer: 1, editor: 2, owner: 3};
+      const actorRank = roleRank[membership.role] ?? 0;
+      const requiredRank = roleRank[requiredRole] ?? 1;
+      if (actorRank < requiredRank) {
+        res.status(403).json({
+          message: "Недостаточно прав для этого действия",
+          requiredRole,
+          actorRole: membership.role,
+        });
+        return null;
+      }
+      req.semyaMembership = membership;
       return tree;
     }
 
+    req.semyaMembership = null;
     const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
     const hasAccess =
       tree.creatorId === req.auth.user.id || memberIds.includes(req.auth.user.id);
@@ -2053,7 +2142,7 @@ function createApp({
   //      Q1 от 2026-05-10.
   async function requireGraphPersonEdit(req, res, treeId, personId, scope) {
     const normalizedScope = String(scope || "edit").trim();
-    const tree = await requireTreeAccess(req, res, treeId);
+    const tree = await requireTreeAccess(req, res, treeId, {requiredRole: "viewer"});
     if (!tree) return null;
 
     const legacyPerson = await store.findPerson(treeId, personId);
@@ -2061,6 +2150,8 @@ function createApp({
       res.status(404).json({message: "Человек не найден"});
       return null;
     }
+
+    const isViewerOnly = req.semyaMembership?.role === "viewer";
 
     // SPEED-12: requireTreeAccess выше уже мог положить снимок на
     // req.storeSnapshot (федеративный путь) — переиспользуем его вместо
@@ -2070,6 +2161,12 @@ function createApp({
       req.storeSnapshot,
     );
     if (!graphPerson) {
+      if (isViewerOnly && legacyPerson.userId !== req.auth.user.id) {
+        res.status(403).json({
+          message: "Наблюдатель не может редактировать чужие карточки",
+        });
+        return null;
+      }
       // Edge case — graph mirror ещё не догнал legacy write.
       // Tree-access уже пройден; на anonymous этого достаточно по
       // backward-compat правилу. Возвращаем legacy-only context.
@@ -2078,6 +2175,12 @@ function createApp({
 
     const isAnonymous = !graphPerson.userId;
     if (isAnonymous) {
+      if (isViewerOnly) {
+        res.status(403).json({
+          message: "Наблюдатель не может редактировать карточки в дереве",
+        });
+        return null;
+      }
       return {tree, legacyPerson, graphPerson};
     }
 
@@ -2974,6 +3077,7 @@ function createApp({
   registerStoryRequestRoutes(app, {
     store,
     requireAuth,
+    requireTreeAccess,
     requireGraphPersonEdit,
     createAndDispatchNotification,
   });
@@ -3169,6 +3273,18 @@ function createApp({
     if (!recipientId) {
       res.status(400).json({message: "Не удалось определить собеседника"});
       return;
+    }
+
+    for (const participantId of participantIds) {
+      if (
+        participantId !== req.auth.user.id &&
+        (await store.isUserBlockedBetween(req.auth.user.id, participantId))
+      ) {
+        res.status(403).json({
+          message: "Звонок недоступен: один из пользователей заблокирован",
+        });
+        return;
+      }
     }
 
     for (const participantId of participantIds) {
@@ -3459,9 +3575,25 @@ function createApp({
       return;
     }
 
+    for (const participantId of newParticipantIds) {
+      if (await store.isUserBlockedBetween(req.auth.user.id, participantId)) {
+        res.status(403).json({
+          message: "Нельзя добавить в звонок заблокированного пользователя",
+        });
+        return;
+      }
+    }
+
     // Don't pull someone who's busy in another call into this one.
     for (const participantId of newParticipantIds) {
       await reconcileUserBusyCall(participantId);
+      const activeOther = await store.findActiveCall({userId: participantId});
+      if (activeOther && activeOther.id !== call.id) {
+        res.status(409).json({
+          message: "Пользователь уже участвует в другом звонке",
+        });
+        return;
+      }
     }
 
     const result = await store.addCallParticipants({
@@ -3662,6 +3794,7 @@ function createApp({
     const rejectedCall = await store.rejectCall({
       callId: call.id,
       userId: req.auth.user.id,
+      sessionId: req.auth.sessionPublicId,
     });
     if (rejectedCall === null) {
       res.status(404).json({message: "Звонок не найден"});
@@ -3675,7 +3808,17 @@ function createApp({
       res.status(409).json({message: "Звонок уже неактуален"});
       return;
     }
-    clearCallInviteTimeout(rejectedCall.id);
+    if (rejectedCall.state === "rejected") {
+      clearCallInviteTimeout(rejectedCall.id);
+      if (
+        resolvedLiveKitService.isConfigured &&
+        typeof resolvedLiveKitService.deleteRoom === "function"
+      ) {
+        resolvedLiveKitService
+          .deleteRoom(rejectedCall.roomName || `call_${rejectedCall.id}`)
+          .catch(() => {});
+      }
+    }
     await publishCallState(rejectedCall);
     logCallEvent("reject.completed", rejectedCall, {
       viewerUserId: req.auth.user.id,
@@ -3710,6 +3853,14 @@ function createApp({
       return;
     }
     clearCallInviteTimeout(cancelledCall.id);
+    if (
+      resolvedLiveKitService.isConfigured &&
+      typeof resolvedLiveKitService.deleteRoom === "function"
+    ) {
+      resolvedLiveKitService
+        .deleteRoom(cancelledCall.roomName || `call_${cancelledCall.id}`)
+        .catch(() => {});
+    }
     await publishCallState(cancelledCall);
     logCallEvent("cancel.completed", cancelledCall, {
       viewerUserId: req.auth.user.id,
@@ -3730,6 +3881,7 @@ function createApp({
     const endedCall = await store.hangupCall({
       callId: call.id,
       userId: req.auth.user.id,
+      sessionId: req.auth.sessionPublicId,
     });
     if (endedCall === null) {
       res.status(404).json({message: "Звонок не найден"});
@@ -3743,7 +3895,26 @@ function createApp({
       res.status(409).json({message: "Звонок уже завершён"});
       return;
     }
-    clearCallInviteTimeout(endedCall.id);
+    const callRoomName = endedCall.roomName || `call_${endedCall.id}`;
+    if (endedCall.state === "ended") {
+      clearCallInviteTimeout(endedCall.id);
+      if (
+        resolvedLiveKitService.isConfigured &&
+        typeof resolvedLiveKitService.deleteRoom === "function"
+      ) {
+        resolvedLiveKitService.deleteRoom(callRoomName).catch(() => {});
+      }
+    } else if (
+      resolvedLiveKitService.isConfigured &&
+      typeof resolvedLiveKitService.removeParticipant === "function"
+    ) {
+      const leavingIdentity =
+        call.sessionByUserId?.[req.auth.user.id]?.participantIdentity ||
+        buildCallParticipantIdentity(req.auth.user.id, req.auth.sessionPublicId);
+      resolvedLiveKitService
+        .removeParticipant(callRoomName, leavingIdentity)
+        .catch(() => {});
+    }
     await publishCallState(endedCall);
     logCallEvent("hangup.completed", endedCall, {
       viewerUserId: req.auth.user.id,

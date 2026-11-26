@@ -241,9 +241,60 @@ function enforceSafeUrl(rawValue, opts = {}) {
   return {ok: true, value: str};
 }
 
+function enforceSafeMediaOrLinkUrl(rawValue, opts = {}) {
+  const {
+    fieldName = "url",
+    allowEmpty = true,
+    max = 2048,
+  } = opts;
+
+  if (rawValue == null || rawValue === "") {
+    if (allowEmpty) return {ok: true, value: null};
+    return {
+      ok: false,
+      status: 400,
+      message: `Поле «${fieldName}» обязательно`,
+    };
+  }
+
+  const str = String(rawValue).trim();
+  if (str.length > max) {
+    return {
+      ok: false,
+      status: 400,
+      message: `Поле «${fieldName}» слишком длинное`,
+    };
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(str)) {
+    return {
+      ok: false,
+      status: 400,
+      message: `Поле «${fieldName}» содержит недопустимые символы`,
+    };
+  }
+
+  if (
+    (str.startsWith("/v1/media/") || str.startsWith("/media/")) &&
+    !str.startsWith("//") &&
+    !str.includes("..") &&
+    !str.includes("\\")
+  ) {
+    return {ok: true, value: str};
+  }
+
+  return enforceSafeUrl(str, {
+    fieldName,
+    allowEmpty,
+    allowedSchemes: ["http", "https"],
+    max,
+  });
+}
+
 module.exports = {
   enforceTextLimit,
   enforceNonNegativeInt,
   enforceArrayCap,
   enforceSafeUrl,
+  enforceSafeMediaOrLinkUrl,
 };

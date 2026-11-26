@@ -163,10 +163,7 @@ object RodnyaCallForegroundBridge {
 
     private fun stopCallService(context: Context): Boolean {
         return try {
-            // startForegroundService с ACTION_STOP — ловит даже если
-            // service был убит OS-ью и rebound'нулся, чтобы
-            // stopForeground + stopSelf вызвалось без exception.
-            startServiceCompat(context, RodnyaCallForegroundService.stopIntent(context))
+            context.stopService(Intent(context, RodnyaCallForegroundService::class.java))
             true
         } catch (_: Throwable) {
             false

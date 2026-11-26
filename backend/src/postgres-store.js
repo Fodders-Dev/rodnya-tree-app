@@ -318,7 +318,6 @@ class PostgresStore extends FileStore {
     // ссылка перестаёт совпадать и обёртка перестраивается.
     this._sharedSnapshotView = null;
     this._sharedSnapshotViewSource = null;
-    this._loadedSnapshotVersion = null;
     this._snapshotLoadPromise = null;
     this.storageMode = "postgres";
     this.storageTarget = `${this._schema}.${this._table}:${this._rowId}`;
@@ -1414,6 +1413,7 @@ class PostgresStore extends FileStore {
     // if even that fails).
     let sessionsOutOfBlob =
       bootState?.migrationStatus?.sessionsOutOfBlob === "complete-v1";
+    let skipSessionsRebuild = false;
     if (!bootState) {
       try {
         const markerResult = await this._pool.query(
@@ -1422,8 +1422,15 @@ class PostgresStore extends FileStore {
           [this._rowId],
         );
         sessionsOutOfBlob = markerResult.rows[0]?.marker === "complete-v1";
-      } catch (_) {
-        sessionsOutOfBlob = false;
+      } catch (error) {
+        // Never fall back to `false` on a transient DB error: wiping
+        // auth_sessions against a SPEED-15 empty-sessions blob would log out
+        // every active user in production.
+        console.warn(
+          "[backend] postgres-store failed to verify sessionsOutOfBlob marker — skipping auth_sessions rebuild",
+          JSON.stringify({message: error?.message || String(error)}),
+        );
+        skipSessionsRebuild = true;
       }
     }
     this._sessionsOutOfBlob = sessionsOutOfBlob;
@@ -1446,7 +1453,7 @@ class PostgresStore extends FileStore {
               AND COALESCE(user_entry->>'id', '') <> ''`,
           [this._rowId],
         );
-        if (!sessionsOutOfBlob) {
+        if (!sessionsOutOfBlob && !skipSessionsRebuild) {
           await client.query(`DELETE FROM ${this._qualifiedAuthSessionsTableName}`);
           await client.query(
             `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
@@ -1490,7 +1497,7 @@ class PostgresStore extends FileStore {
             rawData = result.rows[0]?.data ?? EMPTY_DB;
           }
           await this._replaceProjectedUsers(rawData.users);
-          if (!sessionsOutOfBlob) {
+          if (!sessionsOutOfBlob && !skipSessionsRebuild) {
             await this._replaceProjectedSessions(rawData.sessions);
           }
           return;
@@ -1509,88 +1516,128 @@ class PostgresStore extends FileStore {
 
   async _replaceProjectedUsers(users) {
     const normalizedUsers = Array.isArray(users) ? users : [];
-    await this._pool.query(`DELETE FROM ${this._qualifiedAuthUsersTableName}`);
-    try {
-      await this._pool.query(
-        `INSERT INTO ${this._qualifiedAuthUsersTableName} (id, email, user_data)
-         SELECT
-           user_entry->>'id',
-           NULLIF(lower(COALESCE(user_entry->>'email', '')), ''),
-           user_entry
-           FROM jsonb_array_elements($1::jsonb) AS user_entry
-          WHERE COALESCE(user_entry->>'id', '') <> ''`,
-        [JSON.stringify(normalizedUsers)],
-      );
-    } catch (error) {
-      if (!isProjectionArrayInsertFallbackError(error)) {
+    await this._withProjectionClient(async (client, useTransaction) => {
+      try {
+        if (useTransaction) {
+          await client.query("BEGIN");
+          await client.query("SET LOCAL statement_timeout = 0");
+        }
+        await client.query(`DELETE FROM ${this._qualifiedAuthUsersTableName}`);
+        try {
+          await client.query(
+            `INSERT INTO ${this._qualifiedAuthUsersTableName} (id, email, user_data)
+             SELECT
+               user_entry->>'id',
+               NULLIF(lower(COALESCE(user_entry->>'email', '')), ''),
+               user_entry
+               FROM jsonb_array_elements($1::jsonb) AS user_entry
+              WHERE COALESCE(user_entry->>'id', '') <> ''`,
+            [JSON.stringify(normalizedUsers)],
+          );
+        } catch (error) {
+          if (!isProjectionArrayInsertFallbackError(error)) {
+            throw error;
+          }
+          for (const user of normalizedUsers) {
+            const userId = String(user?.id || "").trim();
+            if (!userId) {
+              continue;
+            }
+            const email = String(user?.email || "").trim().toLowerCase() || null;
+            await client.query(
+              `INSERT INTO ${this._qualifiedAuthUsersTableName} (id, email, user_data)
+               VALUES ($1, $2, $3::jsonb)`,
+              [userId, email, JSON.stringify(user)],
+            );
+          }
+        }
+        if (useTransaction) {
+          await client.query("COMMIT");
+        }
+      } catch (error) {
+        if (useTransaction) {
+          try {
+            await client.query("ROLLBACK");
+          } catch (_) {
+            // original error is more informative
+          }
+        }
         throw error;
       }
-      for (const user of normalizedUsers) {
-        const userId = String(user?.id || "").trim();
-        if (!userId) {
-          continue;
-        }
-        const email = String(user?.email || "").trim().toLowerCase() || null;
-        await this._pool.query(
-          `INSERT INTO ${this._qualifiedAuthUsersTableName} (id, email, user_data)
-           VALUES ($1, $2, $3::jsonb)`,
-          [userId, email, JSON.stringify(user)],
-        );
-      }
-    }
+    });
     this._lastUsersProjectionHash = computeProjectionHash(normalizedUsers);
   }
 
   async _replaceProjectedSessions(sessions) {
     const normalizedSessions = Array.isArray(sessions) ? sessions : [];
-    await this._pool.query(`DELETE FROM ${this._qualifiedAuthSessionsTableName}`);
-    try {
-      await this._pool.query(
-        `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
-           token,
-           refresh_token,
-           user_id,
-           created_at,
-           session_data
-         )
-         SELECT
-           session_entry->>'token',
-           NULLIF(COALESCE(session_entry->>'refreshToken', ''), ''),
-           COALESCE(session_entry->>'userId', ''),
-           NULLIF(COALESCE(session_entry->>'createdAt', ''), ''),
-           session_entry
-           FROM jsonb_array_elements($1::jsonb) AS session_entry
-          WHERE COALESCE(session_entry->>'token', '') <> ''`,
-        [JSON.stringify(normalizedSessions)],
-      );
-    } catch (error) {
-      if (!isProjectionArrayInsertFallbackError(error)) {
+    await this._withProjectionClient(async (client, useTransaction) => {
+      try {
+        if (useTransaction) {
+          await client.query("BEGIN");
+          await client.query("SET LOCAL statement_timeout = 0");
+        }
+        await client.query(`DELETE FROM ${this._qualifiedAuthSessionsTableName}`);
+        try {
+          await client.query(
+            `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
+               token,
+               refresh_token,
+               user_id,
+               created_at,
+               session_data
+             )
+             SELECT
+               session_entry->>'token',
+               NULLIF(COALESCE(session_entry->>'refreshToken', ''), ''),
+               COALESCE(session_entry->>'userId', ''),
+               NULLIF(COALESCE(session_entry->>'createdAt', ''), ''),
+               session_entry
+               FROM jsonb_array_elements($1::jsonb) AS session_entry
+              WHERE COALESCE(session_entry->>'token', '') <> ''`,
+            [JSON.stringify(normalizedSessions)],
+          );
+        } catch (error) {
+          if (!isProjectionArrayInsertFallbackError(error)) {
+            throw error;
+          }
+          for (const session of normalizedSessions) {
+            const token = String(session?.token || "").trim();
+            if (!token) {
+              continue;
+            }
+            await client.query(
+              `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
+                 token,
+                 refresh_token,
+                 user_id,
+                 created_at,
+                 session_data
+               )
+               VALUES ($1, $2, $3, $4, $5::jsonb)`,
+              [
+                token,
+                String(session?.refreshToken || "").trim() || null,
+                String(session?.userId || "").trim(),
+                String(session?.createdAt || "").trim() || null,
+                JSON.stringify(session),
+              ],
+            );
+          }
+        }
+        if (useTransaction) {
+          await client.query("COMMIT");
+        }
+      } catch (error) {
+        if (useTransaction) {
+          try {
+            await client.query("ROLLBACK");
+          } catch (_) {
+            // original error is more informative
+          }
+        }
         throw error;
       }
-      for (const session of normalizedSessions) {
-        const token = String(session?.token || "").trim();
-        if (!token) {
-          continue;
-        }
-        await this._pool.query(
-          `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
-             token,
-             refresh_token,
-             user_id,
-             created_at,
-             session_data
-           )
-           VALUES ($1, $2, $3, $4, $5::jsonb)`,
-          [
-            token,
-            String(session?.refreshToken || "").trim() || null,
-            String(session?.userId || "").trim(),
-            String(session?.createdAt || "").trim() || null,
-            JSON.stringify(session),
-          ],
-        );
-      }
-    }
+    });
     this._lastSessionsProjectionHash = computeProjectionHash(normalizedSessions);
   }
 
@@ -2198,18 +2245,50 @@ class PostgresStore extends FileStore {
     }
   }
 
+  _runOnMutateQueue(operation) {
+    if (!this._mutateQueue) {
+      this._mutateQueue = Promise.resolve();
+    }
+    const run = this._mutateQueue.then(() => operation());
+    this._mutateQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  async _mutate(applyFn) {
+    try {
+      return await super._mutate(applyFn);
+    } catch (error) {
+      this._pendingTreeChangeOps.length = 0;
+      this._pendingDeletedPersonsOps.length = 0;
+      throw error;
+    }
+  }
+
+  async updateUserPassword(userId, newPlaintextPassword) {
+    const updated = await super.updateUserPassword(userId, newPlaintextPassword);
+    if (updated) {
+      await this.deleteSessionsForUser(userId);
+    }
+    return updated;
+  }
+
   async createPerson({
     treeId,
     creatorId,
     personData,
     userId = null,
+    sourcePersonId = null,
   }) {
-    if (userId) {
+    if (userId || sourcePersonId) {
       return super.createPerson({
         treeId,
         creatorId,
         personData,
         userId,
+        sourcePersonId,
       });
     }
 
@@ -2227,7 +2306,8 @@ class PostgresStore extends FileStore {
     const identity = createPersonIdentityRecord({personIds: [person.id]});
     person.identityId = identity.id;
 
-    return this._enqueueWrite("_stateWriteQueue", async () => {
+    return this._runOnMutateQueue(() =>
+      this._enqueueWrite("_stateWriteQueue", async () => {
       await this.initialize();
       const preUpdateCachedVersion = this._cachedVersion;
       const result = await this._pool.query(
@@ -2313,7 +2393,8 @@ class PostgresStore extends FileStore {
         this._persistSnapshotCache(this._cachedState);
       }
       return structuredClone(person);
-    });
+      }),
+    );
   }
 
   async deletePerson(treeId, personId, actorId = null) {
@@ -3170,8 +3251,7 @@ class PostgresStore extends FileStore {
   }
 
   /// Дренаж на записи: новые записи журнала/аудита из массивов блоба → в
-  /// таблицы, затем очередь табличных операций. Ошибка = best-effort:
-  /// массивы остаются в блобе, следующий _write повторит (дедуп по id).
+  /// таблицы. Ошибка = best-effort: массивы остаются в блобе, следующий _write повторит.
   async _drainTreeChangeCollections(data) {
     if (!this._treeChangeTablesReady) {
       return data;
@@ -3180,8 +3260,7 @@ class PostgresStore extends FileStore {
       ? data.treeChangeRecords
       : [];
     const audit = Array.isArray(data?.hardDeleteAudit) ? data.hardDeleteAudit : [];
-    const ops = this._pendingTreeChangeOps;
-    if (records.length === 0 && audit.length === 0 && ops.length === 0) {
+    if (records.length === 0 && audit.length === 0) {
       return data;
     }
     try {
@@ -3191,11 +3270,6 @@ class PostgresStore extends FileStore {
       if (audit.length) {
         await this._insertHardDeleteAuditRows(audit);
       }
-      while (ops.length) {
-        const op = ops[0];
-        await this._applyTreeChangeOp(op);
-        ops.shift();
-      }
     } catch (error) {
       console.warn(
         "[backend] tree change drain failed — arrays stay in blob for retry",
@@ -3204,6 +3278,24 @@ class PostgresStore extends FileStore {
       return data;
     }
     return {...data, treeChangeRecords: [], hardDeleteAudit: []};
+  }
+
+  async _applyPendingTreeChangeOps(ops) {
+    if (!this._treeChangeTablesReady || !Array.isArray(ops) || ops.length === 0) {
+      return;
+    }
+    for (let i = 0; i < ops.length; i += 1) {
+      try {
+        await this._applyTreeChangeOp(ops[i]);
+      } catch (error) {
+        console.warn(
+          "[backend] tree change post-write op failed",
+          JSON.stringify({message: error?.message || String(error)}),
+        );
+        this._pendingTreeChangeOps.unshift(...ops.slice(i));
+        return;
+      }
+    }
   }
 
   // ── хуки FileStore → таблицы ──
@@ -3497,28 +3589,17 @@ class PostgresStore extends FileStore {
     }
   }
 
-  /// Дренаж на записи: новые строки корзины из блоба (deletePerson,
-  /// унаследованный от FileStore) → в таблицу, затем очередь операций
-  /// (restore). Ошибка = best-effort: массив остаётся в блобе, следующий
-  /// _write повторит (дедуп по id / идемпотентный UPDATE).
+  /// Дренаж на записи: новые строки корзины из блоба → в таблицу.
   async _drainDeletedPersonsCollection(data) {
     if (!this._deletedPersonsTablesReady) {
       return data;
     }
     const rows = Array.isArray(data?.deletedPersons) ? data.deletedPersons : [];
-    const ops = this._pendingDeletedPersonsOps;
-    if (rows.length === 0 && ops.length === 0) {
+    if (rows.length === 0) {
       return data;
     }
     try {
-      if (rows.length) {
-        await this._insertDeletedPersonRows(rows);
-      }
-      while (ops.length) {
-        const op = ops[0];
-        await this._applyDeletedPersonOp(op);
-        ops.shift();
-      }
+      await this._insertDeletedPersonRows(rows);
     } catch (error) {
       console.warn(
         "[backend] deleted persons drain failed — array stays in blob for retry",
@@ -3527,6 +3608,24 @@ class PostgresStore extends FileStore {
       return data;
     }
     return {...data, deletedPersons: []};
+  }
+
+  async _applyPendingDeletedPersonsOps(ops) {
+    if (!this._deletedPersonsTablesReady || !Array.isArray(ops) || ops.length === 0) {
+      return;
+    }
+    for (let i = 0; i < ops.length; i += 1) {
+      try {
+        await this._applyDeletedPersonOp(ops[i]);
+      } catch (error) {
+        console.warn(
+          "[backend] deleted persons post-write op failed",
+          JSON.stringify({message: error?.message || String(error)}),
+        );
+        this._pendingDeletedPersonsOps.unshift(...ops.slice(i));
+        return;
+      }
+    }
   }
 
   async listDeletedPersonsForUser({userId}) {
@@ -3594,87 +3693,106 @@ class PostgresStore extends FileStore {
     if (!this._deletedPersonsTablesReady) {
       return super.restorePerson({deletedPersonId, actorUserId});
     }
-    await this._awaitReadConsistency();
-    const rowResult = await this._pool.query(
-      `SELECT row_data FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
-      [deletedPersonId],
-    );
-    const row = this._rowToDeletedPerson(rowResult.rows[0]);
-    if (!row) throw new Error("DELETED_PERSON_NOT_FOUND");
-    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
-    if (
-      row.hardDeleteScheduledAt &&
-      Date.parse(row.hardDeleteScheduledAt) < Date.now()
-    ) {
-      throw new Error("HARD_DELETE_ELAPSED");
-    }
-
-    const db = await this._read();
-    const isOriginalActor = row.deletedByUserId === actorUserId;
-    let isSemyaMember = false;
-    if (row.semyaId) {
-      isSemyaMember = (db.semyaMembers || []).some(
-        (m) =>
-          m.userId === actorUserId &&
-          m.semyaId === row.semyaId &&
-          !m.hiddenAt,
+    return this._runOnMutateQueue(async () => {
+      await this._awaitReadConsistency();
+      const rowResult = await this._pool.query(
+        `SELECT row_data FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
+        [deletedPersonId],
       );
-      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
-      if (semya?.deletedAt) {
-        throw new Error("SEMYA_DELETED");
+      const row = this._rowToDeletedPerson(rowResult.rows[0]);
+      if (!row) throw new Error("DELETED_PERSON_NOT_FOUND");
+      if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+      if (
+        row.hardDeleteScheduledAt &&
+        Date.parse(row.hardDeleteScheduledAt) < Date.now()
+      ) {
+        throw new Error("HARD_DELETE_ELAPSED");
       }
-    }
-    if (!isOriginalActor && !isSemyaMember) {
-      throw new Error("FORBIDDEN");
-    }
 
-    db.persons = Array.isArray(db.persons) ? db.persons : [];
-    db.persons.push(structuredClone(row.snapshot));
-    if (Array.isArray(row.relationsSnapshot)) {
-      db.relations = Array.isArray(db.relations) ? db.relations : [];
-      for (const rel of row.relationsSnapshot) {
-        db.relations.push(structuredClone(rel));
-      }
-    }
-
-    if (row.snapshot?.userId) {
-      const tree = db.trees.find((entry) => entry.id === row.treeId);
-      if (tree) {
-        tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
-        if (!tree.memberIds.includes(row.snapshot.userId)) {
-          tree.memberIds.push(row.snapshot.userId);
+      const db = await this._read();
+      const isOriginalActor = row.deletedByUserId === actorUserId;
+      let isSemyaMember = false;
+      let hasHiddenRow = false;
+      let activeSemyaExists = false;
+      if (row.semyaId) {
+        const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
+        if (semya?.deletedAt) {
+          throw new Error("SEMYA_DELETED");
         }
-        tree.members = Array.isArray(tree.members) ? tree.members : [];
-        if (!tree.members.includes(row.snapshot.userId)) {
-          tree.members.push(row.snapshot.userId);
-        }
-        this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
-        tree.updatedAt = nowIso();
+        activeSemyaExists = Boolean(semya && !semya.deletedAt);
+        const memberRows = (db.semyaMembers || []).filter(
+          (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
+        );
+        isSemyaMember = memberRows.some((m) => !m.hiddenAt);
+        hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
       }
-    }
+      if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
+        throw new Error("FORBIDDEN");
+      }
+      if (!isOriginalActor && !isSemyaMember) {
+        throw new Error("FORBIDDEN");
+      }
 
-    const restoredAt = nowIso();
-    this._appendTreeChangeRecord(db, {
-      treeId: row.treeId,
-      actorId: actorUserId,
-      type: "person.restored",
-      personId: row.originalPersonId,
-      details: {
-        deletedPersonId: row.id,
-        deletedAt: row.deletedAt,
-      },
-    });
-    this._reconcilePersonIdentities(db);
-    ensureCirclesForTree(db, row.treeId);
+      const tree = (db.trees || []).find((entry) => entry.id === row.treeId);
+      if (!tree) {
+        throw new Error("TREE_NOT_FOUND");
+      }
 
-    this._queueDeletedPersonOp({
-      kind: "restore",
-      id: deletedPersonId,
-      restoredAt,
-      restoredByUserId: actorUserId,
+      db.persons = Array.isArray(db.persons) ? db.persons : [];
+      db.persons.push(structuredClone(row.snapshot));
+      if (Array.isArray(row.relationsSnapshot)) {
+        db.relations = Array.isArray(db.relations) ? db.relations : [];
+        for (const rel of row.relationsSnapshot) {
+          db.relations.push(structuredClone(rel));
+        }
+      }
+
+      if (row.snapshot?.userId) {
+        const kickedSnapshotUser =
+          tree.semyaId &&
+          (db.semyaMembers || []).some(
+            (m) =>
+              m.semyaId === tree.semyaId &&
+              m.userId === row.snapshot.userId &&
+              Boolean(m.hiddenAt),
+          );
+        if (!kickedSnapshotUser) {
+          tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+          if (!tree.memberIds.includes(row.snapshot.userId)) {
+            tree.memberIds.push(row.snapshot.userId);
+          }
+          tree.members = Array.isArray(tree.members) ? tree.members : [];
+          if (!tree.members.includes(row.snapshot.userId)) {
+            tree.members.push(row.snapshot.userId);
+          }
+          this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
+          tree.updatedAt = nowIso();
+        }
+      }
+
+      const restoredAt = nowIso();
+      this._appendTreeChangeRecord(db, {
+        treeId: row.treeId,
+        actorId: actorUserId,
+        type: "person.restored",
+        personId: row.originalPersonId,
+        details: {
+          deletedPersonId: row.id,
+          deletedAt: row.deletedAt,
+        },
+      });
+      this._reconcilePersonIdentities(db);
+      ensureCirclesForTree(db, row.treeId);
+
+      this._queueDeletedPersonOp({
+        kind: "restore",
+        id: deletedPersonId,
+        restoredAt,
+        restoredByUserId: actorUserId,
+      });
+      await this._write(db);
+      return structuredClone({...row, restoredAt, restoredByUserId: actorUserId});
     });
-    await this._write(db);
-    return structuredClone({...row, restoredAt, restoredByUserId: actorUserId});
   }
 
   async hardDeletePerson({deletedPersonId, actorUserId}) {
@@ -3703,14 +3821,20 @@ class PostgresStore extends FileStore {
 
     const isOriginalActor = row.deletedByUserId === actorUserId;
     let isSemyaMember = false;
+    let hasHiddenRow = false;
+    let activeSemyaExists = false;
     if (row.semyaId) {
       const db = await this._read();
-      isSemyaMember = (db.semyaMembers || []).some(
-        (m) =>
-          m.userId === actorUserId &&
-          m.semyaId === row.semyaId &&
-          !m.hiddenAt,
+      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
+      activeSemyaExists = Boolean(semya && !semya.deletedAt);
+      const memberRows = (db.semyaMembers || []).filter(
+        (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
       );
+      isSemyaMember = memberRows.some((m) => !m.hiddenAt);
+      hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
+    }
+    if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
+      throw new Error("FORBIDDEN");
     }
     if (!isOriginalActor && !isSemyaMember) {
       throw new Error("FORBIDDEN");
@@ -5115,6 +5239,39 @@ class PostgresStore extends FileStore {
         return `$${params.length}`;
       });
       conditions.push(`chat_id IN (${placeholders.join(", ")})`);
+    } else {
+      // Constrain global search in SQL to chats where the caller is an active
+      // participant (or virtual direct-chat pairs) so global >1000 matches from
+      // unrelated users never truncate this user's search results.
+      const userChats = await this._selectChatsForUserFromTables(normalizedUserId);
+      const userChatScopeIds = [];
+      for (const chat of userChats) {
+        const cid = String(chat?.id || "").trim();
+        if (!cid) continue;
+        userChatScopeIds.push(cid);
+        if (chat.type === "direct") {
+          for (const eq of this._equivalentChatIdList(cid, cid)) {
+            if (!userChatScopeIds.includes(eq)) {
+              userChatScopeIds.push(eq);
+            }
+          }
+        }
+      }
+      const escUser = this._escapeLikePattern(normalizedUserId);
+      params.push(`${escUser}_%`);
+      const p1 = `$${params.length}`;
+      params.push(`%_${escUser}`);
+      const p2 = `$${params.length}`;
+      const directCond = `(chat_id NOT LIKE 'chat_%' AND (chat_id LIKE ${p1} OR chat_id LIKE ${p2}))`;
+      if (userChatScopeIds.length > 0) {
+        const placeholders = userChatScopeIds.map((id) => {
+          params.push(id);
+          return `$${params.length}`;
+        });
+        conditions.push(`(chat_id IN (${placeholders.join(", ")}) OR ${directCond})`);
+      } else {
+        conditions.push(directCond);
+      }
     }
 
     const result = await this._pool.query(
@@ -5137,22 +5294,16 @@ class PostgresStore extends FileStore {
       if (!message || !messageChatId) {
         continue;
       }
-      let participantIds = normalizeParticipantIds(
-        Array.isArray(message.participants) && message.participants.length > 0
-          ? message.participants
-          : null,
-      );
-      if (participantIds.length === 0) {
-        if (!chatCache.has(messageChatId)) {
-          chatCache.set(
-            messageChatId,
-            await this._selectChatProjectionById(messageChatId),
-          );
-        }
-        participantIds = normalizeParticipantIds(
-          chatCache.get(messageChatId)?.participantIds,
+      if (!chatCache.has(messageChatId)) {
+        chatCache.set(
+          messageChatId,
+          await this._selectChatProjectionById(messageChatId),
         );
       }
+      const chat = chatCache.get(messageChatId);
+      const participantIds = chat
+        ? normalizeParticipantIds(chat.participantIds)
+        : parseDirectParticipantsFromChatId(messageChatId);
       if (!participantIds.includes(normalizedUserId)) {
         continue;
       }
@@ -5415,6 +5566,10 @@ class PostgresStore extends FileStore {
       .map((row) => String(row?.chat_id || "").trim())
       .filter(Boolean);
     const result = await super.deleteUser(userId);
+    if (result === null) {
+      // Юзера не было (skip в applyFn) — каскадить нечего.
+      return result;
+    }
 
     // Блобная часть уже вычистила записи чатов (projection пересинкан в
     // _write); зеркалим табличную часть семантики FileStore.deleteUser.
@@ -5558,10 +5713,6 @@ class PostgresStore extends FileStore {
       relationRequests: asSet(result?.removedRelationRequestIds),
       treeInvitations: asSet(result?.removedInvitationIds),
     };
-    if (result === null) {
-      // Юзера не было (skip в applyFn) — каскадить нечего.
-      return result;
-    }
 
     // Полный скан: та же семантика, что у массивного фильтра FileStore
     // (deleteUser редкий, таблица сотни строк — дешевле, чем jsonb-WHERE,
@@ -5660,6 +5811,33 @@ class PostgresStore extends FileStore {
           [String(row.id)],
         );
       }
+    }
+
+    if (this._sessionsOutOfBlob) {
+      await this.deleteSessionsForUser(userId);
+    }
+    if (this._deletedPersonsTablesReady) {
+      await this._pool.query(
+        `DELETE FROM ${this._qualifiedDeletedPersonsTableName}
+          WHERE deleted_by_user_id = $1`,
+        [normalizedUserId],
+      );
+      if (removedIds.trees.size > 0) {
+        const treeIds = Array.from(removedIds.trees);
+        const placeholders = treeIds.map((_, idx) => `$${idx + 1}`);
+        await this._pool.query(
+          `DELETE FROM ${this._qualifiedDeletedPersonsTableName}
+            WHERE tree_id IN (${placeholders.join(", ")})`,
+          treeIds,
+        );
+      }
+    }
+    if (this._clientDiagnosticsTablesReady) {
+      await this._pool.query(
+        `DELETE FROM ${this._qualifiedClientDiagnosticsTableName}
+          WHERE user_id = $1`,
+        [normalizedUserId],
+      );
     }
 
     return result;
@@ -5795,122 +5973,165 @@ class PostgresStore extends FileStore {
       notificationsUnread: 0,
       pushDeliveries: 0,
     };
-    const sweepNotifications = async (whereSql, params, key) => {
-      if (dryRun) {
-        const counted = await this._pool.query(
-          `SELECT COUNT(*)::int AS total
-             FROM ${this._qualifiedNotificationsTableName}
-            WHERE created_at <> '' AND ${whereSql}`,
+    if (this._notificationTablesReady) {
+      const sweepNotifications = async (whereSql, params, key) => {
+        if (dryRun) {
+          const counted = await this._pool.query(
+            `SELECT COUNT(*)::int AS total
+               FROM ${this._qualifiedNotificationsTableName}
+              WHERE created_at <> '' AND ${whereSql}`,
+            params,
+          );
+          counts[key] += Number(counted.rows[0]?.total || 0);
+          return;
+        }
+        const deleted = await this._pool.query(
+          `DELETE FROM ${this._qualifiedNotificationsTableName}
+            WHERE created_at <> '' AND ${whereSql}
+            RETURNING id`,
           params,
         );
-        counts[key] += Number(counted.rows[0]?.total || 0);
-        return;
+        counts[key] += deleted.rows.length;
+      };
+      const notifSilentMs =
+        Math.max(0, Number(logRetention.notifSilentHours ?? 48)) * HOUR;
+      const notifReadMs =
+        Math.max(0, Number(logRetention.notifReadDays ?? 30)) * DAY;
+      const notifUnreadMs =
+        Math.max(0, Number(logRetention.notifUnreadDays ?? 365)) * DAY;
+      if (notifSilentMs > 0) {
+        await sweepNotifications(
+          `silent = 1 AND created_at < $1`,
+          [cutoffIso(notifSilentMs)],
+          "notificationsSilent",
+        );
       }
-      const deleted = await this._pool.query(
-        `DELETE FROM ${this._qualifiedNotificationsTableName}
-          WHERE created_at <> '' AND ${whereSql}
-          RETURNING id`,
-        params,
-      );
-      counts[key] += deleted.rows.length;
-    };
-    const notifSilentMs =
-      Math.max(0, Number(logRetention.notifSilentHours ?? 48)) * HOUR;
-    const notifReadMs =
-      Math.max(0, Number(logRetention.notifReadDays ?? 30)) * DAY;
-    const notifUnreadMs =
-      Math.max(0, Number(logRetention.notifUnreadDays ?? 365)) * DAY;
-    if (notifSilentMs > 0) {
-      await sweepNotifications(
-        `silent = 1 AND created_at < $1`,
-        [cutoffIso(notifSilentMs)],
-        "notificationsSilent",
-      );
-    }
-    if (notifReadMs > 0) {
-      // Возраст ПРОЧИТАННОГО — от read_at, не от created_at: «Прочитать
-      // всё» переводил бы годовой бэклог в 30-дневное окно и hard-delete
-      // стирал бы историю «Ранее» за сутки (ревью, P2). Окно честно
-      // отсчитывается от момента прочтения.
-      await sweepNotifications(
-        `silent = 0 AND read_at <> '' AND read_at < $1`,
-        [cutoffIso(notifReadMs)],
-        "notificationsRead",
-      );
-    }
-    if (notifUnreadMs > 0) {
-      await sweepNotifications(
-        `silent = 0 AND read_at = '' AND created_at < $1`,
-        [cutoffIso(notifUnreadMs)],
-        "notificationsUnread",
-      );
-    }
+      if (notifReadMs > 0) {
+        await sweepNotifications(
+          `silent = 0 AND read_at <> '' AND read_at < $1`,
+          [cutoffIso(notifReadMs)],
+          "notificationsRead",
+        );
+      }
+      if (notifUnreadMs > 0) {
+        await sweepNotifications(
+          `silent = 0 AND read_at = '' AND created_at < $1`,
+          [cutoffIso(notifUnreadMs)],
+          "notificationsUnread",
+        );
+      }
 
-    const deliveriesDays = Number(logRetention.pushDeliveriesDays ?? 7);
-    const deliveriesTtlMs = Math.max(0, deliveriesDays) * DAY;
-    if (deliveriesTtlMs > 0) {
-      if (dryRun) {
+      const deliveriesDays = Number(logRetention.pushDeliveriesDays ?? 7);
+      const deliveriesTtlMs = Math.max(0, deliveriesDays) * DAY;
+      if (deliveriesTtlMs > 0) {
+        if (dryRun) {
+          const counted = await this._pool.query(
+            `SELECT COUNT(*)::int AS total
+               FROM ${this._qualifiedPushDeliveriesTableName}
+              WHERE created_at <> '' AND created_at < $1`,
+            [cutoffIso(deliveriesTtlMs)],
+          );
+          counts.pushDeliveries += Number(counted.rows[0]?.total || 0);
+        } else {
+          const deleted = await this._pool.query(
+            `DELETE FROM ${this._qualifiedPushDeliveriesTableName}
+              WHERE created_at <> '' AND created_at < $1
+              RETURNING id`,
+            [cutoffIso(deliveriesTtlMs)],
+          );
+          counts.pushDeliveries += deleted.rows.length;
+        }
+      }
+      const rawCap = Number(logRetention.pushDeliveriesMax ?? 2000);
+      const deliveriesCap =
+        Number.isFinite(rawCap) && rawCap > 0 ? Math.floor(rawCap) : null;
+      if (deliveriesCap !== null) {
         const counted = await this._pool.query(
           `SELECT COUNT(*)::int AS total
-             FROM ${this._qualifiedPushDeliveriesTableName}
-            WHERE created_at <> '' AND created_at < $1`,
-          [cutoffIso(deliveriesTtlMs)],
+             FROM ${this._qualifiedPushDeliveriesTableName}`,
         );
-        counts.pushDeliveries += Number(counted.rows[0]?.total || 0);
-      } else {
-        const deleted = await this._pool.query(
-          `DELETE FROM ${this._qualifiedPushDeliveriesTableName}
-            WHERE created_at <> '' AND created_at < $1
-            RETURNING id`,
-          [cutoffIso(deliveriesTtlMs)],
-        );
-        counts.pushDeliveries += deleted.rows.length;
-      }
-    }
-    const rawCap = Number(logRetention.pushDeliveriesMax ?? 2000);
-    const deliveriesCap =
-      Number.isFinite(rawCap) && rawCap > 0 ? Math.floor(rawCap) : null;
-    if (deliveriesCap !== null) {
-      const counted = await this._pool.query(
-        `SELECT COUNT(*)::int AS total
-           FROM ${this._qualifiedPushDeliveriesTableName}`,
-      );
-      const overflow = Number(counted.rows[0]?.total || 0) - deliveriesCap;
-      if (overflow > 0) {
-        if (dryRun) {
-          counts.pushDeliveries += overflow;
-        } else {
-          const oldest = await this._pool.query(
-            `SELECT id
-               FROM ${this._qualifiedPushDeliveriesTableName}
-              ORDER BY created_at ASC, id ASC
-              LIMIT $1`,
-            [overflow],
-          );
-          for (const row of oldest.rows) {
-            await this._pool.query(
-              `DELETE FROM ${this._qualifiedPushDeliveriesTableName} WHERE id = $1`,
-              [String(row.id)],
+        const overflow = Number(counted.rows[0]?.total || 0) - deliveriesCap;
+        if (overflow > 0) {
+          if (dryRun) {
+            counts.pushDeliveries += overflow;
+          } else {
+            const oldest = await this._pool.query(
+              `SELECT id
+                 FROM ${this._qualifiedPushDeliveriesTableName}
+                ORDER BY created_at ASC, id ASC
+                LIMIT $1`,
+              [overflow],
             );
-            counts.pushDeliveries += 1;
+            for (const row of oldest.rows) {
+              await this._pool.query(
+                `DELETE FROM ${this._qualifiedPushDeliveriesTableName} WHERE id = $1`,
+                [String(row.id)],
+              );
+              counts.pushDeliveries += 1;
+            }
           }
         }
       }
+
+      if (summary && summary.logRetention) {
+        summary.logRetention.notificationsSilent =
+          Number(summary.logRetention.notificationsSilent || 0) +
+          counts.notificationsSilent;
+        summary.logRetention.notificationsRead =
+          Number(summary.logRetention.notificationsRead || 0) +
+          counts.notificationsRead;
+        summary.logRetention.notificationsUnread =
+          Number(summary.logRetention.notificationsUnread || 0) +
+          counts.notificationsUnread;
+        summary.logRetention.pushDeliveries =
+          Number(summary.logRetention.pushDeliveries || 0) +
+          counts.pushDeliveries;
+      }
     }
 
-    if (summary && summary.logRetention) {
-      summary.logRetention.notificationsSilent =
-        Number(summary.logRetention.notificationsSilent || 0) +
-        counts.notificationsSilent;
-      summary.logRetention.notificationsRead =
-        Number(summary.logRetention.notificationsRead || 0) +
-        counts.notificationsRead;
-      summary.logRetention.notificationsUnread =
-        Number(summary.logRetention.notificationsUnread || 0) +
-        counts.notificationsUnread;
-      summary.logRetention.pushDeliveries =
-        Number(summary.logRetention.pushDeliveries || 0) +
-        counts.pushDeliveries;
+    if (dryRun && this._treeChangeTablesReady) {
+      const detailDays = Number(logRetention.treeChangeDetailDays ?? 30);
+      const detailMs = Math.max(0, detailDays) * DAY;
+      if (detailMs > 0) {
+        const cutoffTs = nowTs - detailMs;
+        const detailRows = await this._pool.query(
+          `SELECT id, record_data
+             FROM ${this._qualifiedTreeChangeRecordsTableName}
+            WHERE created_at < $1 AND type NOT LIKE 'article.%'`,
+          [new Date(cutoffTs).toISOString()],
+        );
+        let strippable = 0;
+        for (const row of detailRows.rows) {
+          const record = this._rowToTreeChangeRecord(row);
+          if (record && stripTreeChangeRecordDetails(structuredClone(record), {cutoffTs})) {
+            strippable += 1;
+          }
+        }
+        if (summary?.logRetention) {
+          summary.logRetention.treeChangeDetailsStripped =
+            Number(summary.logRetention.treeChangeDetailsStripped || 0) + strippable;
+        }
+      }
+      const auditRetentionDays =
+        options.auditRetentionDays === undefined || options.auditRetentionDays === null
+          ? 90
+          : Number(options.auditRetentionDays);
+      if (Number.isFinite(auditRetentionDays) && auditRetentionDays > 0) {
+        const auditCutoffIso = new Date(
+          nowTs - auditRetentionDays * DAY,
+        ).toISOString();
+        const auditCount = await this._pool.query(
+          `SELECT COUNT(*)::int AS total
+             FROM ${this._qualifiedHardDeleteAuditTableName}
+            WHERE hard_deleted_at <> '' AND hard_deleted_at < $1`,
+          [auditCutoffIso],
+        );
+        if (summary?.deleted) {
+          summary.deleted.auditPruned =
+            Number(summary.deleted.auditPruned || 0) +
+            Number(auditCount.rows[0]?.total || 0);
+        }
+      }
     }
 
     // SPEED-16: super() above swept `db.deletedPersons` — but SPEED-15 moved
@@ -6049,11 +6270,22 @@ class PostgresStore extends FileStore {
       };
     }
     const auditEntries = [];
+    const deletedIds = [];
     for (const row of candidates.rows) {
-      await this._pool.query(
-        `DELETE FROM ${this._qualifiedDeletedPersonsTableName} WHERE id = $1`,
+      const delResult = await this._pool.query(
+        `DELETE FROM ${this._qualifiedDeletedPersonsTableName}
+          WHERE id = $1 AND restored_at = ''
+          RETURNING id`,
         [row.id],
       );
+      const wasDeleted =
+        Array.isArray(delResult?.rows)
+          ? delResult.rows.length > 0
+          : Number(delResult?.rowCount || 0) > 0;
+      if (!wasDeleted) {
+        continue;
+      }
+      deletedIds.push(row.id);
       auditEntries.push({
         runId,
         entityType: "deletedPerson",
@@ -6067,8 +6299,8 @@ class PostgresStore extends FileStore {
       await this._insertHardDeleteAuditRows(auditEntries);
     }
     return {
-      deletedCount: candidates.rows.length,
-      sampleIds: candidates.rows.slice(0, 5).map((row) => row.id),
+      deletedCount: deletedIds.length,
+      sampleIds: deletedIds.slice(0, 5),
     };
   }
 
@@ -6122,8 +6354,15 @@ class PostgresStore extends FileStore {
       return [];
     }
 
+    const useSemyaModel =
+      String(process.env.RODNYA_FEDERATED_SEMYI_ENABLED || "")
+        .trim()
+        .toLowerCase() === "true";
     await this.initialize();
     await this._awaitReadConsistency();
+    if (useSemyaModel) {
+      return super.listUserTrees(normalizedUserId);
+    }
     try {
       const result = await this._pool.query(
         `SELECT tree_entry AS tree_data
@@ -6195,25 +6434,15 @@ class PostgresStore extends FileStore {
         this._lastSessionsProjectionHash = computeProjectionHash(cachedState.sessions);
         return cachedState;
       }
-      const normalizedState = await this._loadSnapshot();
+      const loaded = await this._loadSnapshot();
+      const normalizedState = structuredClone(loaded.state);
       normalizedState.sessions = await this._selectProjectedSessionsArray();
       this._lastUsersProjectionHash = computeProjectionHash(normalizedState.users);
       this._lastSessionsProjectionHash = computeProjectionHash(normalizedState.sessions);
-      // ВАЖНО: _lastChatsProjectionHash здесь НЕ трогаем — _read утверждал
-      // бы синхронность projection, не наблюдая её; после сорванного
-      // _replaceChatProjection это маскировало бы починку на след. _write.
-      // Phase 3.1c: keep the unified-graph mirror eventually
-      // consistent with the legacy collections. The base FileStore
-      // calls this in its own _read; PostgresStore overrides _read
-      // entirely, so we have to mirror the call here or the graph
-      // never gets populated on the prod backend (which is exactly
-      // what was happening — Phase 4 BFS saw 0 graphRelations on
-      // prod even though backend was deployed). Idempotent — no-op
-      // when the graph already matches the legacy side.
       this._syncGraphFromLegacy(normalizedState);
       this._commitCachedState(
         structuredClone(normalizedState),
-        this._loadedSnapshotVersion,
+        loaded.version,
       );
       await this._persistSnapshotCache(this._cachedState);
       return normalizedState;
@@ -6261,6 +6490,8 @@ class PostgresStore extends FileStore {
       } catch (_) {
         // First write / row absent — nothing persisted to preserve.
       }
+      const treeChangeOps = this._pendingTreeChangeOps.splice(0);
+      const deletedPersonOps = this._pendingDeletedPersonsOps.splice(0);
       data = await this._drainTransientNotificationCollections(data);
       data = await this._drainTreeChangeCollections(data);
       data = await this._drainDeletedPersonsCollection(data);
@@ -6270,9 +6501,7 @@ class PostgresStore extends FileStore {
       // SPEED-15: с маркером sessionsOutOfBlob сессии в JSONB-колонке не
       // нужны вообще — _read() на КАЖДОМ пути (попадание кэша и промах)
       // подменяет data.sessions содержимым проекционной таблицы, так что
-      // то, что лежит в самой колонке, никогда не читается назад. Хэш и
-      // `_replaceProjectedSessions` ниже используют РЕАЛЬНЫЙ data.sessions
-      // (до подмены) — в блоб уходит только урезанная копия.
+      // то, что лежит в самой колонке, никогда не читается назад.
       const blobPayload =
         this._sessionsOutOfBlob && data && typeof data === "object"
           ? {...data, sessions: []}
@@ -6292,15 +6521,19 @@ class PostgresStore extends FileStore {
       const writtenVersion = PostgresStore._normalizeStateVersion(
         upsertResult?.rows?.[0]?.version,
       );
+      await this._applyPendingTreeChangeOps(treeChangeOps);
+      await this._applyPendingDeletedPersonsOps(deletedPersonOps);
       if (this._lastUsersProjectionHash !== nextUsersHash) {
         await this._replaceProjectedUsers(data.users);
       } else {
         this._lastUsersProjectionHash = nextUsersHash;
       }
-      if (this._lastSessionsProjectionHash !== nextSessionsHash) {
-        await this._replaceProjectedSessions(data.sessions);
-      } else {
-        this._lastSessionsProjectionHash = nextSessionsHash;
+      if (!this._sessionsOutOfBlob) {
+        if (this._lastSessionsProjectionHash !== nextSessionsHash) {
+          await this._replaceProjectedSessions(data.sessions);
+        } else {
+          this._lastSessionsProjectionHash = nextSessionsHash;
+        }
       }
       if (this._lastChatsProjectionHash !== nextChatsHash) {
         await this._replaceChatProjection(data?.chats);
@@ -6334,6 +6567,14 @@ class PostgresStore extends FileStore {
   // там бессмысленно и означало бы трогать код миграций без необходимости
   // (вне периметра SPEED-11).
   _commitCachedState(state, version) {
+    if (
+      this._cachedState &&
+      this._cachedVersion !== null &&
+      version !== null &&
+      version < this._cachedVersion
+    ) {
+      return this._cachedState;
+    }
     deepFreezeState(state);
     this._cachedState = state;
     this._cachedVersion = version;
@@ -6380,12 +6621,13 @@ class PostgresStore extends FileStore {
       return this._cacheRefreshPromise;
     }
     this._cacheRefreshPromise = (async () => {
-      const normalizedState = await this._loadSnapshot();
+      const loaded = await this._loadSnapshot();
+      const normalizedState = structuredClone(loaded.state);
       this._lastUsersProjectionHash = computeProjectionHash(normalizedState.users);
       this._syncGraphFromLegacy(normalizedState);
       this._commitCachedState(
         structuredClone(normalizedState),
-        this._loadedSnapshotVersion,
+        loaded.version,
       );
       await this._persistSnapshotCache(this._cachedState);
       return this._cachedState;
@@ -6419,32 +6661,23 @@ class PostgresStore extends FileStore {
     await this.initialize();
     await this._hydrateCachedStateFromSnapshotCache();
 
-    let currentVersion;
     try {
       await this._awaitReadConsistency();
-      currentVersion = await this._sharedVersionCheck();
+      const currentVersion = await this._sharedVersionCheck();
+      if (
+        currentVersion !== null &&
+        this._cachedState &&
+        this._cachedVersion === currentVersion
+      ) {
+        return this._sharedSnapshotViewFor(deepFreezeState(this._cachedState));
+      }
+
+      const refreshed = await this._refreshSharedSnapshotOnMiss();
+      return this._sharedSnapshotViewFor(refreshed);
     } catch (error) {
       const fallback = this._serveCachedSnapshotFallback(error, {phase: "read"});
       return this._sharedSnapshotViewFor(deepFreezeState(fallback));
     }
-
-    if (
-      currentVersion !== null &&
-      this._cachedState &&
-      this._cachedVersion === currentVersion
-    ) {
-      // Защитный вызов: _cachedState обязан быть заморожен уже
-      // _commitCachedState (единственное место присвоения на пути,
-      // который может дать подтверждённую версию — см. её комментарий).
-      // deepFreezeState на уже замороженном значении — O(1) (ранний
-      // возврат по Object.isFrozen), так что это самокорректируется на
-      // случай регрессии (новое место записи забыло пройти через
-      // _commitCachedState), а не тихо отдаёт мутируемый снимок.
-      return this._sharedSnapshotViewFor(deepFreezeState(this._cachedState));
-    }
-
-    const refreshed = await this._refreshSharedSnapshotOnMiss();
-    return this._sharedSnapshotViewFor(refreshed);
   }
 
   // SPEED-11: _buildSharedSnapshotView (store.js) строит {...state} заново
@@ -6475,12 +6708,10 @@ class PostgresStore extends FileStore {
     }
 
     this._snapshotLoadPromise = this._readSnapshotWithRetry()
-      .then((row) => {
-        // Версия берётся из той же строки, что и данные, — кэш никогда
-        // не помечается версией, которой эти данные не соответствуют.
-        this._loadedSnapshotVersion = row.version;
-        return normalizeDbState(row.data);
-      })
+      .then((row) => ({
+        state: normalizeDbState(row.data),
+        version: row.version,
+      }))
       .finally(() => {
         this._snapshotLoadPromise = null;
       });

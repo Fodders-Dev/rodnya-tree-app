@@ -90,6 +90,10 @@ function registerDeletedPersonsRoutes(
           res.status(404).json({message: "Удалённая карточка не найдена"});
           return;
         }
+        if (code === "TREE_NOT_FOUND") {
+          res.status(404).json({message: "Дерево было удалено — восстановление невозможно"});
+          return;
+        }
         if (code === "ALREADY_RESTORED") {
           res.status(409).json({message: "Уже восстановлена"});
           return;
@@ -139,6 +143,10 @@ function registerDeletedPersonsRoutes(
         const code = error?.message;
         if (code === "DELETED_PERSON_NOT_FOUND") {
           res.status(404).json({message: "Удалённая карточка не найдена"});
+          return;
+        }
+        if (code === "TREE_NOT_FOUND") {
+          res.status(404).json({message: "Дерево было удалено — восстановление невозможно"});
           return;
         }
         if (code === "ALREADY_RESTORED") {

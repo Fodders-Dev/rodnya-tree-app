@@ -4,6 +4,17 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
+## Status update: 2026-11-26
+
+* **Релиз `1.0.48+56` — аудит и стабилизация кодовой базы (волны 0–4) + паритет LiveKit с Desk**:
+  * **Wave 0 (`02e79744`)**: закрыты окна наблюдения SPEED-15/16 и smoke-fixture.
+  * **Wave 1 (`f18b106a`)**: concurrency хранилища, транзакционная синхронизация проекций, безопасность пересборки сессий, hard-delete и `RealtimeHub`.
+  * **Wave 2 (`50d4705f`)**: безопасность API и IDOR-проверки, федеративные роли семей, валидация Story Requests, LiveKit-звонки (`departure_timeout`, busy/block/group-reject).
+  * **Wave 3 (`d5566dfc`)**: клиентские исправления Story Requests, `ProfileArticleEditor`, изоляция 403/сессий (`_sessionGeneration`), кэши и deep links (`/browse/`, `/reset-password`, MAX redirect).
+  * **Wave 4 (`5d67bcea`, `765dd6a`, `34a95d8`)**: жизненный цикл звонков/PiP/аудио/вибрации/`RodnyaCallForegroundBridge.kt`, чаты и вложения, UX ключевых экранов, детерминированный `nowProvider` для зонда календаря (`secondary_lists_density_test`), а также фикс `tool/sync_web_shell_assets.js`, сохраняющий web CanvasKit-шейдеры, tree-shaken шрифты (~66 КБ) и `FontManifest.json`.
+  * **Desk LiveKit parity (`09cbbcc5` в `agy/desk-polish-20261122`)**: `departure_timeout: 15`, `roomAdmin` + Twirp `listRooms`/`removeParticipant`/`deleteRoom`, очистка `<video>`-треков, одновременные плитки камеры/экрана и guard по `callEpoch`.
+  * **Приёмка перед вливом в `main`**: `flutter analyze` (0 проблем), полный `flutter test` (**1592/1592** + 1 skipped), `npm --prefix backend test` (**833/833**), релизная сборка `flutter build web --release` + локальный браузерный смоук, `flutter build apk --flavor dev --debug --no-pub`.
+
 ## Status update: 2026-09-13
 
 * **31.08 — переезд прода в РФ** (152-ФЗ): 77.91.113.109 (HOSTKEY), PG16,
@@ -387,22 +398,24 @@ Phase B фронт ЗАКРЫТ (FE1-FE10 + FE3b + mama-friendly polish chunk). 
 
 ## Observation windows (active)
 
-* **SPEED-15** (корзина/диагностика/сессии вне JSONB): 2026-09-11 → ~2026-09-18.
-  Дамп `/opt/rodnya/backups/manual/pre-speed15-20260911-133419.dump`, откат —
-  `backend/scripts/restore-{sessions,client-diagnostics,deleted-persons}-to-blob.js`
-  при остановленном бэкенде, **сессии первыми** (иначе старый код перезальёт
-  `auth_sessions` пустым блобом — массовый логаут). Контрольный рестарт 11.09
-  прошёл без потери сессий. После окна — уборка бэкап-таблиц
-  `_deleted_persons_backups` / `_client_diagnostics_backups` / `_sessions_backups`
-  и ветки `perf/speed15-shrink-blob`.
-* **SPEED-16** (сметание корзины в таблице, обрезка `legacyPersonIds`):
-  2026-09-11 → ~2026-09-18. Откат — revert кода; данных восстанавливать нечего.
-  Первый прогон джоба 12.09 подтверждён (8 строк корзины из таблицы). После
-  окна — ветка `perf/speed16-graph-tombstones`.
-* **Фикстуры прод-смоука** (13.09): через ~30 дней в `hard_delete_run` ждать
-  `deletedPersons` ≈ 8/сутки вместо 12; остатки в смоук-дереве не копятся.
+(пусто — все сентябрьские окна закрыты 2026-11-26)
 
 ### Закрытые окна
+
+* **SPEED-15** (корзина/диагностика/сессии вне JSONB, 11.09 → 26.11): закрыто
+  без инцидентов. Read-only чекап прода 2026-11-26: `/ready` здоров
+  (`uptimeSeconds` ~12 сут, `recentErrors: []`), сервисы `rodnya-backend`/
+  `caddy`/`rodnya-livekit` active; блоб `pg_column_size(data)` = 298 КБ
+  (компактный JSON 1186 КБ, `version = 2168`, `users = 66`, `trees = 26`,
+  `semyi = 28`, `persons = 121`, `graphPersons = 190`, `storyRequests = 0`),
+  все 7 маркеров `migrationStatus` — `complete-v1`. Бэкап-таблицы
+  `_deleted_persons_backups`, `_client_diagnostics_backups`,
+  `_sessions_backups` оставлены на проде до отдельного «го» пользователя.
+* **SPEED-16** (сметание корзины в таблице, обрезка `legacyPersonIds`, 11.09 → 26.11)
+  и **Фикстуры прод-смоука** (13.09 → 26.11): закрыты без инцидентов. В
+  ежедневном `hard_delete_run` (22–26.11): `dryRun: false`,
+  `deleted.graphPersons = 6..8`, `deleted.deletedPersons = 3..4`,
+  `errors: []`, `durationMs: 72..1033`; остатки в смоук-дереве не копятся.
 
 * **SPEED-8b** (03.09 → 10.09): без инцидентов. 13.09 бэкап-таблица
   `rodnya_state_tree_change_backups` удалена (точечный дамп

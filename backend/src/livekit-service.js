@@ -113,6 +113,51 @@ class LiveKitService {
     };
   }
 
+  async listRooms(names = undefined) {
+    this.ensureConfigured();
+    if (Array.isArray(names) && names.length > 0) {
+      return this.roomServiceClient.listRooms(names);
+    }
+    return this.roomServiceClient.listRooms();
+  }
+
+  async removeParticipant(roomName, identity) {
+    this.ensureConfigured();
+    const room = String(roomName || "").trim();
+    const participantIdentity = String(identity || "").trim();
+    if (!room || !participantIdentity) {
+      return false;
+    }
+    try {
+      await this.roomServiceClient.removeParticipant(room, participantIdentity);
+      return true;
+    } catch (error) {
+      const msg = String(error?.message || "").toLowerCase();
+      if (msg.includes("not found") || msg.includes("does not exist")) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async deleteRoom(roomName) {
+    this.ensureConfigured();
+    const room = String(roomName || "").trim();
+    if (!room) {
+      return false;
+    }
+    try {
+      await this.roomServiceClient.deleteRoom(room);
+      return true;
+    } catch (error) {
+      const msg = String(error?.message || "").toLowerCase();
+      if (msg.includes("not found") || msg.includes("does not exist")) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   async receiveWebhook(body, authHeader = "") {
     if (this.webhookReceiver) {
       return this.webhookReceiver.receive(body, authHeader || undefined);

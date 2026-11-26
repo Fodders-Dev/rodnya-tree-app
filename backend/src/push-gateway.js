@@ -163,10 +163,14 @@ class PushGateway {
         lastError: null,
       });
     } catch (error) {
+      const status = Number(error?.statusCode || 0);
+      if (status === 404 || status === 410) {
+        await this._pruneStaleDevice(device, notification.userId);
+      }
       await this.store.updatePushDelivery(delivery.id, {
         status: "failed",
         lastError: error?.message || String(error),
-        responseCode: Number(error?.statusCode || 0) || null,
+        responseCode: status || null,
       });
     }
   }
@@ -221,6 +225,7 @@ class PushGateway {
     return {
       TTL: this._notificationTtlSeconds(notification),
       urgency: this._notificationUrgency(notification),
+      timeout: 8000,
     };
   }
 

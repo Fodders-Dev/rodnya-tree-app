@@ -36,13 +36,16 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             return _buildTreeState(
               icon: Icons.account_tree_outlined,
               title: 'Круг пока пустой',
-              message: 'Добавьте первого человека в этот круг.',
+              message: _isViewerOnly
+                  ? 'В этом круге пока нет участников.'
+                  : 'Добавьте первого человека в этот круг.',
               actions: [
-                FilledButton.icon(
-                  onPressed: () => _navigateToAddRelative(selectedTreeId),
-                  icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('Добавить'),
-                ),
+                if (!_isViewerOnly)
+                  FilledButton.icon(
+                    onPressed: () => _navigateToAddRelative(selectedTreeId),
+                    icon: const Icon(Icons.person_add_alt_1),
+                    label: const Text('Добавить'),
+                  ),
                 OutlinedButton.icon(
                   onPressed: () => _retryCurrentTree(selectedTreeId),
                   icon: const Icon(Icons.refresh),
@@ -465,7 +468,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           // FAB «Добавить» (Telegram-стиль). Дубль-кнопку из тулбара убираем
           // (оба входа звали один _startAddRelativeFlow). На десктопе
           // (!compact) тулбар-кнопку оставляем как есть.
-          if (!compact) ...[
+          if (!compact && !_isViewerOnly) ...[
             const SizedBox(width: 10),
             _buildTreeToolbarIconButton(
               icon: Icons.person_add_alt_1_outlined,
@@ -479,19 +482,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               emphasized: true,
             ),
           ],
-          // Selection mode toggle — top-level visible icon instead
-          // of buried in the «...» overflow. This is the user's
-          // primary tool for slicing the tree («выделить мамину
-          // линию и одной кнопкой собрать ветку»), so hiding it
-          // behind a popup made it functionally invisible. When
-          // active the button shows the close glyph + accent fill
-          // so the user has a clear "exit selection" affordance
-          // without hunting through the menu.
-          //
-          // On compact viewports we drop the visible button (the
-          // toolbar Row would overflow) and rely on the overflow
-          // popup-menu entry — same selection flow, one extra tap.
-          if (!compact)
+          if (!compact && !_isViewerOnly)
             _buildTreeToolbarIconButton(
               icon: _isSelectionMode
                   ? Icons.close_rounded
@@ -517,7 +508,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           // UX-T1.2 FR-c: «Расставить карточки» (репозиция) — вторичное
           // действие; на телефоне живёт в overflow «•••» (toggleEditMode),
           // на десктопе остаётся видимой кнопкой тулбара.
-          if (!compact)
+          if (!compact && !_isViewerOnly)
             _buildTreeToolbarIconButton(
               icon: _isEditMode ? Icons.visibility_outlined : Icons.open_with,
               tooltip:
@@ -871,19 +862,20 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         compact: compact,
         onPressed: () => context.push('/post/create'),
       ),
-      _buildTreeActionButton(
-        icon: _isEditMode ? Icons.edit_off_outlined : Icons.open_with_rounded,
-        label: _isEditMode ? 'Готово' : 'Расставить',
-        compact: compact,
-        onPressed: () {
-          _updateSectionState(() {
-            _isEditMode = !_isEditMode;
-            if (!_isEditMode) {
-              _selectedEditPersonId = null;
-            }
-          });
-        },
-      ),
+      if (!_isViewerOnly)
+        _buildTreeActionButton(
+          icon: _isEditMode ? Icons.edit_off_outlined : Icons.open_with_rounded,
+          label: _isEditMode ? 'Готово' : 'Расставить',
+          compact: compact,
+          onPressed: () {
+            _updateSectionState(() {
+              _isEditMode = !_isEditMode;
+              if (!_isEditMode) {
+                _selectedEditPersonId = null;
+              }
+            });
+          },
+        ),
       if (branchRootPerson != null)
         _buildTreeActionButton(
           icon: Icons.alt_route_outlined,
@@ -1473,19 +1465,23 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   _manualNodePositions.isNotEmpty && _currentTreeId != null
                       ? () => _resetManualTreeLayout(_currentTreeId!)
                       : null,
-              onAddRelativeTapWithType: _handleAddRelativeFromTree,
+              onAddRelativeTapWithType:
+                  _isViewerOnly ? (_, __) {} : _handleAddRelativeFromTree,
               currentUserIsInTree: _currentUserIsInTree,
-              onAddSelfTapWithType: _handleAddSelfFromTree,
+              onAddSelfTapWithType:
+                  _isViewerOnly ? (_, __) {} : _handleAddSelfFromTree,
               // Edge-first connector — long-press a card, drag to
               // another, pick a relation type from the inline
               // 4-icon picker. The handler talks to family service
               // directly and reloads on success; no form involved.
-              onConnectExistingPersons: _handleConnectExistingFromTree,
+              onConnectExistingPersons:
+                  _isViewerOnly ? null : _handleConnectExistingFromTree,
               // Blank-card creator — drop a person on the canvas
               // with no relation. The user fills name + gender in
               // a small dialog, we create them via the service,
               // and they then connect via the connector above.
-              onAddBlankPerson: _handleAddBlankPersonFromTree,
+              onAddBlankPerson:
+                  _isViewerOnly ? null : _handleAddBlankPersonFromTree,
               // Auto-recenter trigger: after addRelative succeeds
               // we stamp the new person id here, the tree picks
               // it up via didUpdateWidget and snaps to center.
@@ -1830,15 +1826,19 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                             onPressed: () => _openPersonDetails(person),
                             emphasized: true,
                           ),
-                          const SizedBox(width: 8),
-                          _buildTreeSheetAction(
-                            icon: Icons.chat_bubble_outline_rounded,
-                            label: 'Написать',
-                            onPressed: () => _openPersonDetails(
-                              person,
-                              action: 'chat',
+                          if (person.userId != null &&
+                              person.userId!.isNotEmpty &&
+                              person.userId != _authService.currentUserId &&
+                              person.isAlive &&
+                              person.deathDate == null) ...[
+                            const SizedBox(width: 8),
+                            _buildTreeSheetAction(
+                              icon: Icons.chat_bubble_outline_rounded,
+                              label: 'Написать',
+                              onPressed: () =>
+                                  context.push('/chat/${person.userId}'),
                             ),
-                          ),
+                          ],
                           const SizedBox(width: 8),
                           _buildTreeSheetAction(
                             icon: Icons.history_outlined,
@@ -1851,13 +1851,15 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                             label: _isFriendsTree ? 'Круг' : 'Ветка',
                             onPressed: () => _focusBranch(person),
                           ),
-                          const SizedBox(width: 8),
-                          _buildTreeSheetAction(
-                            icon: Icons.person_add_alt_1_outlined,
-                            label: 'Связь',
-                            onPressed: () =>
-                                _showTreePersonRelationSheet(person),
-                          ),
+                          if (!_isViewerOnly) ...[
+                            const SizedBox(width: 8),
+                            _buildTreeSheetAction(
+                              icon: Icons.person_add_alt_1_outlined,
+                              label: 'Связь',
+                              onPressed: () =>
+                                  _showTreePersonRelationSheet(person),
+                            ),
+                          ],
                           const SizedBox(width: 8),
                           // Phase 4: «Кем мы приходимся?» — BFS over the
                           // unified-graph blood-relation edges. Hidden
@@ -2053,9 +2055,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 label: hasGallery
                     ? 'Фото (${person.photoGallery.length})'
                     : 'Фото',
-                onPressed: hasGallery
-                    ? () => _openPersonDetails(person, action: 'gallery')
-                    : null,
+                onPressed: hasGallery ? () => _openPersonDetails(person) : null,
               ),
               const SizedBox(width: 8),
               _buildTreeSheetAction(
@@ -2349,22 +2349,24 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         icon: Icons.post_add_outlined,
         label: _isFriendsTree ? 'Пост в круг' : 'Новый пост',
       ),
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.toggleEditMode,
-        icon: _isEditMode ? Icons.edit_off_outlined : Icons.edit_outlined,
-        label: _isEditMode
-            ? 'Выключить перемещение карточек'
-            : 'Включить перемещение карточек',
-      ),
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.toggleSelectionMode,
-        icon: _isSelectionMode
-            ? Icons.check_box_outlined
-            : Icons.check_box_outline_blank,
-        label: _isSelectionMode
-            ? 'Выйти из режима выбора'
-            : 'Выбрать несколько человек',
-      ),
+      if (!_isViewerOnly) ...[
+        _buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.toggleEditMode,
+          icon: _isEditMode ? Icons.edit_off_outlined : Icons.edit_outlined,
+          label: _isEditMode
+              ? 'Выключить перемещение карточек'
+              : 'Включить перемещение карточек',
+        ),
+        _buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.toggleSelectionMode,
+          icon: _isSelectionMode
+              ? Icons.check_box_outlined
+              : Icons.check_box_outline_blank,
+          label: _isSelectionMode
+              ? 'Выйти из режима выбора'
+              : 'Выбрать несколько человек',
+        ),
+      ],
     ]);
 
     if (branchRootPerson != null) {
@@ -2532,30 +2534,40 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                       ),
                 ),
                 const SizedBox(height: 14),
-                for (final tree in candidates)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: CircleAvatar(
-                      backgroundColor:
-                          Theme.of(sheetContext).colorScheme.primary,
-                      child: Icon(
-                        tree.isFriendsTree
-                            ? Icons.diversity_3_outlined
-                            : Icons.account_tree,
-                        color: Colors.white,
-                      ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final tree in candidates)
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: CircleAvatar(
+                              backgroundColor:
+                                  Theme.of(sheetContext).colorScheme.primary,
+                              child: Icon(
+                                tree.isFriendsTree
+                                    ? Icons.diversity_3_outlined
+                                    : Icons.account_tree,
+                                color: Colors.white,
+                              ),
+                            ),
+                            title: Text(
+                              tree.name,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            subtitle: Text(
+                              tree.isPrivate ? 'Приватная' : 'Публичная',
+                              style: Theme.of(sheetContext).textTheme.bodySmall,
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: () => Navigator.of(sheetContext).pop(tree),
+                          ),
+                      ],
                     ),
-                    title: Text(
-                      tree.name,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text(
-                      tree.isPrivate ? 'Приватная' : 'Публичная',
-                      style: Theme.of(sheetContext).textTheme.bodySmall,
-                    ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => Navigator.of(sheetContext).pop(tree),
                   ),
+                ),
               ],
             ),
           ),

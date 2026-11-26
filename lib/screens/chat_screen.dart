@@ -1280,12 +1280,17 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final outgoingIdsToRemove = <String>{};
+    var failedCount = 0;
     for (final message in selectedMessages) {
       if (message.remoteMessageId != null) {
-        await _chatService.deleteChatMessage(
-          chatId: chatId,
-          messageId: message.remoteMessageId!,
-        );
+        try {
+          await _chatService.deleteChatMessage(
+            chatId: chatId,
+            messageId: message.remoteMessageId!,
+          );
+        } catch (_) {
+          failedCount += 1;
+        }
         continue;
       }
       if (message.outgoingLocalId != null) {
@@ -1300,6 +1305,17 @@ class _ChatScreenState extends State<ChatScreen> {
       await _sendQueue.remove(chatId, outgoingId);
     }
     _selectionController.clear();
+    if (failedCount > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            failedCount == 1
+                ? 'Не удалось удалить сообщение.'
+                : 'Не удалось удалить часть сообщений ($failedCount).',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _bootstrapChat() async {
@@ -3527,13 +3543,20 @@ class _ChatScreenState extends State<ChatScreen> {
     await _focusMessageById(anchorId);
   }
 
+  bool _isIncomingMessageUnread(ChatMessage message) {
+    if (message.senderId == _currentUserId || message.isRead) {
+      return false;
+    }
+    final uid = _currentUserId;
+    if (uid != null && uid.isNotEmpty && message.readBy.contains(uid)) {
+      return false;
+    }
+    return true;
+  }
+
   void _updateUnreadAnchor(List<ChatMessage> remoteMessages) {
-    final unreadIncoming = remoteMessages
-        .where(
-          (message) =>
-              message.senderId != _currentUserId && message.isRead == false,
-        )
-        .toList();
+    final unreadIncoming =
+        remoteMessages.where(_isIncomingMessageUnread).toList();
     if (unreadIncoming.isNotEmpty) {
       _unreadAnchorMessageId = unreadIncoming.last.id;
     }
@@ -4594,11 +4617,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 )
                 .toList(growable: false)
             : const <ChatMessageSearchResult>[];
-        final hasUnreadIncoming = !hasActiveSearch &&
-            remoteMessages.any(
-              (message) =>
-                  message.senderId != _currentUserId && message.isRead == false,
-            );
+        final hasUnreadIncoming =
+            !hasActiveSearch && remoteMessages.any(_isIncomingMessageUnread);
         if (!hasActiveSearch) {
           _updateUnreadAnchor(remoteMessages);
         }
@@ -5918,7 +5938,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   bool _differentLocalDay(DateTime a, DateTime b) {
-    return a.year != b.year || a.month != b.month || a.day != b.day;
+    final localA = toLocalForDisplay(a);
+    final localB = toLocalForDisplay(b);
+    return localA.year != localB.year ||
+        localA.month != localB.month ||
+        localA.day != localB.day;
   }
 
   Widget _buildDateDivider(DateTime timestamp) {
@@ -9549,6 +9573,12 @@ class _ChatBubble extends StatelessWidget {
         a.type != ChatAttachmentType.image &&
         a.type != ChatAttachmentType.video);
     if (hasNonMediaRemote) return false;
+    final hasNonMediaLocal = localAttachments.any((file) {
+      final kind = _attachmentKindFromXFile(file);
+      return kind != _ChatAttachmentKind.image &&
+          kind != _ChatAttachmentKind.video;
+    });
+    if (hasNonMediaLocal) return false;
     final hasAnyMedia =
         remoteAttachments.isNotEmpty || localAttachments.isNotEmpty;
     return hasAnyMedia;
@@ -9891,6 +9921,27 @@ class _ChatBubble extends StatelessWidget {
                           !_isVideoNoteOnly) ...[
                         const SizedBox(height: 2),
                         metaRow,
+                      ] else if (!inlineMeta && _isNakedMediaOnly) ...[
+                        const SizedBox(height: 4),
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            child: DefaultTextStyle.merge(
+                              style: const TextStyle(color: Colors.white),
+                              child: IconTheme.merge(
+                                data: const IconThemeData(color: Colors.white),
+                                child: metaRow,
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                       if (footerLabel != null &&
                           footerLabel!.isNotEmpty &&

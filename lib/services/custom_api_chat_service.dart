@@ -19,6 +19,7 @@ import '../models/chat_message_search_result.dart';
 import '../models/chat_messages_page.dart';
 import '../models/chat_preview.dart';
 import '../models/chat_send_progress.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import '../utils/voice_waveform.dart';
 import 'app_status_service.dart';
@@ -1867,8 +1868,8 @@ class CustomApiChatService
       if (serverIds.contains(message.id)) {
         return true;
       }
-      final strictlyInsideWindow =
-          message.timestamp.isAfter(oldest) && message.timestamp.isBefore(newest);
+      final strictlyInsideWindow = message.timestamp.isAfter(oldest) &&
+          message.timestamp.isBefore(newest);
       return !strictlyInsideWindow;
     }).toList(growable: false);
   }
@@ -1941,6 +1942,7 @@ class CustomApiChatService
       'senderName': message['senderName'],
       'clientMessageId': message['clientMessageId'],
       'expiresAt': message['expiresAt'],
+      'call': message['call'],
       'replyTo': message['replyTo'],
       'reactions': message['reactions'],
       'deliveredTo': message['deliveredTo'],
@@ -2010,39 +2012,40 @@ class CustomApiChatService
             ? 'chat-voice/$userId'
             : 'chat-media/$userId',
       );
-      if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
-        final attachmentType = _attachmentTypeForFile(attachment, uploadedUrl);
-        final presentation = _attachmentPresentationForFile(
-          attachment,
-          attachmentType,
-        );
-        final metadata = await _buildAttachmentMetadata(
-          attachment,
-          attachmentType,
-        );
-        // V4 (ревью FR3): для исходящего видео генерим постер (первый кадр)
-        // и грузим его — thumbnailUrl уезжает в сообщении, поэтому превью
-        // видят и отправитель, и получатель. Best-effort: нет постера →
-        // остаётся тёмная плитка с play-иконкой.
-        final thumbnailUrl = attachmentType == ChatAttachmentType.video
-            ? await _buildVideoPosterUrl(attachment, storageService, userId)
-            : null;
-        uploadedAttachments.add(
-          ChatAttachment(
-            type: attachmentType,
-            url: uploadedUrl,
-            presentation: presentation,
-            mimeType: attachment.mimeType,
-            fileName: _attachmentFileName(attachment, uploadedUrl),
-            sizeBytes: await attachment.length(),
-            durationMs: metadata.durationMs,
-            waveform: metadata.waveform,
-            width: metadata.width,
-            height: metadata.height,
-            thumbnailUrl: thumbnailUrl,
-          ),
-        );
+      if (uploadedUrl == null || uploadedUrl.isEmpty) {
+        throw const CustomApiException('Не удалось загрузить вложение.');
       }
+      final attachmentType = _attachmentTypeForFile(attachment, uploadedUrl);
+      final presentation = _attachmentPresentationForFile(
+        attachment,
+        attachmentType,
+      );
+      final metadata = await _buildAttachmentMetadata(
+        attachment,
+        attachmentType,
+      );
+      // V4 (ревью FR3): для исходящего видео генерим постер (первый кадр)
+      // и грузим его — thumbnailUrl уезжает в сообщении, поэтому превью
+      // видят и отправитель, и получатель. Best-effort: нет постера →
+      // остаётся тёмная плитка с play-иконкой.
+      final thumbnailUrl = attachmentType == ChatAttachmentType.video
+          ? await _buildVideoPosterUrl(attachment, storageService, userId)
+          : null;
+      uploadedAttachments.add(
+        ChatAttachment(
+          type: attachmentType,
+          url: uploadedUrl,
+          presentation: presentation,
+          mimeType: attachment.mimeType,
+          fileName: _attachmentFileName(attachment, uploadedUrl),
+          sizeBytes: await attachment.length(),
+          durationMs: metadata.durationMs,
+          waveform: metadata.waveform,
+          width: metadata.width,
+          height: metadata.height,
+          thumbnailUrl: thumbnailUrl,
+        ),
+      );
       onProgress?.call(
         ChatSendProgress(
           stage: ChatSendProgressStage.uploading,
@@ -2300,10 +2303,13 @@ class CustomApiChatService
       );
     }
 
-    final dynamic decoded = jsonDecode(response.body);
-    final payload = decoded is Map<String, dynamic>
-        ? decoded
-        : <String, dynamic>{'data': decoded};
+    final payload = tryDecodeJsonMap(response.body);
+    if (payload == null) {
+      throw CustomApiException(
+        'Сервер вернул некорректный ответ (${response.statusCode})',
+        statusCode: response.statusCode,
+      );
+    }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return payload;
@@ -2359,13 +2365,8 @@ class CustomApiChatService
   Future<bool> _handleSessionError(Object error) async {
     final isUnauthorized = error is CustomApiException &&
         (error.statusCode == 401 ||
-            error.statusCode == 403 ||
             error.message.contains('Нет активной customApi session'));
-    final normalized = error.toString().toLowerCase();
-    final looksLikeExpiredSession = normalized.contains('сесс') ||
-        normalized.contains('unauthorized') ||
-        normalized.contains('expired');
-    if (!isUnauthorized && !looksLikeExpiredSession) {
+    if (!isUnauthorized) {
       return false;
     }
 

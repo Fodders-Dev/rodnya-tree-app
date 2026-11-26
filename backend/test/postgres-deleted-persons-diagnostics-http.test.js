@@ -66,6 +66,7 @@ async function startTestServer(extraState = {}) {
       {token: "tok-admin-1", refreshToken: "r3", userId: "admin-1", createdAt: "2026-08-01T10:00:00.000Z"},
     ],
     semyi: [{id: "semya-1", name: "Семья", createdAt: "2026-04-01T10:00:00.000Z"}],
+    trees: [{id: "tree-1", name: "Дерево", creatorId: "user-1", memberIds: ["user-1"], semyaId: "semya-1"}],
     semyaMembers: [
       {userId: "user-1", semyaId: "semya-1", hiddenAt: null},
     ],

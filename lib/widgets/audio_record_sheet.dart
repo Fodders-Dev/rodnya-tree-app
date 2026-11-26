@@ -57,6 +57,7 @@ class _AudioRecordSheet extends StatefulWidget {
 class _AudioRecordSheetState extends State<_AudioRecordSheet> {
   final ChatRecordingController _rec = ChatRecordingController();
   bool _capping = false;
+  bool _accepted = false;
 
   @override
   void initState() {
@@ -76,8 +77,10 @@ class _AudioRecordSheetState extends State<_AudioRecordSheet> {
   @override
   void dispose() {
     _rec.removeListener(_onTick);
-    // Release the mic / drop any in-flight recording.
-    _rec.cancelCurrent();
+    // Release the mic / drop any in-flight recording unless the user accepted it.
+    if (!_accepted) {
+      _rec.cancelCurrent();
+    }
     _rec.dispose();
     super.dispose();
   }
@@ -91,10 +94,14 @@ class _AudioRecordSheetState extends State<_AudioRecordSheet> {
   void _accept() {
     final file = _rec.previewFile;
     if (file == null) return;
+    final mimeType = _rec.preview?.mimeType ?? 'audio/m4a';
+    final durationSec = _rec.previewDurationSeconds;
+    _accepted = true;
+    _rec.completeSend();
     Navigator.of(context).pop(AudioRecordResult(
       file: file,
-      mimeType: _rec.preview?.mimeType ?? 'audio/m4a',
-      durationSec: _rec.previewDurationSeconds,
+      mimeType: mimeType,
+      durationSec: durationSec,
     ));
   }
 

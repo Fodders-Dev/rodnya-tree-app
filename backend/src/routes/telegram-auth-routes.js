@@ -187,12 +187,40 @@ function registerTelegramAuthRoutes(
     );
   });
 
+  const seenTelegramAuthCallbacks = new Map();
+  const TELEGRAM_REPLAY_WINDOW_MS = 10 * 60 * 1000;
+
+  function claimTelegramCallbackOnce(hash, intent) {
+    const key = `${String(hash || "").trim()}:${intent}`;
+    const now = Date.now();
+    if (seenTelegramAuthCallbacks.size > 5000) {
+      for (const [k, exp] of seenTelegramAuthCallbacks.entries()) {
+        if (exp <= now) {
+          seenTelegramAuthCallbacks.delete(k);
+        }
+      }
+      if (seenTelegramAuthCallbacks.size > 5000) {
+        const oldest = seenTelegramAuthCallbacks.keys().next().value;
+        if (oldest !== undefined) seenTelegramAuthCallbacks.delete(oldest);
+      }
+    }
+    const existingExpiry = seenTelegramAuthCallbacks.get(key);
+    if (existingExpiry && existingExpiry > now) {
+      return false;
+    }
+    seenTelegramAuthCallbacks.set(key, now + TELEGRAM_REPLAY_WINDOW_MS);
+    return true;
+  }
+
   app.get("/v1/auth/telegram/callback", async (req, res) => {
     try {
       const intent = String(req.query?.intent || "").trim().toLowerCase() === "link"
         ? "link"
         : "login";
       const telegramAuth = verifyTelegramLoginPayload(req.query || {});
+      if (!claimTelegramCallbackOnce(req.query?.hash, intent)) {
+        throw new Error("TELEGRAM_AUTH_EXPIRED");
+      }
       const telegramIdentity = buildTelegramIdentityFromAuth(telegramAuth);
       const linkedUser = await store.findUserByAuthIdentity(
         telegramIdentity.provider,
@@ -302,10 +330,7 @@ function registerTelegramAuthRoutes(
             return "Не удалось завершить вход через Telegram";
         }
       })();
-      const finalRedirect = typeof req.query?.finalRedirect === "string" &&
-          /^[a-z][a-z0-9+.-]*:\/\//.test(req.query.finalRedirect)
-        ? req.query.finalRedirect
-        : null;
+      const finalRedirect = sanitizeFinalRedirect(req.query?.finalRedirect, appUrl);
       if (finalRedirect) {
         const sep = finalRedirect.includes("?") ? "&" : "?";
         res.redirect(
