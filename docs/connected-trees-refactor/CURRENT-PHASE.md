@@ -15,6 +15,15 @@
   * Исправлены P0-баги экрана принятия приглашения (`/invite/:token`: неверный `invitation_accept`, очистка токена на терминальных кодах, переход на полученное дерево), диалог переименования семьи, переход в чат с `?relativeId=`, уведомления о приглашениях и `web/invite/index.html`.
   * Удалено 18 мёртвых файлов (`relative_profile_screen.dart`, `tree_node.dart`, `relation_request_screen.dart`, `semya_list_controller.dart`, `person_dossier_view.dart` и др.), очищены легаси-дефолты Supabase/RuStore, унифицирована терминология («Дерево» / «Семья»), профиль отделён от настроек (прямая шестерёнка, «Архив историй» в теле профиля, «Моя семья» и единый «Выйти» и «Поддержка» в настройках).
 
+* **Track 3 — Декомпозиция оставшихся 7 Flutter-монолитов (`6260052` + Phase 3B)**:
+  * `lib/services/custom_api_chat_service.dart`: **2 515 → 219 строк** + 5 модулей `lib/services/chat/*` (макс. 738).
+  * `lib/services/custom_api_notification_service.dart`: **2 383 → 252 строки** + 4 модуля `lib/services/notifications/*` (макс. 799).
+  * `lib/services/call_coordinator_service.dart`: **2 687 → 380 строк** + 5 модулей `lib/services/call_coordinator/*` (макс. 774).
+  * `lib/screens/create_post_screen.dart`: **2 243 → 328 строк** + 5 модулей `lib/screens/create_post/*` (макс. 870).
+  * `lib/screens/auth_screen.dart`: **2 517 → 297 строк** + 5 модулей `lib/screens/auth/*` (макс. 879).
+  * `lib/screens/relatives_screen.dart`: **2 405 → 371 строка** (удалён `relatives_screen_sections.dart`) + 5 модулей `lib/screens/relatives/*` (макс. 775).
+  * `lib/screens/relative_details_screen.dart`: **2 543 → 359 строк** (удалён `relative_details_screen_sections.dart`, 2 844 строк) + 8 модулей `lib/screens/relative_details/*` (макс. 971).
+
 ## Status update: 2026-11-26 (Waves 0–5: CI gate, package:web & декомпозиция монолитов)
 
 * **Wave 0 (`45875876751`)**: выпущен Android OTA `1.0.49+57` (сборка + загрузка APK проверены).
