@@ -50,12 +50,10 @@ async function runHardDeleteJob({store, config, runtimeInfo, override = {}} = {}
   // Effective dry-run: explicit override > firstRunDry > dryRun env.
   // firstRunDry интенсивно gates ALL runs до того как Артём flip'нет
   // env var (per DECISIONS.md 2026-05-18 rollout sequence).
-  const effectiveDryRun = Boolean(
-    override.dryRun ??
-      config.hardDeleteFirstRunDry ??
-      config.hardDeleteDryRun ??
-      false,
-  );
+  const effectiveDryRun =
+    override.dryRun !== undefined
+      ? Boolean(override.dryRun)
+      : Boolean(config.hardDeleteFirstRunDry || config.hardDeleteDryRun);
 
   try {
     const summary = await store.hardDeleteExpired({
@@ -158,6 +156,19 @@ function scheduleHardDeleteJob({store, config, runtimeInfo} = {}) {
   let intervalHandle = null;
   let firstTimeout = null;
   let stopped = false;
+  let inFlight = false;
+
+  const runGuarded = async () => {
+    if (stopped || inFlight) {
+      return;
+    }
+    inFlight = true;
+    try {
+      await runHardDeleteJob({store, config, runtimeInfo});
+    } finally {
+      inFlight = false;
+    }
+  };
 
   const bootstrap = (async () => {
     const firstDelay = await computeFirstDelayMs({store, config});
@@ -175,14 +186,14 @@ function scheduleHardDeleteJob({store, config, runtimeInfo} = {}) {
 
     firstTimeout = setTimeout(async () => {
       if (stopped) return;
-      await runHardDeleteJob({store, config, runtimeInfo}).catch((error) => {
+      await runGuarded().catch((error) => {
         if (runtimeInfo && typeof runtimeInfo.captureError === "function") {
           runtimeInfo.captureError("hard_delete_job_bootstrap", error);
         }
       });
       if (stopped) return;
       intervalHandle = setInterval(() => {
-        runHardDeleteJob({store, config, runtimeInfo}).catch((error) => {
+        runGuarded().catch((error) => {
           if (runtimeInfo && typeof runtimeInfo.captureError === "function") {
             runtimeInfo.captureError("hard_delete_job_interval", error);
           }

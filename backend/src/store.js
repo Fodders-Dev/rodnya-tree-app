@@ -7424,14 +7424,17 @@ class FileStore {
     const timestamp =
       when instanceof Date ? when.toISOString() : when || nowIso();
     try {
-      const db = await this._read();
-      const user = db.users.find((entry) => entry.id === normalizedUserId);
-      if (!user) {
-        return;
+      const updatedUser = await this._mutate((db, skip) => {
+        const user = db.users.find((entry) => entry.id === normalizedUserId);
+        if (!user) {
+          return skip(null);
+        }
+        user.lastSeenAt = timestamp;
+        return user;
+      });
+      if (updatedUser) {
+        this._rememberUser(updatedUser);
       }
-      user.lastSeenAt = timestamp;
-      this._rememberUser(user);
-      await this._write(db);
     } catch (_) {
       // Last-seen is a best-effort UX hint, not auth state.
     }
@@ -7787,50 +7790,45 @@ class FileStore {
   // libuv thread pool — same scrypt cost as login verify, so the
   // event loop stays responsive under concurrent resets.
   async updateUserPassword(userId, newPlaintextPassword) {
-    const db = await this._read();
-    const user = db.users.find((entry) => entry.id === userId);
-    if (!user) return false;
+    const existingUser = await this.findUserById(userId);
+    if (!existingUser) return false;
 
     const credentials = await hashPasswordAsync(
       String(newPlaintextPassword || ""),
     );
-    user.passwordHash = credentials.passwordHash;
-    user.passwordSalt = credentials.salt;
-    // Reset failed-login state so the user isn't still locked
-    // out with their fresh password. Common UX: "I locked myself
-    // out → reset my password → still locked".
-    user.failedLoginCount = 0;
-    user.lockedUntil = null;
-    user.updatedAt = nowIso();
+    let userSessionTokens = [];
+    const updated = await this._mutate((db, skip) => {
+      const user = db.users.find((entry) => entry.id === userId);
+      if (!user) return skip(false);
 
-    // Security hygiene: invalidate all existing sessions on
-    // password reset. If the user reset because they suspected
-    // compromise, leaving open sessions defeats the point. They'll
-    // re-login on each device. We MUST also evict the in-memory
-    // session cache (`_sessionCache`) — `db.sessions` is the
-    // persistent store, but requireAuth hits the cache first.
-    const userSessionTokens = (Array.isArray(db.sessions) ? db.sessions : [])
-      .filter((session) => session.userId === userId)
-      .map((session) => session.token);
-    db.sessions = (Array.isArray(db.sessions) ? db.sessions : []).filter(
-      (session) => session.userId !== userId,
-    );
+      user.passwordHash = credentials.passwordHash;
+      user.passwordSalt = credentials.salt;
+      user.failedLoginCount = 0;
+      user.lockedUntil = null;
+      user.updatedAt = nowIso();
+
+      const currentSessions = Array.isArray(db.sessions) ? db.sessions : [];
+      userSessionTokens = currentSessions
+        .filter((session) => session.userId === userId)
+        .map((session) => session.token);
+      db.sessions = currentSessions.filter(
+        (session) => session.userId !== userId,
+      );
+
+      if (Array.isArray(db.passwordResetTokens)) {
+        db.passwordResetTokens = db.passwordResetTokens.filter((entry) => {
+          if (entry.userId !== userId) return true;
+          if (entry.consumedAt) return true;
+          return false;
+        });
+      }
+      return true;
+    });
+    if (!updated) return false;
+    this._forgetUser(userId);
     for (const token of userSessionTokens) {
       this._forgetSession(token);
     }
-
-    // Drop any other unconsumed reset tokens for this user — once
-    // they've used one, the rest are stale and shouldn't sit
-    // around as latent attack surface.
-    if (Array.isArray(db.passwordResetTokens)) {
-      db.passwordResetTokens = db.passwordResetTokens.filter((entry) => {
-        if (entry.userId !== userId) return true;
-        if (entry.consumedAt) return true; // keep the one we just consumed for audit
-        return false;
-      });
-    }
-
-    await this._write(db);
     return true;
   }
 
@@ -9434,70 +9432,64 @@ class FileStore {
       throw new Error("INVALID_ACTOR");
     }
 
-    const db = await this._read();
-    this._lazyExpireInvitations(db, null);
-    const invitation = (db.semyaInvitations || []).find(
-      (inv) => inv.token === token,
-    );
-    if (!invitation) {
-      throw new Error("INVITATION_NOT_FOUND");
-    }
-    if (invitation.status !== "pending") {
-      throw new Error("INVITATION_NOT_PENDING");
-    }
-    // If invitation targets specific user, accepting user must match.
-    // Иначе (email/phone либо bare token mode) — any authenticated
-    // user with token can accept (token = capability).
-    if (
-      invitation.recipientUserId &&
-      invitation.recipientUserId !== acceptingUserId
-    ) {
-      throw new Error("WRONG_RECIPIENT");
-    }
+    return this._mutate((db) => {
+      this._lazyExpireInvitations(db, null);
+      const invitation = (db.semyaInvitations || []).find(
+        (inv) => inv.token === token,
+      );
+      if (!invitation) {
+        throw new Error("INVITATION_NOT_FOUND");
+      }
+      if (invitation.status !== "pending") {
+        throw new Error("INVITATION_NOT_PENDING");
+      }
+      if (
+        invitation.recipientUserId &&
+        invitation.recipientUserId !== acceptingUserId
+      ) {
+        throw new Error("WRONG_RECIPIENT");
+      }
 
-    const semya = (db.semyi || []).find(
-      (entry) => entry.id === invitation.semyaId && !entry.deletedAt,
-    );
-    if (!semya) {
-      throw new Error("SEMYA_NOT_FOUND");
-    }
+      const semya = (db.semyi || []).find(
+        (entry) => entry.id === invitation.semyaId && !entry.deletedAt,
+      );
+      if (!semya) {
+        throw new Error("SEMYA_NOT_FOUND");
+      }
 
-    // Atomic accept + membership create.
-    const now = nowIso();
-    invitation.status = "accepted";
-    invitation.acceptedAt = now;
+      const now = nowIso();
+      invitation.status = "accepted";
+      invitation.acceptedAt = now;
 
-    // Idempotent membership add — если already member (race либо
-    // hidden re-join), skip new row.
-    const existingMembership = (db.semyaMembers || []).find(
-      (m) =>
-        m.semyaId === invitation.semyaId &&
-        m.userId === acceptingUserId &&
-        !m.hiddenAt,
-    );
-    let membership;
-    if (existingMembership) {
-      membership = existingMembership;
-    } else {
-      membership = {
-        id: crypto.randomUUID(),
-        semyaId: invitation.semyaId,
-        userId: acceptingUserId,
-        role: invitation.role,
-        joinedAt: now,
-        invitedByUserId: invitation.inviterUserId,
-        hasInviteGrant: false,
-        hiddenAt: null,
+      const existingMembership = (db.semyaMembers || []).find(
+        (m) =>
+          m.semyaId === invitation.semyaId &&
+          m.userId === acceptingUserId &&
+          !m.hiddenAt,
+      );
+      let membership;
+      if (existingMembership) {
+        membership = existingMembership;
+      } else {
+        membership = {
+          id: crypto.randomUUID(),
+          semyaId: invitation.semyaId,
+          userId: acceptingUserId,
+          role: invitation.role,
+          joinedAt: now,
+          invitedByUserId: invitation.inviterUserId,
+          hasInviteGrant: false,
+          hiddenAt: null,
+        };
+        db.semyaMembers.push(membership);
+      }
+
+      semya.updatedAt = now;
+      return {
+        invitation: structuredClone(invitation),
+        membership: structuredClone(membership),
       };
-      db.semyaMembers.push(membership);
-    }
-
-    semya.updatedAt = now;
-    await this._write(db);
-    return {
-      invitation: structuredClone(invitation),
-      membership: structuredClone(membership),
-    };
+    });
   }
 
   async revokeInvitation({invitationId, actingUserId}) {
@@ -15059,56 +15051,53 @@ class FileStore {
     }
     if (!actorUserId) throw new Error("INVALID_ACTOR");
 
-    const db = await this._read();
-    const row = (db.deletedPersons || []).find(
-      (entry) => entry.id === deletedPersonId,
-    );
-    if (!row) throw new Error("DELETED_PERSON_NOT_FOUND");
-    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
-    const now = Date.now();
-    if (
-      row.hardDeleteScheduledAt &&
-      Date.parse(row.hardDeleteScheduledAt) < now
-    ) {
-      throw new Error("HARD_DELETE_ELAPSED");
-    }
-
-    // Permission: actor must be member of bound семя либо original
-    // deleter. Семя-less deletions allow original actor only.
-    const isOriginalActor = row.deletedByUserId === actorUserId;
-    let isSemyaMember = false;
-    if (row.semyaId) {
-      isSemyaMember = (db.semyaMembers || []).some(
-        (m) =>
-          m.userId === actorUserId &&
-          m.semyaId === row.semyaId &&
-          !m.hiddenAt,
+    return this._mutate((db) => {
+      const row = (db.deletedPersons || []).find(
+        (entry) => entry.id === deletedPersonId,
       );
-      // Защитный gate — если семя soft-deleted, restore would orphan
-      // (no membership context, no tree owner). Reject.
-      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
-      if (semya?.deletedAt) {
-        throw new Error("SEMYA_DELETED");
+      if (!row) throw new Error("DELETED_PERSON_NOT_FOUND");
+      if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+      const now = Date.now();
+      if (
+        row.hardDeleteScheduledAt &&
+        Date.parse(row.hardDeleteScheduledAt) < now
+      ) {
+        throw new Error("HARD_DELETE_ELAPSED");
       }
-    }
-    if (!isOriginalActor && !isSemyaMember) {
-      throw new Error("FORBIDDEN");
-    }
 
-    // Restore snapshot к live state.
-    db.persons = Array.isArray(db.persons) ? db.persons : [];
-    db.persons.push(structuredClone(row.snapshot));
-    if (Array.isArray(row.relationsSnapshot)) {
-      db.relations = Array.isArray(db.relations) ? db.relations : [];
-      for (const rel of row.relationsSnapshot) {
-        db.relations.push(structuredClone(rel));
+      const isOriginalActor = row.deletedByUserId === actorUserId;
+      let isSemyaMember = false;
+      if (row.semyaId) {
+        isSemyaMember = (db.semyaMembers || []).some(
+          (m) =>
+            m.userId === actorUserId &&
+            m.semyaId === row.semyaId &&
+            !m.hiddenAt,
+        );
+        const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
+        if (semya?.deletedAt) {
+          throw new Error("SEMYA_DELETED");
+        }
       }
-    }
+      if (!isOriginalActor && !isSemyaMember) {
+        throw new Error("FORBIDDEN");
+      }
 
-    // Restore tree.memberIds linkage если person had userId.
-    if (row.snapshot?.userId) {
-      const tree = db.trees.find((entry) => entry.id === row.treeId);
-      if (tree) {
+      const tree = (db.trees || []).find((entry) => entry.id === row.treeId);
+      if (!tree) {
+        throw new Error("TREE_NOT_FOUND");
+      }
+
+      db.persons = Array.isArray(db.persons) ? db.persons : [];
+      db.persons.push(structuredClone(row.snapshot));
+      if (Array.isArray(row.relationsSnapshot)) {
+        db.relations = Array.isArray(db.relations) ? db.relations : [];
+        for (const rel of row.relationsSnapshot) {
+          db.relations.push(structuredClone(rel));
+        }
+      }
+
+      if (row.snapshot?.userId) {
         tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
         if (!tree.memberIds.includes(row.snapshot.userId)) {
           tree.memberIds.push(row.snapshot.userId);
@@ -15120,26 +15109,25 @@ class FileStore {
         this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
         tree.updatedAt = nowIso();
       }
-    }
 
-    row.restoredAt = nowIso();
-    row.restoredByUserId = actorUserId;
+      row.restoredAt = nowIso();
+      row.restoredByUserId = actorUserId;
 
-    this._appendTreeChangeRecord(db, {
-      treeId: row.treeId,
-      actorId: actorUserId,
-      type: "person.restored",
-      personId: row.originalPersonId,
-      details: {
-        deletedPersonId: row.id,
-        deletedAt: row.deletedAt,
-      },
+      this._appendTreeChangeRecord(db, {
+        treeId: row.treeId,
+        actorId: actorUserId,
+        type: "person.restored",
+        personId: row.originalPersonId,
+        details: {
+          deletedPersonId: row.id,
+          deletedAt: row.deletedAt,
+        },
+      });
+      this._reconcilePersonIdentities(db);
+      ensureCirclesForTree(db, row.treeId);
+
+      return structuredClone(row);
     });
-    this._reconcilePersonIdentities(db);
-    ensureCirclesForTree(db, row.treeId);
-
-    await this._write(db);
-    return structuredClone(row);
   }
 
   /// Ship Q4a: explicit hard-purge of deleted person (skip 30d wait).
@@ -16717,19 +16705,19 @@ class FileStore {
   }
 
   async deletePushDevice(deviceId, userId) {
-    const db = await this._read();
-    const initialLength = db.pushDevices.length;
-    db.pushDevices = db.pushDevices.filter((entry) => {
-      return !(entry.id === deviceId && entry.userId === userId);
+    return this._mutate((db, skip) => {
+      const initialLength = db.pushDevices.length;
+      db.pushDevices = db.pushDevices.filter((entry) => {
+        return !(entry.id === deviceId && entry.userId === userId);
+      });
+
+      if (db.pushDevices.length === initialLength) {
+        return skip(false);
+      }
+
+      db.pushDeliveries = db.pushDeliveries.filter((entry) => entry.deviceId !== deviceId);
+      return true;
     });
-
-    if (db.pushDevices.length === initialLength) {
-      return false;
-    }
-
-    db.pushDeliveries = db.pushDeliveries.filter((entry) => entry.deviceId !== deviceId);
-    await this._write(db);
-    return true;
   }
 
   async createPushDelivery({
@@ -20036,11 +20024,9 @@ class FileStore {
         continue;
       }
       const chat = chatsById.get(messageChatId);
-      const participantIds = normalizeParticipantIds(
-        Array.isArray(message?.participants) && message.participants.length > 0
-          ? message.participants
-          : chat?.participantIds,
-      );
+      const participantIds = chat
+        ? normalizeParticipantIds(chat.participantIds)
+        : parseDirectParticipantsFromChatId(messageChatId);
       if (!participantIds.includes(normalizedUserId)) {
         continue;
       }
