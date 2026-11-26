@@ -1,4 +1,4 @@
-part of 'chat_screen.dart';
+part of '../chat_screen.dart';
 
 extension _ChatScreenScaffoldSections on _ChatScreenState {
   PreferredSizeWidget _buildChatAppBar(BuildContext context) {
