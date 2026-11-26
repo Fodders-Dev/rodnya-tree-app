@@ -2,7 +2,7 @@
 
 You are working on Rodnya, a Flutter family tree and private family social network.
 
-Your goal is to move the project to a reliable Android + web MVP as fast as possible without creating migration debt.
+Your goal is to iterate reliably on the production Android + Web app without creating migration debt.
 
 Use `Codex_rules.md` as the active execution overlay for response brevity, autopilot behavior, proactive bug hunting, MCP UI review, and large-plan execution.
 

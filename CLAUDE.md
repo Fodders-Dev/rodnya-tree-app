@@ -6,21 +6,23 @@
 
 ## Архитектура (карта, не читая 21k строк)
 
-- **Клиент**: Flutter, Dart SDK ≥2.17 <4.0 — **не использовать** фичи Dart 3
-  (patterns, class modifiers, records). provider + go_router. Экраны тонкие
-  (`lib/screens/`, крупные разбиты на `*_sections.dart`), логика в
-  `lib/services/` (customApi-адаптеры + клиентские кэши). Новые фичи —
-  аддитивно через capability-mixin интерфейсы в `lib/backend/interfaces/`.
-- **Бэкенд**: Node/Express (`backend/src/app.js` + `routes/`). Хранилище — ОДИН
-  JSONB-блоб (`public.rodnya_state`) через `FileStore` (`store.js`, 21k строк —
-  не читать целиком, только Grep/Explore) и `PostgresStore extends FileStore`.
-  Исключение: чат-коллекции (сообщения/реакции/черновики/пины) живут в
-  отдельных таблицах (SPEED-6), чаты зеркалятся в projection-таблицу.
-  Realtime — WS (`realtime-hub.js`), пуши — FCM (+legacy RuStore, web),
+- **Клиент**: Flutter, Dart SDK >=3.4.0 <4.0.0. `provider` + `go_router`. Экраны тонкие
+  (`lib/screens/`, крупные разбиты на `part`-модули в `lib/screens/<feature>/*`),
+  логика в `lib/services/` (customApi-адаптеры, разбитые на миксины и кэши).
+  Новые фичи — аддитивно через capability-миксин интерфейсы в `lib/backend/interfaces/`.
+- **Бэкенд**: Node/Express (`backend/src/app.js` + `routes/`). Хранилище —
+  `FileStore` (`backend/src/store.js` + 15 доменов `backend/src/store/domains/*`) и
+  `PostgresStore extends FileStore` (`backend/src/store/postgres/*`). Чат-коллекции,
+  история дерева и аудит удалений вынесены в отдельные таблицы (SPEED-6/8b),
+  чаты зеркалятся в projection-таблицу. Гостевые ссылки «Спросить историю v2»
+  обслуживаются SSR HTML+JS страницей `/story/:token` (`public-story-routes.js` +
+  `story-audio-service.js` с опциональным STT).
+  Realtime — WS (`realtime-hub.js`), пуши — FCM (+web/RuStore legacy),
   звонки — LiveKit.
 - **Федеративные семьи** включены в проде (`RODNYA_FEDERATED_SEMYI_ENABLED=true`):
-  доступ к привязанному дереву решает членство семьи; легаси-пути вступления
-  обязаны dual-write'ить членство (`_ensureSemyaMembershipForLegacyJoin`).
+  доступ к привязанному дереву решает членство семьи; `seedOnboarding` и создание
+  семейного дерева (`bindSemya: true`) сразу создают `Semya` и привязывают `tree.semyaId`,
+  а легаси-пути вступления dual-write'ят членство (`_ensureSemyaMembershipForLegacyJoin`).
 
 ## ⚠️ Прод и деплой
 
@@ -41,8 +43,8 @@
 ## Команды и Definition of Done
 
 - `flutter analyze` — чисто; `flutter test <затронутые>` — зелёные; перед push —
-  полный `flutter test` (~1413) и/или `npm --prefix backend test` (639, ~25с),
-  если менялся бэкенд.
+  полный `flutter test` (~1590+ тестов) и `npm --prefix backend test` (~840+ тестов).
+  Также работает CI-гейт `.github/workflows/flutter-ci.yml`.
 - **Голден-тесты**: падения на Windows ~2% — среда (эталоны из Linux-CI).
   ЗАПРЕЩЕНО `--update-goldens` локально (заблокировано hook'ом); регенерация —
   только workflow `regen-tree-goldens.yml`.

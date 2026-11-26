@@ -417,6 +417,67 @@ extension _TreeMutationsSection on _TreeViewScreenState {
     });
   }
 
+  Future<void> _refreshSemyaContext(String treeId) async {
+    final refreshed = await _resolveSemyaContextForTree(treeId);
+    if (!mounted || _currentTreeId != treeId) return;
+    _updateSectionState(() {
+      _currentSemyaContext = refreshed;
+    });
+    await _refreshHiddenPersonIdsForLoadedSemya(
+      treeId: treeId,
+      semyaContext: refreshed,
+    );
+  }
+
+  Future<void> _openOrBindSemyaForTree(String treeId) async {
+    final existing = _currentSemyaContext;
+    if (existing != null) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => SemyaDetailsScreen(semyaId: existing.semya.id),
+        ),
+      );
+      await _refreshSemyaContext(treeId);
+      return;
+    }
+
+    final service = _familyService;
+    if (service is! SemyaManageCapableFamilyTreeService) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Управление семьёй временно недоступно')),
+      );
+      return;
+    }
+
+    final rawName = _currentTreeMeta?.name.trim() ?? '';
+    final semyaName = rawName.isNotEmpty ? rawName : 'Моя семья';
+    try {
+      final created = await (service as SemyaManageCapableFamilyTreeService)
+          .createSemya(name: semyaName, treeId: treeId);
+      await _refreshSemyaContext(treeId);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => SemyaDetailsScreen(semyaId: created.id),
+        ),
+      );
+      await _refreshSemyaContext(treeId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(
+              error,
+              fallback: 'Не удалось настроить семью для этого дерева',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   Future<SemyaDetails?> _resolveSemyaContextForTree(String treeId) async {
     final service = _familyService;
     if (service is! SemyaCapableFamilyTreeService) return null;

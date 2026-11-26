@@ -400,12 +400,8 @@ void main() {
   });
 
   testWidgets(
-    'ProfileScreen renders the bottom «Выйти из аккаунта» button',
+    'ProfileScreen keeps topbar settings button, story archive in body, and no duplicate sign-out',
     (tester) async {
-      // Profile Redesign: the sign-out button is now a prominent
-      // surface at the tail of the profile, not just a popup-menu
-      // entry. We assert presence + redesign warm-coloured ink so the
-      // styling can't silently regress.
       final treeProvider = TreeProvider();
       await tester.pumpWidget(
         ChangeNotifierProvider<TreeProvider>.value(
@@ -416,8 +412,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text('Выйти из аккаунта', skipOffstage: false),
+        find.byKey(const Key('profile-settings-button')),
         findsOneWidget,
+      );
+      expect(
+        find.text('Архив историй', skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Выйти из аккаунта', skipOffstage: false),
+        findsNothing,
       );
     },
   );

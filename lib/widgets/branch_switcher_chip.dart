@@ -235,7 +235,7 @@ class _BranchSwitcherSheet extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              'Ветки',
+              'Деревья и круги',
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w800,
                 color: tokens.ink,
@@ -243,7 +243,7 @@ class _BranchSwitcherSheet extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              'Каждая ветка — отдельная лента, отдельные истории, отдельные родственники.',
+              'У каждого дерева или круга — свои родные, лента и истории.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: tokens.inkSecondary,
                 height: 1.35,
@@ -277,7 +277,7 @@ class _BranchSwitcherSheet extends StatelessWidget {
                 outerContext.push('/trees');
               },
               icon: const Icon(Icons.add_rounded, size: 20),
-              label: const Text('Создать или управлять ветками'),
+              label: const Text('Создать или управлять деревьями'),
             ),
           ],
         ),

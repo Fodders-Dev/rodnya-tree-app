@@ -16,11 +16,11 @@ class StorefrontConfig {
   );
   static const String _reviewEnv = String.fromEnvironment(
     'RODNYA_ENABLE_RUSTORE_REVIEW',
-    defaultValue: 'true',
+    defaultValue: 'false',
   );
   static const String _updatesEnv = String.fromEnvironment(
     'RODNYA_ENABLE_RUSTORE_UPDATES',
-    defaultValue: 'true',
+    defaultValue: 'false',
   );
 
   final String storeId;
@@ -33,8 +33,8 @@ class StorefrontConfig {
   static StorefrontConfig get current => StorefrontConfig(
         storeId: _normalizeStoreId(_storeIdEnv),
         enableRustoreBilling: _parseBool(_billingEnv, fallback: false),
-        enableRustoreReview: _parseBool(_reviewEnv, fallback: true),
-        enableRustoreUpdates: _parseBool(_updatesEnv, fallback: true),
+        enableRustoreReview: _parseBool(_reviewEnv, fallback: false),
+        enableRustoreUpdates: _parseBool(_updatesEnv, fallback: false),
       );
 
   static String _normalizeStoreId(String rawValue) {

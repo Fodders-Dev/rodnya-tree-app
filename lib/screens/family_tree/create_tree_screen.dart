@@ -250,7 +250,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Новая ветка')),
+      appBar: AppBar(title: const Text('Новое дерево')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Form(
@@ -268,7 +268,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
               Text(
                 _treeKind == TreeKind.friends
                     ? 'Назовите круг — людей добавите потом.'
-                    : 'Назовите ветку — родных добавите потом.',
+                    : 'Назовите дерево — родных добавите потом.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 16),
@@ -311,7 +311,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
               Text(
                 _treeKind == TreeKind.friends
                     ? 'Близкий круг без родственных связей — раскладка вручную.'
-                    : 'Ветка — срез общего дерева: «Кровная родня», «Семья жены», «Папина линия».',
+                    : 'Семейное дерево: «Семья Ивановых», «Папина линия» и др.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 12),
@@ -357,7 +357,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
               // согласно требованиям выбранного rule type.
               if (_treeKind == TreeKind.family) ...[
                 Text(
-                  'Какую ветку строим?',
+                  'Кого включить в дерево?',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -415,10 +415,10 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                 decoration: InputDecoration(
                   labelText: _treeKind == TreeKind.friends
                       ? 'Название круга друзей'
-                      : 'Название ветки',
+                      : 'Название дерева',
                   hintText: _treeKind == TreeKind.friends
                       ? 'Например: Наш круг'
-                      : 'Например: Семья Ивановых, Кровная родня, Папина линия',
+                      : 'Например: Семья Ивановых, Папина линия',
                   prefixIcon: Icon(
                     _treeKind == TreeKind.friends
                         ? Icons.diversity_3_outlined
@@ -429,7 +429,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                   if (value == null || value.trim().isEmpty) {
                     return _treeKind == TreeKind.friends
                         ? 'Введите название круга друзей'
-                        : 'Введите название ветки';
+                        : 'Введите название дерева';
                   }
                   return null;
                 },
@@ -456,12 +456,13 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                     _isPrivate = value;
                   });
                 },
-                title:
-                    Text(_isPrivate ? 'Приватная ветка' : 'Публичная ветка'),
+                title: Text(
+                  _isPrivate ? 'Приватное дерево' : 'Публичное дерево',
+                ),
                 subtitle: Text(
                   _isPrivate
-                      ? 'Её увидят только приглашённые участники.'
-                      : 'Её можно будет открывать по ссылке.',
+                      ? 'Его увидят только приглашённые участники.'
+                      : 'Его можно будет открывать по ссылке.',
                 ),
               ),
               const SizedBox(height: 24),
@@ -684,9 +685,7 @@ class _AnchorPersonPicker extends StatelessWidget {
           OutlinedButton.icon(
             icon: const Icon(Icons.person_search),
             label: const Text('Выбрать человека'),
-            onPressed: hasService
-                ? () => _openPicker(context)
-                : null,
+            onPressed: hasService ? () => _openPicker(context) : null,
           ),
       ],
     );
@@ -750,9 +749,9 @@ class _AnchorPickerSheetState extends State<_AnchorPickerSheet> {
       _error = null;
     });
     try {
-      final results = await (service as
-              CrossTreePersonSearchCapableFamilyTreeService)
-          .searchPersonsAcrossOwnTrees(query: trimmed, limit: 20);
+      final results =
+          await (service as CrossTreePersonSearchCapableFamilyTreeService)
+              .searchPersonsAcrossOwnTrees(query: trimmed, limit: 20);
       if (!mounted) return;
       setState(() {
         // Filter out results without identityId — wizard'у нужно

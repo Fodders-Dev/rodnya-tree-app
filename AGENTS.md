@@ -74,13 +74,12 @@ Use Playwright only for web smoke tests, not for Android-native flows.
 
 ## Project status
 
-Post-MVP. Connected-trees-refactor shipped through Phase 6 (commit
-`414b218`, 2026-05-14). Active observation windows: Phase 4 flag
-removal pending ~2026-05-17, Phase 6 metrics ~2026-05-28. See
-[docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md)
-для текущего state и pending design calls.
+Active post-MVP product iteration in production (152-FZ Russian VPS +
+custom API + PostgreSQL + LiveKit). Connected-trees-refactor (Phases 1–6),
+monolith decomposition Waves 2–4, Ask a Story v2 (`/story/:token` SSR +
+audio/photo/transcript), and automatic `Semya` onboarding/tree binding are
+shipped. See [docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md)
+for the latest state.
 
-The 2026-04 «MVP web blockers» list lived в this section;
-historical context осталось в [docs/mvp_web_audit_2026-04-09.md](docs/mvp_web_audit_2026-04-09.md)
-(FROZEN). Большинство blockers были closed pre-Phase-3 либо
-superseded by connected-trees-refactor.
+The 2026-04 «MVP web blockers» list is historical; context lives in
+[docs/mvp_web_audit_2026-04-09.md](docs/mvp_web_audit_2026-04-09.md) (FROZEN).

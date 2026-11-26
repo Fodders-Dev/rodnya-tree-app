@@ -2099,7 +2099,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           inviteUrl: inviteUrl,
           message: isFriendsTree
               ? 'Присоединяйтесь к нашему кругу друзей в Родне! ${inviteUrl.toString()}'
-              : 'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
+              : 'Присоединяйтесь к нашему семейному дереву в Родне! ${inviteUrl.toString()}',
           subject: isFriendsTree
               ? 'Приглашение в круг друзей'
               : 'Приглашение в Родню',

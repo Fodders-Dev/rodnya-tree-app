@@ -15,6 +15,7 @@ import '../backend/interfaces/bulk_import_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
+import '../backend/interfaces/semya_manage_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
 import '../backend/models/semya.dart';
 import '../backend/models/identity_field_conflict.dart';

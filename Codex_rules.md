@@ -39,7 +39,7 @@
 - After each meaningful wave:
   - run `dart format` on changed Dart files
   - run `flutter analyze`
-  - run `flutter build web --no-wasm-dry-run`
+  - run `flutter build web` (for served web verification)
   - run a quick web smoke pass when relevant
 - If something cannot be verified, state the exact reason.
 

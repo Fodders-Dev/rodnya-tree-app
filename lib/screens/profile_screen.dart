@@ -27,7 +27,6 @@ import '../widgets/empty_state_widget.dart';
 import '../widgets/media_lightbox.dart';
 import '../widgets/profile_redesign.dart';
 import '../widgets/profile_edit_sheet.dart';
-import '../widgets/sign_out_confirmation_dialog.dart';
 import '../widgets/story_rail.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
@@ -284,24 +283,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         // No GoRouter — nothing to clear.
       }
     });
-  }
-
-  Future<void> _signOut() async {
-    // Ship Q3 (2026-05-26): confirmation gate ПЕРЕД destructive signOut.
-    // UX audit 2026-05-25 Critical #1: «tapping Выйти immediately logged
-    // out without confirmation, caused session loss during audit».
-    final confirmed = await showSignOutConfirmationDialog(
-      context,
-      _authService,
-    );
-    if (!confirmed || !mounted) return;
-    await _authService.signOut();
-    if (GetIt.I.isRegistered<TreeProvider>()) {
-      await GetIt.I<TreeProvider>().clearSelection();
-    }
-    if (mounted) {
-      context.go('/login');
-    }
   }
 
   Future<void> _loadUserData() async {
@@ -1186,21 +1167,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             childCount: _userPosts.length,
           ),
         ),
-      // Profile Redesign: prominent «Выйти из аккаунта» button at the
-      // tail of the profile, matching the design's warm-tinted ghost
-      // button. The popup menu keeps a duplicate entry so power users
-      // can sign out from the topbar without scrolling.
-      SliverToBoxAdapter(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-              child: _SignOutButton(onTap: _signOut),
-            ),
-          ),
-        ),
-      ),
       SliverToBoxAdapter(
         child: Center(
           child: Padding(
@@ -1260,7 +1226,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 16),
           ],
           _buildStoriesRailSection(),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => context.push('/profile/stories/archive'),
+              icon: const Icon(Icons.history_rounded, size: 18),
+              label: const Text('Архив историй'),
+            ),
+          ),
+          const SizedBox(height: 12),
           if (_profileCodeLabel() != null) ...[
             _buildProfileConnectionSection(
               selectedTreeId: selectedTreeId,
@@ -1329,45 +1304,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const Spacer(),
-                PopupMenuButton<String>(
-                  tooltip: 'Меню',
-                  onSelected: (value) {
-                    switch (value) {
-                      case 'archive':
-                        context.push('/profile/stories/archive');
-                        break;
-                      case 'settings':
-                        context.push('/profile/settings');
-                        break;
-                      case 'about':
-                        context.push('/profile/about');
-                        break;
-                      case 'logout':
-                        _signOut();
-                        break;
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                        value: 'archive', child: Text('Архив историй')),
-                    const PopupMenuItem(
-                        value: 'settings', child: Text('Настройки')),
-                    const PopupMenuItem(
-                        value: 'about', child: Text('О приложении')),
-                    const PopupMenuItem(value: 'logout', child: Text('Выйти')),
-                  ],
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: tokens.surfaceStrong,
+                Tooltip(
+                  message: 'Настройки',
+                  child: Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
+                    child: InkWell(
+                      key: const Key('profile-settings-button'),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: tokens.surfaceLine),
-                    ),
-                    child: Icon(
-                      Icons.settings_outlined,
-                      size: 19,
-                      color: tokens.ink,
+                      onTap: () => context.push('/profile/settings'),
+                      child: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: tokens.surfaceStrong,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: tokens.surfaceLine),
+                        ),
+                        child: Icon(
+                          Icons.settings_outlined,
+                          size: 19,
+                          color: tokens.ink,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1934,51 +1893,5 @@ class _ProfileScreenState extends State<ProfileScreen> {
       debugPrint('Не удалось поделиться профилем: $error');
       return ShareResult('', ShareResultStatus.unavailable);
     });
-  }
-}
-
-/// Bottom-of-profile sign-out button matching the design's warm
-/// muted ghost treatment: full-width, surface-line border, warm-
-/// coloured label, no fill until press. The popup-menu entry is the
-/// secondary path (kept for power users), this is the primary one
-/// the user expects to find on the profile screen.
-class _SignOutButton extends StatelessWidget {
-  const _SignOutButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
-        (Theme.of(context).brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
-          decoration: BoxDecoration(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: tokens.surfaceLine),
-          ),
-          child: Center(
-            child: Text(
-              'Выйти из аккаунта',
-              style: AppTheme.sans(
-                color: tokens.warm,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }

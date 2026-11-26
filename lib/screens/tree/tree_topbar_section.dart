@@ -468,25 +468,31 @@ extension _TreeTopbarSection on _TreeViewScreenState {
                     accent: accent,
                     compact: compact,
                   ),
-                  SizedBox(width: compact ? 8 : 10),
-                  // семя context badge. Bounded so its internal ellipsis
-                  // works inside the (otherwise unbounded) horizontal scroll.
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 220),
-                    child: SemyaContextBadge(
-                      semya: _currentSemyaContext?.semya,
-                      callerRole: _currentSemyaContext?.callerRole,
-                      onTap: _currentSemyaContext != null
-                          ? () => Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => SemyaDetailsScreen(
-                                    semyaId: _currentSemyaContext!.semya.id,
+                  if (!_isFriendsTree) ...[
+                    SizedBox(width: compact ? 8 : 10),
+                    // семя context badge. Bounded so its internal ellipsis
+                    // works inside the (otherwise unbounded) horizontal scroll.
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 220),
+                      child: SemyaContextBadge(
+                        semya: _currentSemyaContext?.semya,
+                        callerRole: _currentSemyaContext?.callerRole,
+                        legacyLabel: 'Настроить семью',
+                        onTap: _currentSemyaContext != null
+                            ? () async {
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => SemyaDetailsScreen(
+                                      semyaId: _currentSemyaContext!.semya.id,
+                                    ),
                                   ),
-                                ),
-                              )
-                          : null,
+                                );
+                                await _refreshSemyaContext(selectedTreeId);
+                              }
+                            : () => _openOrBindSemyaForTree(selectedTreeId),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

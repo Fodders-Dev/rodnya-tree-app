@@ -84,8 +84,7 @@ void main() {
     await getIt.reset();
   });
 
-  testWidgets(
-      'CreateTreeScreen держит форму короткой и открывает новое дерево',
+  testWidgets('CreateTreeScreen держит форму короткой и открывает новое дерево',
       (tester) async {
     final familyTreeService = _FakeFamilyTreeService();
     getIt.registerSingleton<FamilyTreeServiceInterface>(familyTreeService);
@@ -95,7 +94,7 @@ void main() {
 
     // After the «дерево»→«ветка» rebrand (commit 0a9929d) the AppBar
     // title is «Новая ветка». Old test expectation predates the rename.
-    expect(find.text('Новая ветка'), findsOneWidget);
+    expect(find.text('Новое дерево'), findsOneWidget);
     expect(find.text('С чего начнём?'), findsOneWidget);
     expect(find.text('Создать и открыть'), findsOneWidget);
 

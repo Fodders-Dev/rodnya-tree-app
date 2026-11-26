@@ -39,10 +39,10 @@ Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 6. Treat `flutter build web --no-wasm-dry-run` as a compile-only check; in this repo it can produce a locally served output missing `AssetManifest`, `FontManifest`, and web icons.
 
 ## Project status
-Post-MVP. Connected-trees-refactor shipped через Phase 6 (commit
-`414b218`, 2026-05-14). 2026-04-09 «known web reality» list (chat
-media HTTPS, posts API deploy, ChatPreview import) — все closed
-pre-Phase-3 либо superseded.
+Active post-MVP iteration in production: Connected-trees-refactor (Phases 1–6),
+monolith decomposition Waves 2–4, Ask a Story v2 (`/story/:token`), and
+federated `Semya` onboarding/invite flows are live. All 2026-04-09 web audit
+items are closed or superseded.
 
 Current source-of-truth — [docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md).
 Historical audit context — [docs/mvp_web_audit_2026-04-09.md](docs/mvp_web_audit_2026-04-09.md) (FROZEN).

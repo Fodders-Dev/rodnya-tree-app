@@ -734,7 +734,7 @@ class _FindRelativeScreenState extends State<FindRelativeScreen>
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Если у родственника нет аккаунта, можно сначала создать его карточку в дереве, а потом уже отправить личную invite-ссылку из этой карточки.',
+                  'Если у родственника нет аккаунта, можно сначала создать его карточку в дереве, а потом уже отправить личную ссылку-приглашение из этой карточки.',
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(

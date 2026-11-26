@@ -120,137 +120,138 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
       appBar: AppBar(title: Text('Пригласить в дерево')),
       body: DismissKeyboardOnTap(
         child: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Найдите человека, который уже пользуется Родней',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Мы отправим ему именно приглашение в дерево. Принять его можно будет в разделе деревьев.',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  SizedBox(height: 16),
-                  TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: 'Имя, email или телефон',
-                      border: OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        tooltip: 'Найти',
-                        icon: const Icon(Icons.search),
-                        onPressed: () => _searchUsers(_searchController.text),
-                      ),
-                    ),
-                    onSubmitted: _searchUsers,
-                  ),
-                  SizedBox(height: 16),
-                  if (!_isSearching &&
-                      _searchResults.isEmpty &&
-                      _searchController.text.trim().length >= 3)
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        'Если человека нет в поиске, у него, скорее всего, ещё нет аккаунта. В таком случае лучше отправить ему обычную invite-ссылку из карточки родственника.',
-                      ),
-                    ),
-                  if (_isSearching)
-                    Center(child: CircularProgressIndicator())
-                  else if (_searchResults.isNotEmpty)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Результаты поиска',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        SizedBox(height: 8),
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: NeverScrollableScrollPhysics(),
-                          itemCount: _searchResults.length,
-                          itemBuilder: (context, index) {
-                            final user = _searchResults[index];
-                            final isSelected = _selectedUser?.id == user.id;
-
-                            return ListTile(
-                              leading: _buildUserAvatar(user),
-                              title: Text(user.displayName),
-                              subtitle: Text(user.email ?? 'Email не указан'),
-                              trailing: isSelected
-                                  ? Icon(
-                                      Icons.check_circle,
-                                      color: Colors.green,
-                                    )
-                                  : null,
-                              selected: isSelected,
-                              onTap: () {
-                                setState(() {
-                                  _selectedUser = isSelected ? null : user;
-                                });
-                              },
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  if (_selectedUser != null) ...[
-                    SizedBox(height: 24),
+            ? Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                padding: EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      'Выбранный пользователь',
-                      style: Theme.of(context).textTheme.titleMedium,
+                      'Найдите человека, который уже пользуется Родней',
+                      style: Theme.of(context).textTheme.titleLarge,
                     ),
                     SizedBox(height: 8),
-                    ListTile(
-                      leading: _buildUserAvatar(_selectedUser!),
-                      title: Text(_selectedUser!.displayName),
-                      subtitle: Text(_selectedUser!.email ?? 'Email не указан'),
-                      trailing: IconButton(
-                        tooltip: 'Снять выбор',
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          setState(() {
-                            _selectedUser = null;
-                          });
-                        },
-                      ),
+                    Text(
+                      'Мы отправим ему именно приглашение в дерево. Принять его можно будет в разделе деревьев.',
+                      style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainer,
-                        borderRadius: BorderRadius.circular(16),
+                    TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        labelText: 'Имя, email или телефон',
+                        border: OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          tooltip: 'Найти',
+                          icon: const Icon(Icons.search),
+                          onPressed: () => _searchUsers(_searchController.text),
+                        ),
                       ),
-                      child: Text(
-                        'Этот сценарий нужен именно для людей с готовым аккаунтом Родни. Если нужно привязать человека к конкретной офлайн-карточке в дереве, это пока делается отдельным запросом из карточки родственника.',
-                      ),
+                      onSubmitted: _searchUsers,
                     ),
-                    SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: _sendInvitation,
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: Size(double.infinity, 48),
+                    SizedBox(height: 16),
+                    if (!_isSearching &&
+                        _searchResults.isEmpty &&
+                        _searchController.text.trim().length >= 3)
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          'Если человека нет в поиске, у него, скорее всего, ещё нет аккаунта. В таком случае лучше отправить ему обычную ссылку-приглашение из карточки родственника.',
+                        ),
                       ),
-                      child: Text('Отправить приглашение'),
-                    ),
+                    if (_isSearching)
+                      Center(child: CircularProgressIndicator())
+                    else if (_searchResults.isNotEmpty)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Результаты поиска',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          SizedBox(height: 8),
+                          ListView.builder(
+                            shrinkWrap: true,
+                            physics: NeverScrollableScrollPhysics(),
+                            itemCount: _searchResults.length,
+                            itemBuilder: (context, index) {
+                              final user = _searchResults[index];
+                              final isSelected = _selectedUser?.id == user.id;
+
+                              return ListTile(
+                                leading: _buildUserAvatar(user),
+                                title: Text(user.displayName),
+                                subtitle: Text(user.email ?? 'Email не указан'),
+                                trailing: isSelected
+                                    ? Icon(
+                                        Icons.check_circle,
+                                        color: Colors.green,
+                                      )
+                                    : null,
+                                selected: isSelected,
+                                onTap: () {
+                                  setState(() {
+                                    _selectedUser = isSelected ? null : user;
+                                  });
+                                },
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    if (_selectedUser != null) ...[
+                      SizedBox(height: 24),
+                      Text(
+                        'Выбранный пользователь',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      SizedBox(height: 8),
+                      ListTile(
+                        leading: _buildUserAvatar(_selectedUser!),
+                        title: Text(_selectedUser!.displayName),
+                        subtitle:
+                            Text(_selectedUser!.email ?? 'Email не указан'),
+                        trailing: IconButton(
+                          tooltip: 'Снять выбор',
+                          icon: const Icon(Icons.close),
+                          onPressed: () {
+                            setState(() {
+                              _selectedUser = null;
+                            });
+                          },
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainer,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          'Этот сценарий нужен именно для людей с готовым аккаунтом Родни. Если нужно привязать человека к конкретной офлайн-карточке в дереве, это пока делается отдельным запросом из карточки родственника.',
+                        ),
+                      ),
+                      SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: _sendInvitation,
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: Size(double.infinity, 48),
+                        ),
+                        child: Text('Отправить приглашение'),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
       ),
     );
   }

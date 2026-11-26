@@ -22,6 +22,8 @@ import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
+import '../backend/interfaces/semya_manage_capable_family_tree_service.dart';
+import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
 import '../screens/semya_details_screen.dart';
 import '../screens/trash_screen.dart';
@@ -223,6 +225,160 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<List<Semya>> _resolveSemyiWithTreeNames(
+    FamilyTreeServiceInterface service,
+    SemyaCapableFamilyTreeService capable,
+  ) async {
+    var semyi = await capable.listMySemya();
+    if (semyi.any((entry) =>
+        entry.name.trim().isEmpty || entry.name.trim() == 'Моя семья')) {
+      try {
+        final trees = await service.getUserTrees();
+        final treeNamesById = <String, String>{
+          for (final tree in trees)
+            if (tree.name.trim().isNotEmpty && tree.name.trim() != 'Моя семья')
+              tree.id: tree.name.trim(),
+        };
+        semyi = semyi.map((entry) {
+          final current = entry.name.trim();
+          if (current.isEmpty || current == 'Моя семья') {
+            final resolved = treeNamesById[entry.treeId];
+            if (resolved != null) {
+              return Semya(
+                id: entry.id,
+                name: resolved,
+                ownerId: entry.ownerId,
+                treeId: entry.treeId,
+                description: entry.description,
+                createdAt: entry.createdAt,
+                updatedAt: entry.updatedAt,
+                deletedAt: entry.deletedAt,
+              );
+            }
+          }
+          return entry;
+        }).toList(growable: false);
+      } catch (_) {
+        // Best-effort fallback to raw Semya names when tree lookup fails.
+      }
+    }
+    return semyi;
+  }
+
+  Future<void> _openMySemyaEntry() async {
+    if (!GetIt.I.isRegistered<FamilyTreeServiceInterface>()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Семьи временно недоступны')),
+      );
+      return;
+    }
+    final service = GetIt.I<FamilyTreeServiceInterface>();
+    if (service is! SemyaCapableFamilyTreeService) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Семьи временно недоступны')),
+      );
+      return;
+    }
+    final capable = service as SemyaCapableFamilyTreeService;
+    try {
+      var semyi = await _resolveSemyiWithTreeNames(service, capable);
+      if (!mounted) return;
+      if (semyi.isEmpty && service is SemyaManageCapableFamilyTreeService) {
+        final trees = await service.getUserTrees();
+        final currentUserId = _authService.currentUserId;
+        FamilyTree? ownedFamilyTree;
+        for (final tree in trees) {
+          if (tree.kind == TreeKind.family &&
+              (currentUserId == null || tree.creatorId == currentUserId)) {
+            ownedFamilyTree = tree;
+            break;
+          }
+        }
+        if (ownedFamilyTree != null) {
+          final treeName = ownedFamilyTree.name.trim();
+          final created = await (service as SemyaManageCapableFamilyTreeService)
+              .createSemya(
+            name: treeName.isNotEmpty ? treeName : 'Моя семья',
+            treeId: ownedFamilyTree.id,
+          );
+          semyi = [created];
+        }
+      }
+      if (!mounted) return;
+      if (semyi.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Сначала создайте семейное дерево')),
+        );
+        return;
+      }
+      if (semyi.length == 1) {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => SemyaDetailsScreen(semyaId: semyi.first.id),
+          ),
+        );
+        return;
+      }
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    'Выберите семью',
+                    style: Theme.of(sheetContext)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                ...semyi.map(
+                  (entry) => ListTile(
+                    leading: const Icon(Icons.family_restroom_rounded),
+                    title: Text(entry.name),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => SemyaDetailsScreen(semyaId: entry.id),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(
+              error,
+              fallback: 'Не удалось загрузить семьи',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   /// Ship FE7b (2026-05-26): hidden-persons entry point handler.
   /// Resolves caller's семья list → routes по count. Backend list call
   /// best-effort (network blip → snackbar). Picker shown только когда
@@ -245,41 +401,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     final capable = service as SemyaCapableFamilyTreeService;
     try {
-      var semyi = await capable.listMySemya();
-      if (!mounted) return;
-      if (semyi.any((entry) =>
-          entry.name.trim().isEmpty || entry.name.trim() == 'Моя семья')) {
-        try {
-          final trees = await service.getUserTrees();
-          final treeNamesById = <String, String>{
-            for (final tree in trees)
-              if (tree.name.trim().isNotEmpty &&
-                  tree.name.trim() != 'Моя семья')
-                tree.id: tree.name.trim(),
-          };
-          semyi = semyi.map((entry) {
-            final current = entry.name.trim();
-            if (current.isEmpty || current == 'Моя семья') {
-              final resolved = treeNamesById[entry.treeId];
-              if (resolved != null) {
-                return Semya(
-                  id: entry.id,
-                  name: resolved,
-                  ownerId: entry.ownerId,
-                  treeId: entry.treeId,
-                  description: entry.description,
-                  createdAt: entry.createdAt,
-                  updatedAt: entry.updatedAt,
-                  deletedAt: entry.deletedAt,
-                );
-              }
-            }
-            return entry;
-          }).toList(growable: false);
-        } catch (_) {
-          // Best-effort: fallback to raw Semya names when tree lookup fails.
-        }
-      }
+      final semyi = await _resolveSemyiWithTreeNames(service, capable);
       if (!mounted) return;
       if (semyi.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1272,6 +1394,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         //   1 → direct push к семя details с scroll
         //   2+ → picker sheet
         _buildActionRow(
+          icon: Icons.family_restroom_rounded,
+          title: 'Моя семья',
+          subtitle: 'Участники, приглашения и роли',
+          onTap: _openMySemyaEntry,
+        ),
+        _buildActionRow(
           icon: Icons.visibility_off_outlined,
           title: 'Скрытые родственники',
           subtitle: 'Управлять списком в своей семье',
@@ -1356,8 +1484,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           _buildOneTimePurchaseRow(),
         ]),
-      _buildSectionCard('Обратная связь', [
-        if (_showReviewSection)
+      if (_showReviewSection)
+        _buildSectionCard('Обратная связь', [
           _checkingRatingStatus
               ? const Padding(
                   padding: EdgeInsets.all(16),
@@ -1366,13 +1494,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 )
               : _buildReviewRow(),
-        _buildActionRow(
-          icon: Icons.support_agent_outlined,
-          title: 'Связаться с поддержкой',
-          subtitle: 'ahjkuio@gmail.com',
-          onTap: () => GoRouter.of(context).push('/support'),
-        ),
-      ]),
+        ]),
       _buildSectionCard('Аккаунт', [
         _buildActionRow(
           icon: Icons.logout_rounded,

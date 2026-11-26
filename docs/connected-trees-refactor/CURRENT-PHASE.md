@@ -4,6 +4,17 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
+## Status update: 2026-11-27 (Track 1 & Track 2: «Спросить историю v2», инвайты и чистота сущностей)
+
+* **Track 1 — «Спросить историю v2» (`8bb11f0`, `03e3123`)**:
+  * Поддержан свободный ввод собственного вопроса (`FamilyStoryQuestionsSheet`) и режим гостевой ссылки без регистрации (`deliveryMode: "public_link"`, `targetUserId: null`).
+  * Добавлена лёгкая SSR HTML+JS страница `/story/:token` (`backend/src/routes/public-story-routes.js`) с OpenGraph-превью, строгим CSP, `Referrer-Policy: no-referrer`, записью голоса в 1 тап, загрузкой фото до 20 МБ (rate limit + token-gating), нормализацией `ffmpeg` и опциональным STT (`backend/src/services/story-audio-service.js`). Обновлены `deploy/caddy/Caddyfile`, `deploy/nginx/rodnya.conf`, `.github/workflows/backend-deploy.yml`.
+  * На клиенте: входящие вопросы в `NotificationsScreen`, быстрый ответ с записью аудио, прослушиванием и фото с подписью (`StoryRequestAnswerScreen`), исправлена проверка прав биографии `_canEditBiography()`, в статьях отображаются вопрос и транскрипт (`ArticleReadView`, `ArticleAudioBlock`).
+* **Track 2 — Базовый путь, приглашения и инварианты интерфейса (`7226532` + Phase 2B)**:
+  * `seedOnboarding` и создание семейного дерева (`bindSemya: true`) теперь автоматически создают `Semya` и привязывают `tree.semyaId`; при принятии инвайта или линковке профиля незавершённый онбординг отмечается пропущенным; после авторизации `pendingToken` проверяется раньше `/setup`.
+  * Исправлены P0-баги экрана принятия приглашения (`/invite/:token`: неверный `invitation_accept`, очистка токена на терминальных кодах, переход на полученное дерево), диалог переименования семьи, переход в чат с `?relativeId=`, уведомления о приглашениях и `web/invite/index.html`.
+  * Удалено 18 мёртвых файлов (`relative_profile_screen.dart`, `tree_node.dart`, `relation_request_screen.dart`, `semya_list_controller.dart`, `person_dossier_view.dart` и др.), очищены легаси-дефолты Supabase/RuStore, унифицирована терминология («Дерево» / «Семья»), профиль отделён от настроек (прямая шестерёнка, «Архив историй» в теле профиля, «Моя семья» и единый «Выйти» и «Поддержка» в настройках).
+
 ## Status update: 2026-11-26 (Waves 0–5: CI gate, package:web & декомпозиция монолитов)
 
 * **Wave 0 (`45875876751`)**: выпущен Android OTA `1.0.49+57` (сборка + загрузка APK проверены).

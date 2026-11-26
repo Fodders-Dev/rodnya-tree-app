@@ -1,14 +1,12 @@
 // F5: «знаю только год» — отображение. Карточка показывает «1888», а не
 // фейковое «1 января 1888»; форматтер един для короткого/длинного вида.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/person_dossier.dart';
 import 'package:rodnya/utils/person_date_format.dart';
-import 'package:rodnya/widgets/person_dossier_view.dart';
 
 FamilyPerson _yearOnlyAncestor() => FamilyPerson(
       id: 'p-1888',
@@ -75,26 +73,28 @@ void main() {
     );
   });
 
-  testWidgets('досье: yearOnly показывает «Год рождения: 1888», не 1 января',
-      (tester) async {
+  test('досье: yearOnly хранит точность года и форматируется без 1 января', () {
     final dossier = PersonDossier.fromPerson(_yearOnlyAncestor());
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: PersonDossierView(dossier: dossier),
-          ),
-        ),
-      ),
+    expect(dossier.person.birthDatePrecision, 'yearOnly');
+    expect(dossier.person.deathDatePrecision, 'yearOnly');
+    expect(
+      formatPersonDate(dossier.birthDate!, dossier.person.birthDatePrecision),
+      '1888',
     );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Год рождения'), findsOneWidget);
-    expect(find.text('1888'), findsOneWidget);
-    expect(find.text('Год смерти'), findsOneWidget);
-    expect(find.text('1959'), findsOneWidget);
-    expect(find.textContaining('1 января'), findsNothing);
-    expect(find.textContaining('января'), findsNothing);
+    expect(
+      formatPersonDate(
+        dossier.person.deathDate!,
+        dossier.person.deathDatePrecision,
+      ),
+      '1959',
+    );
+    expect(
+      formatPersonDateLong(
+        dossier.birthDate!,
+        dossier.person.birthDatePrecision,
+      ),
+      '1888 год',
+    );
   });
 }

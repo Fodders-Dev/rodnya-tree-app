@@ -3,15 +3,13 @@ import 'package:rodnya/backend/backend_provider_config.dart';
 import 'package:rodnya/backend/backend_runtime_config.dart';
 
 void main() {
-  test('BackendRuntimeConfig uses legacy-compatible defaults', () {
+  test('BackendRuntimeConfig uses custom-api production defaults', () {
     const config = BackendRuntimeConfig();
 
     expect(config.publicAppUrl, 'https://rodnya-tree.ru');
     expect(config.apiBaseUrl, 'https://api.rodnya-tree.ru');
     expect(config.webSocketBaseUrl, 'wss://api.rodnya-tree.ru');
-    expect(config.supabaseUrl, 'https://aldugysbnodrfughcawu.supabase.co');
-    expect(config.supabaseAnonKey, isNotEmpty);
-    expect(config.enableLegacyDynamicLinks, isTrue);
+    expect(config.googleWebClientId, '');
     expect(config.enableE2e, isFalse);
   });
 
@@ -20,37 +18,16 @@ void main() {
       publicAppUrl: 'https://family.example.ru',
       apiBaseUrl: 'https://api.family.example.ru',
       webSocketBaseUrl: 'wss://ws.family.example.ru',
-      supabaseUrl: 'https://supabase.internal',
-      supabaseAnonKey: 'test-key',
-      enableLegacyDynamicLinks: false,
+      googleWebClientId: 'google-client-id',
       enableE2e: true,
     );
 
     expect(config.publicAppUrl, 'https://family.example.ru');
     expect(config.apiBaseUrl, 'https://api.family.example.ru');
     expect(config.webSocketBaseUrl, 'wss://ws.family.example.ru');
-    expect(config.supabaseUrl, 'https://supabase.internal');
-    expect(config.supabaseAnonKey, 'test-key');
-    expect(config.enableLegacyDynamicLinks, isFalse);
+    expect(config.googleWebClientId, 'google-client-id');
     expect(config.enableE2e, isTrue);
   });
-
-  test(
-    'BackendRuntimeConfig disables legacy dynamic links by default for custom auth/profile phase',
-    () {
-      const providerConfig = BackendProviderConfig(
-        authProvider: BackendProviderKind.customApi,
-        profileProvider: BackendProviderKind.customApi,
-      );
-
-      expect(
-        BackendRuntimeConfig.defaultEnableLegacyDynamicLinks(
-          providerConfig: providerConfig,
-        ),
-        isFalse,
-      );
-    },
-  );
 
   test('BackendRuntimeConfig derives websocket url from api url', () {
     expect(
@@ -67,20 +44,16 @@ void main() {
     );
   });
 
-  test(
-    'BackendRuntimeConfig prod_custom_api preset disables legacy dynamic links',
-    () {
-      final config = BackendRuntimeConfig.resolve(
-        runtimePresetRaw: 'prod_custom_api',
-        providerConfig: const BackendProviderConfig(),
-      );
+  test('BackendRuntimeConfig resolves prod_custom_api preset cleanly', () {
+    final config = BackendRuntimeConfig.resolve(
+      runtimePresetRaw: 'prod_custom_api',
+      providerConfig: const BackendProviderConfig(),
+    );
 
-      expect(config.publicAppUrl, 'https://rodnya-tree.ru');
-      expect(config.apiBaseUrl, 'https://api.rodnya-tree.ru');
-      expect(config.webSocketBaseUrl, 'wss://api.rodnya-tree.ru');
-      expect(config.enableLegacyDynamicLinks, isFalse);
-    },
-  );
+    expect(config.publicAppUrl, 'https://rodnya-tree.ru');
+    expect(config.apiBaseUrl, 'https://api.rodnya-tree.ru');
+    expect(config.webSocketBaseUrl, 'wss://api.rodnya-tree.ru');
+  });
 
   test(
     'BackendRuntimeConfig resolve honors explicit overrides on top of preset',
@@ -90,13 +63,11 @@ void main() {
         publicAppUrlRaw: 'https://family.example.ru',
         apiBaseUrlRaw: 'https://api.family.example.ru',
         webSocketBaseUrlRaw: 'wss://socket.family.example.ru',
-        legacyDynamicLinksRaw: 'true',
       );
 
       expect(config.publicAppUrl, 'https://family.example.ru');
       expect(config.apiBaseUrl, 'https://api.family.example.ru');
       expect(config.webSocketBaseUrl, 'wss://socket.family.example.ru');
-      expect(config.enableLegacyDynamicLinks, isTrue);
     },
   );
 
@@ -115,7 +86,6 @@ void main() {
       expect(config.publicAppUrl, 'https://rodnya-tree.ru');
       expect(config.apiBaseUrl, 'https://api.rodnya-tree.ru');
       expect(config.webSocketBaseUrl, 'wss://api.rodnya-tree.ru');
-      expect(config.enableLegacyDynamicLinks, isFalse);
     },
   );
 }

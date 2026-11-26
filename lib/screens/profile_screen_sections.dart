@@ -805,6 +805,11 @@ extension _ProfileScreenSections on _ProfileScreenState {
         ),
       if (_accountLinkingStatus != null) _buildAccountSettingsMenuRow(),
       _buildStoriesMenuRow(),
+      _buildMenuRow(
+        icon: Icons.history_rounded,
+        title: 'Архив историй',
+        onTap: () => context.push('/profile/stories/archive'),
+      ),
       if (profileCodeRow != null)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
