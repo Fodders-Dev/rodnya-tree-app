@@ -13,8 +13,8 @@ concurrency:
 
 jobs:
   flutter:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: windows-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
