@@ -600,6 +600,15 @@ class RealtimeHub {
     if (!chat || !Array.isArray(chat.participantIds) || !chat.participantIds.includes(userId)) {
       return;
     }
+    if (
+      chat.type === "direct" &&
+      typeof this.store.isUserBlockedBetween === "function"
+    ) {
+      const otherId = chat.participantIds.find((id) => id && id !== userId);
+      if (otherId && (await this.store.isUserBlockedBetween(userId, otherId))) {
+        return;
+      }
+    }
 
     const isTyping = payload.isTyping === true;
     const realtimePayload = {

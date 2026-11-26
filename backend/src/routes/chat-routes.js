@@ -35,6 +35,26 @@ function registerChatRoutes(
     return cursor || null;
   }
 
+  async function requireDirectChatNotBlocked(req, res, chat) {
+    if (!chat || chat.type !== "direct" || typeof store.isUserBlockedBetween !== "function") {
+      return true;
+    }
+    const otherParticipantId = (Array.isArray(chat.participantIds)
+      ? chat.participantIds
+      : []
+    ).find((participantId) => participantId && participantId !== req.auth.user.id);
+    if (
+      otherParticipantId &&
+      (await store.isUserBlockedBetween(req.auth.user.id, otherParticipantId))
+    ) {
+      res.status(403).json({
+        message: "Действие недоступно: один из пользователей заблокирован",
+      });
+      return false;
+    }
+    return true;
+  }
+
   async function resolveMappedChat(chatId, fallbackChat = null) {
     const chat = await store.findChat(chatId);
     const resolvedChat = chat || fallbackChat;
@@ -257,6 +277,20 @@ function registerChatRoutes(
       return;
     }
     const participantIds = participantsGuard.value;
+    if (typeof store.isUserBlockedBetween === "function") {
+      for (const participantId of participantIds) {
+        if (
+          participantId &&
+          participantId !== req.auth.user.id &&
+          (await store.isUserBlockedBetween(req.auth.user.id, participantId))
+        ) {
+          res.status(403).json({
+            message: "Нельзя добавить в чат заблокированного пользователя",
+          });
+          return;
+        }
+      }
+    }
 
     if (req.body?.title != null) {
       const titleGuard = enforceTextLimit(req.body?.title, {
@@ -494,6 +528,9 @@ function registerChatRoutes(
       if (!chat) {
         return;
       }
+      if (!(await requireDirectChatNotBlocked(req, res, chat))) {
+        return;
+      }
       const pin = typeof store.pinChatMessage === "function"
         ? await store.pinChatMessage({
             userId: req.auth.user.id,
@@ -519,6 +556,9 @@ function registerChatRoutes(
     if (!chat) {
       return;
     }
+    if (!(await requireDirectChatNotBlocked(req, res, chat))) {
+      return;
+    }
     if (typeof store.clearChatPinnedMessage === "function") {
       const cleared = await store.clearChatPinnedMessage({
         userId: req.auth.user.id,
@@ -540,9 +580,41 @@ function registerChatRoutes(
     }
     const resolvedChatId = chat.id;
 
-    const participantIds = Array.isArray(req.body?.participantIds)
-      ? req.body.participantIds
-      : [];
+    const participantsGuard = enforceArrayCap(req.body?.participantIds, {
+      max: 50,
+      allowEmpty: true,
+      itemValidator: (raw) =>
+        enforceTextLimit(raw, {
+          max: 64,
+          allowMultiline: false,
+          fieldName: "participantId",
+        }),
+      fieldName: "participantIds",
+    });
+    if (!participantsGuard.ok) {
+      res
+        .status(participantsGuard.status)
+        .json({message: participantsGuard.message});
+      return;
+    }
+    const participantIds = participantsGuard.value;
+    if (typeof store.isUserBlockedBetween === "function") {
+      for (const candidateId of participantIds) {
+        for (const existingId of chat.participantIds || []) {
+          if (
+            candidateId &&
+            existingId &&
+            candidateId !== existingId &&
+            (await store.isUserBlockedBetween(existingId, candidateId))
+          ) {
+            res.status(403).json({
+              message: "Нельзя добавить заблокированного пользователя",
+            });
+            return;
+          }
+        }
+      }
+    }
     const updatedChat = await store.addGroupParticipants(
       resolvedChatId,
       participantIds,
@@ -590,6 +662,12 @@ function registerChatRoutes(
         return;
       }
       const resolvedChatId = chat.id;
+      if (chat.createdBy && chat.createdBy !== req.auth.user.id) {
+        res.status(403).json({
+          message: "Удалять участников может только создатель группы",
+        });
+        return;
+      }
 
       const updatedChat = await store.removeGroupParticipant(
         resolvedChatId,
@@ -1034,6 +1112,9 @@ function registerChatRoutes(
       if (!chat) {
         return;
       }
+      if (!(await requireDirectChatNotBlocked(req, res, chat))) {
+        return;
+      }
       const resolvedChatId = chat.id;
       const emoji = String(req.body?.emoji || "").trim();
       if (!emoji) {
@@ -1081,6 +1162,9 @@ function registerChatRoutes(
     if (!chat) {
       return;
     }
+    if (!(await requireDirectChatNotBlocked(req, res, chat))) {
+      return;
+    }
     const resolvedChatId = chat.id;
 
     const message = await store.updateChatMessage({
@@ -1122,6 +1206,9 @@ function registerChatRoutes(
   app.delete("/v1/chats/:chatId/messages/:messageId", requireAuth, async (req, res) => {
     const chat = await requireChatAccess(req, res, req.params.chatId);
     if (!chat) {
+      return;
+    }
+    if (!(await requireDirectChatNotBlocked(req, res, chat))) {
       return;
     }
     const resolvedChatId = chat.id;

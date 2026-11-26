@@ -51,7 +51,9 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
   });
 
   app.post("/v1/trees/:treeId/circles", requireAuth, async (req, res) => {
-    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    const tree = await requireTreeAccess(req, res, req.params.treeId, {
+      requiredRole: "editor",
+    });
     if (!tree) {
       return;
     }
@@ -72,7 +74,9 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
   });
 
   app.patch("/v1/trees/:treeId/circles/:circleId", requireAuth, async (req, res) => {
-    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    const tree = await requireTreeAccess(req, res, req.params.treeId, {
+      requiredRole: "editor",
+    });
     if (!tree) {
       return;
     }
@@ -99,7 +103,9 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
     "/v1/trees/:treeId/circles/:circleId/members",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      const tree = await requireTreeAccess(req, res, req.params.treeId, {
+        requiredRole: "editor",
+      });
       if (!tree) {
         return;
       }
@@ -148,7 +154,9 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
     "/v1/trees/:treeId/circles/:circleId",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      const tree = await requireTreeAccess(req, res, req.params.treeId, {
+        requiredRole: "editor",
+      });
       if (!tree) {
         return;
       }

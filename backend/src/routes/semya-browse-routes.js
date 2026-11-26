@@ -144,8 +144,14 @@ function registerSemyaBrowseRoutes(
         const token = await store.revokeBrowseToken({
           tokenId: req.params.tokenId,
           actingUserId: req.auth.user.id,
+          semyaId: req.params.id,
         });
-        res.json({token: mapTokenSummary(token)});
+        res.json({
+          token: {
+            ...mapTokenSummary(token),
+            status: tokenStatus(token),
+          },
+        });
       } catch (error) {
         const code = error?.message;
         if (code === "TOKEN_NOT_FOUND") {
@@ -236,9 +242,7 @@ function registerSemyaBrowseRoutes(
         birthDatePrecision: p.birthDatePrecision || "exact",
         deathDate: p.deathDate ?? null,
         deathDatePrecision: p.deathDatePrecision || "exact",
-        identityId: p.identityId ?? null,
-        // Photo URLs + bio + notes + sensitive attributes
-        // intentionally omitted (privacy boundary).
+        // identityId, photos, bio, and attributes omitted for browse privacy.
       }));
     const relations = (db.relations || [])
       .filter((r) => r.treeId === tree.id)

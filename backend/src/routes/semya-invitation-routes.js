@@ -38,11 +38,11 @@ function registerSemyaInvitationRoutes(
     emailSender,
   },
 ) {
-  function mapInvitation(invitation) {
+  function mapInvitation(invitation, {includeToken = true} = {}) {
     if (!invitation) return null;
     const base = {
       id: invitation.id,
-      token: invitation.token,
+      ...(includeToken ? {token: invitation.token} : {}),
       semyaId: invitation.semyaId,
       inviterUserId: invitation.inviterUserId,
       recipientUserId: invitation.recipientUserId ?? null,
@@ -81,8 +81,14 @@ function registerSemyaInvitationRoutes(
       requiredRole: "viewer",
     });
     if (!access) return;
+    const includeToken =
+      access.membership.role === "owner" ||
+      (access.membership.role === "editor" &&
+        access.membership.hasInviteGrant === true);
     const rows = await store.listInvitationsForSemya(req.params.id);
-    res.json({invitations: rows.map(mapInvitation)});
+    res.json({
+      invitations: rows.map((row) => mapInvitation(row, {includeToken})),
+    });
   });
 
   // Ship FE9 (2026-05-27): «my pending семя invitations» endpoint
@@ -357,6 +363,7 @@ function registerSemyaInvitationRoutes(
         const invitation = await store.revokeInvitation({
           invitationId: req.params.invitationId,
           actingUserId: req.auth.user.id,
+          semyaId: req.params.id,
         });
         res.json({invitation: mapInvitation(invitation)});
       } catch (error) {

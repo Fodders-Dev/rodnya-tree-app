@@ -1,4 +1,5 @@
 const {parseMaxStartParam} = require("../max-auth");
+const {sanitizeFinalRedirect} = require("./auth-redirect-util");
 
 function buildMaxIdentityFromLaunch(launchData) {
   const user = launchData?.user && typeof launchData.user === "object"
@@ -43,10 +44,14 @@ function registerMaxAuthRoutes(
       maxAuthCode: code,
       ...(intent === "link" ? {maxIntent: "link"} : {}),
     };
-    if (finalRedirect && /^[a-z][a-z0-9+.-]*:\/\//.test(String(finalRedirect))) {
-      const sep = String(finalRedirect).includes("?") ? "&" : "?";
+    const safeRedirect = sanitizeFinalRedirect(
+      finalRedirect,
+      resolvePublicAppUrl(),
+    );
+    if (safeRedirect) {
+      const sep = safeRedirect.includes("?") ? "&" : "?";
       const query = new URLSearchParams(params).toString();
-      return `${finalRedirect}${sep}${query}`;
+      return `${safeRedirect}${sep}${query}`;
     }
     const query = new URLSearchParams(params);
     return `${resolvePublicAppUrl()}/#/login?${query.toString()}`;
@@ -65,10 +70,10 @@ function registerMaxAuthRoutes(
     const finalRedirectRaw = typeof req.query?.finalRedirect === "string"
         ? req.query.finalRedirect
         : null;
-    const finalRedirect =
-        finalRedirectRaw && /^[a-z][a-z0-9+.-]*:\/\//.test(finalRedirectRaw)
-            ? finalRedirectRaw
-            : null;
+    const finalRedirect = sanitizeFinalRedirect(
+      finalRedirectRaw,
+      resolvePublicAppUrl(),
+    );
     const authFlowHandoff = await store.createAuthHandoff({
       type: "max_auth_flow",
       payload: {intent, deviceContext, finalRedirect},
@@ -177,6 +182,7 @@ function registerMaxAuthRoutes(
           ok: true,
           redirectUrl: maxAuthRedirectUrl(authHandoff.code, {
             intent: effectiveIntent,
+            finalRedirect: stashedFinalRedirect,
           }),
           status: "authenticated",
           handoffCode: authHandoff.code,
@@ -211,6 +217,7 @@ function registerMaxAuthRoutes(
         ok: true,
         redirectUrl: maxAuthRedirectUrl(authHandoff.code, {
           intent: effectiveIntent,
+          finalRedirect: stashedFinalRedirect,
         }),
         status: "pending_link",
         handoffCode: authHandoff.code,

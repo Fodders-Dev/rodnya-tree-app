@@ -74,12 +74,11 @@ function registerSemyaRoutes(
       res.status(404).json({message: "Дерево не найдено"});
       return;
     }
-    const treeMemberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
-    const ownsOrMembers =
-      tree.creatorId === req.auth.user.id ||
-      treeMemberIds.includes(req.auth.user.id);
-    if (!ownsOrMembers) {
-      res.status(403).json({message: "Это не ваше дерево"});
+    const ownsTree = tree.creatorId === req.auth.user.id;
+    if (!ownsTree) {
+      res.status(403).json({
+        message: "Это не ваше дерево — создать семью может только владелец",
+      });
       return;
     }
 

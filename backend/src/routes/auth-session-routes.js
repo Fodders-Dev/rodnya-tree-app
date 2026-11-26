@@ -617,6 +617,15 @@ function registerAuthSessionRoutes(
         return;
       }
 
+      if (
+        realtimeHub &&
+        typeof realtimeHub.disconnectAllSessionsForUser === "function"
+      ) {
+        realtimeHub.disconnectAllSessionsForUser(userId, {
+          reason: "password.reset",
+        });
+      }
+
       res.json({ok: true});
     } catch (error) {
       console.error(
@@ -635,6 +644,14 @@ function registerAuthSessionRoutes(
       ? await store.listOwnedMediaUrls(req.auth.user.id)
       : [];
     await store.deleteUser(req.auth.user.id);
+    if (
+      realtimeHub &&
+      typeof realtimeHub.disconnectAllSessionsForUser === "function"
+    ) {
+      realtimeHub.disconnectAllSessionsForUser(req.auth.user.id, {
+        reason: "account.deleted",
+      });
+    }
 
     const mediaCleanupFailures = [];
     for (const mediaUrl of ownedMediaUrls) {

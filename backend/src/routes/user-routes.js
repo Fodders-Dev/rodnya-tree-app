@@ -1,3 +1,5 @@
+const {sanitizeProfileUpdatePayload} = require("../profile-utils");
+
 function registerUserRoutes(
   app,
   {
@@ -68,9 +70,10 @@ function registerUserRoutes(
       return;
     }
 
+    const safePatch = sanitizeProfileUpdatePayload(req.body);
     const updatedUser = await store.updateProfile(req.auth.user.id, (profile) => ({
       ...profile,
-      ...req.body,
+      ...safePatch,
     }));
 
     res.json({

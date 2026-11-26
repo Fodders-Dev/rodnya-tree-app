@@ -1,3 +1,49 @@
+const path = require("node:path");
+
+const FORBIDDEN_UPLOAD_MIME_TYPES = new Set([
+  "text/html",
+  "application/xhtml+xml",
+  "image/svg+xml",
+  "application/javascript",
+  "text/javascript",
+  "application/ecmascript",
+  "text/ecmascript",
+  "application/xml",
+  "text/xml",
+]);
+
+const FORBIDDEN_UPLOAD_EXTENSIONS = new Set([
+  ".html",
+  ".htm",
+  ".xhtml",
+  ".svg",
+  ".svgz",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".xml",
+  ".swf",
+  ".php",
+  ".jsp",
+  ".asp",
+  ".aspx",
+]);
+
+function isForbiddenUploadMedia(mediaPath, contentType) {
+  const mime = String(contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (mime && FORBIDDEN_UPLOAD_MIME_TYPES.has(mime)) {
+    return true;
+  }
+  const ext = path.extname(String(mediaPath || "")).toLowerCase();
+  if (ext && FORBIDDEN_UPLOAD_EXTENSIONS.has(ext)) {
+    return true;
+  }
+  return false;
+}
+
 function handleMediaReadError(error, res) {
   if (
     error?.message === "INVALID_MEDIA_PATH" ||
@@ -84,6 +130,15 @@ function registerAuthenticatedMediaRoutes(app, {mediaStorage, requireAuth}) {
     }
     const contentType =
       String(req.headers["content-type"] || "").trim() || null;
+    if (isForbiddenUploadMedia(mediaPath, contentType)) {
+      respondAndDispose(
+        req,
+        res,
+        400,
+        "Недопустимый тип media-файла",
+      );
+      return;
+    }
 
     // Заявленный размер больше потолка — отказ сразу, без чтения тела.
     const declaredLength = Number(req.headers["content-length"]);
@@ -136,6 +191,7 @@ function registerAuthenticatedMediaRoutes(app, {mediaStorage, requireAuth}) {
         relativePath: mediaPath,
         contentType,
         fileBuffer: Buffer.concat(chunks),
+        uploaderUserId: req.auth.user.id,
       });
       res.status(201).json(uploadResult);
     } catch (error) {
@@ -170,6 +226,19 @@ function registerAuthenticatedMediaRoutes(app, {mediaStorage, requireAuth}) {
     }
 
     try {
+      if (typeof mediaStorage.getObjectOwnerInfo === "function") {
+        const ownerInfo = await mediaStorage.getObjectOwnerInfo(urlValue);
+        const actorId = String(req.auth.user.id || "").trim();
+        const isOwner = ownerInfo?.uploaderUserId
+          ? ownerInfo.uploaderUserId === actorId
+          : String(ownerInfo?.relativePath || "").startsWith(`${actorId}/`);
+        if (!isOwner) {
+          res.status(403).json({
+            message: "Удалить можно только свой загруженный файл",
+          });
+          return;
+        }
+      }
       await mediaStorage.deleteObjectByUrl(urlValue);
       res.status(204).send();
     } catch (error) {

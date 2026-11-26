@@ -60,8 +60,12 @@ function registerPollRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, poll.treeId);
-    if (!tree) {
+    const canView = await store.canUserViewScopedItem({
+      item: poll,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этому опросу"});
       return;
     }
 
@@ -273,8 +277,12 @@ function registerPollRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, poll.treeId);
-    if (!tree) {
+    const canView = await store.canUserViewScopedItem({
+      item: poll,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этому опросу"});
       return;
     }
 
@@ -313,6 +321,10 @@ function registerPollRoutes(
       userId: req.auth.user.id,
       optionIds,
     });
+    if (updated === "POLL_CLOSED") {
+      res.status(409).json({message: "Опрос уже завершён"});
+      return;
+    }
     if (!updated) {
       res.status(404).json({message: "Опрос не найден"});
       return;

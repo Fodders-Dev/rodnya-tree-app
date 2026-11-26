@@ -3712,17 +3712,22 @@ class PostgresStore extends FileStore {
       const db = await this._read();
       const isOriginalActor = row.deletedByUserId === actorUserId;
       let isSemyaMember = false;
+      let hasHiddenRow = false;
+      let activeSemyaExists = false;
       if (row.semyaId) {
-        isSemyaMember = (db.semyaMembers || []).some(
-          (m) =>
-            m.userId === actorUserId &&
-            m.semyaId === row.semyaId &&
-            !m.hiddenAt,
-        );
         const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
         if (semya?.deletedAt) {
           throw new Error("SEMYA_DELETED");
         }
+        activeSemyaExists = Boolean(semya && !semya.deletedAt);
+        const memberRows = (db.semyaMembers || []).filter(
+          (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
+        );
+        isSemyaMember = memberRows.some((m) => !m.hiddenAt);
+        hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
+      }
+      if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
+        throw new Error("FORBIDDEN");
       }
       if (!isOriginalActor && !isSemyaMember) {
         throw new Error("FORBIDDEN");
@@ -3743,16 +3748,26 @@ class PostgresStore extends FileStore {
       }
 
       if (row.snapshot?.userId) {
-        tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
-        if (!tree.memberIds.includes(row.snapshot.userId)) {
-          tree.memberIds.push(row.snapshot.userId);
+        const kickedSnapshotUser =
+          tree.semyaId &&
+          (db.semyaMembers || []).some(
+            (m) =>
+              m.semyaId === tree.semyaId &&
+              m.userId === row.snapshot.userId &&
+              Boolean(m.hiddenAt),
+          );
+        if (!kickedSnapshotUser) {
+          tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+          if (!tree.memberIds.includes(row.snapshot.userId)) {
+            tree.memberIds.push(row.snapshot.userId);
+          }
+          tree.members = Array.isArray(tree.members) ? tree.members : [];
+          if (!tree.members.includes(row.snapshot.userId)) {
+            tree.members.push(row.snapshot.userId);
+          }
+          this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
+          tree.updatedAt = nowIso();
         }
-        tree.members = Array.isArray(tree.members) ? tree.members : [];
-        if (!tree.members.includes(row.snapshot.userId)) {
-          tree.members.push(row.snapshot.userId);
-        }
-        this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
-        tree.updatedAt = nowIso();
       }
 
       const restoredAt = nowIso();
@@ -3806,14 +3821,20 @@ class PostgresStore extends FileStore {
 
     const isOriginalActor = row.deletedByUserId === actorUserId;
     let isSemyaMember = false;
+    let hasHiddenRow = false;
+    let activeSemyaExists = false;
     if (row.semyaId) {
       const db = await this._read();
-      isSemyaMember = (db.semyaMembers || []).some(
-        (m) =>
-          m.userId === actorUserId &&
-          m.semyaId === row.semyaId &&
-          !m.hiddenAt,
+      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
+      activeSemyaExists = Boolean(semya && !semya.deletedAt);
+      const memberRows = (db.semyaMembers || []).filter(
+        (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
       );
+      isSemyaMember = memberRows.some((m) => !m.hiddenAt);
+      hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
+    }
+    if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
+      throw new Error("FORBIDDEN");
     }
     if (!isOriginalActor && !isSemyaMember) {
       throw new Error("FORBIDDEN");
@@ -6333,8 +6354,15 @@ class PostgresStore extends FileStore {
       return [];
     }
 
+    const useSemyaModel =
+      String(process.env.RODNYA_FEDERATED_SEMYI_ENABLED || "")
+        .trim()
+        .toLowerCase() === "true";
     await this.initialize();
     await this._awaitReadConsistency();
+    if (useSemyaModel) {
+      return super.listUserTrees(normalizedUserId);
+    }
     try {
       const result = await this._pool.query(
         `SELECT tree_entry AS tree_data

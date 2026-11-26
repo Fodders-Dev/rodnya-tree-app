@@ -14,6 +14,10 @@ const {
   scoreNormalizedPersons,
 } = require("./identity-matcher");
 const {
+  enforceSafeUrl,
+  enforceSafeMediaOrLinkUrl,
+} = require("./input-guards");
+const {
   GRAPH_PERSON_CANONICAL_FIELDS,
   backfillPersonIdentities,
   buildGraphRelationDedupKey,
@@ -5496,14 +5500,22 @@ function normalizeArticleSpan(rawSpan) {
   if (type === "link") {
     const href = normalizeNullableString(rawSpan.href);
     if (!href) return null;
+    const hrefGuard = enforceSafeUrl(href, {
+      fieldName: "href",
+      allowEmpty: false,
+      allowedSchemes: ["http", "https"],
+    });
+    if (!hrefGuard.ok) {
+      throw new Error("INVALID_BLOCK_CONTENT");
+    }
     return {
       type: "link",
-      href,
-      text: String(rawSpan.text || href).trim(),
+      href: hrefGuard.value,
+      text: String(rawSpan.text || hrefGuard.value).trim().slice(0, 1000),
     };
   }
   // Plain text span (default).
-  const text = typeof rawSpan.text === "string" ? rawSpan.text : "";
+  const text = typeof rawSpan.text === "string" ? rawSpan.text.slice(0, 20000) : "";
   return {text};
 }
 
@@ -5519,11 +5531,33 @@ function normalizeArticleMediaItem(rawItem) {
   if (!rawItem || typeof rawItem !== "object") return null;
   const url = normalizeNullableString(rawItem.url);
   if (!url) return null;
+  const urlGuard = enforceSafeMediaOrLinkUrl(url, {
+    fieldName: "url",
+    allowEmpty: false,
+  });
+  if (!urlGuard.ok) {
+    throw new Error("INVALID_BLOCK_CONTENT");
+  }
+  let thumbnailUrl = normalizeNullableString(rawItem.thumbnailUrl);
+  if (thumbnailUrl) {
+    const thumbGuard = enforceSafeMediaOrLinkUrl(thumbnailUrl, {
+      fieldName: "thumbnailUrl",
+      allowEmpty: true,
+    });
+    if (!thumbGuard.ok) {
+      throw new Error("INVALID_BLOCK_CONTENT");
+    }
+    thumbnailUrl = thumbGuard.value;
+  }
+  const caption = normalizeNullableString(rawItem.caption);
+  if (caption && caption.length > 1000) {
+    throw new Error("INVALID_BLOCK_CONTENT");
+  }
   const accuracy = normalizeNullableString(rawItem.dateTakenAccuracy);
   return {
-    url,
-    thumbnailUrl: normalizeNullableString(rawItem.thumbnailUrl),
-    caption: normalizeNullableString(rawItem.caption),
+    url: urlGuard.value,
+    thumbnailUrl,
+    caption,
     dateTaken: normalizeOptionalIsoTimestamp(rawItem.dateTaken) || null,
     dateTakenAccuracy:
       accuracy === "exact" || accuracy === "year" || accuracy === "decade"
@@ -5543,12 +5577,17 @@ function normalizeArticleBlockContent(type, rawContent) {
     rawContent && typeof rawContent === "object" ? rawContent : {};
 
   switch (normalizedType) {
-    case "paragraph":
-      return {spans: normalizeArticleSpans(content.spans)};
+    case "paragraph": {
+      const rawSpans = Array.isArray(content.spans) ? content.spans : [];
+      if (rawSpans.length > 200) throw new Error("INVALID_BLOCK_CONTENT");
+      return {spans: normalizeArticleSpans(rawSpans)};
+    }
     case "header": {
+      const text = String(content.text || "").trim();
+      if (text.length > 500) throw new Error("INVALID_BLOCK_CONTENT");
       const level = Number(content.level);
       return {
-        text: String(content.text || "").trim(),
+        text,
         level: level === 1 ? 1 : 2,
       };
     }
@@ -5558,6 +5597,9 @@ function normalizeArticleBlockContent(type, rawContent) {
       return item;
     }
     case "gallery": {
+      if (Array.isArray(content.items) && content.items.length > 50) {
+        throw new Error("INVALID_BLOCK_CONTENT");
+      }
       const items = Array.isArray(content.items)
         ? content.items.map(normalizeArticleMediaItem).filter(Boolean)
         : [];
@@ -5567,21 +5609,36 @@ function normalizeArticleBlockContent(type, rawContent) {
     case "audio": {
       const url = normalizeNullableString(content.url);
       if (!url) throw new Error("INVALID_BLOCK_CONTENT");
+      const urlGuard = enforceSafeMediaOrLinkUrl(url, {
+        fieldName: "url",
+        allowEmpty: false,
+      });
+      if (!urlGuard.ok) throw new Error("INVALID_BLOCK_CONTENT");
       const durationSec = Number(content.durationSec);
+      if (Number.isFinite(durationSec) && (durationSec < 0 || durationSec > 86400)) {
+        throw new Error("INVALID_BLOCK_CONTENT");
+      }
+      const transcript = normalizeNullableString(content.transcript);
+      if (transcript && transcript.length > 20000) {
+        throw new Error("INVALID_BLOCK_CONTENT");
+      }
       return {
-        url,
+        url: urlGuard.value,
         durationSec:
           Number.isFinite(durationSec) && durationSec > 0
             ? Math.round(durationSec)
             : null,
-        transcript: normalizeNullableString(content.transcript),
+        transcript,
       };
     }
-    case "quote":
-      return {
-        text: String(content.text || "").trim(),
-        attribution: normalizeNullableString(content.attribution),
-      };
+    case "quote": {
+      const text = String(content.text || "").trim();
+      const attribution = normalizeNullableString(content.attribution);
+      if (text.length > 10000 || (attribution && attribution.length > 500)) {
+        throw new Error("INVALID_BLOCK_CONTENT");
+      }
+      return {text, attribution};
+    }
     case "divider":
     default:
       return {};
@@ -7163,6 +7220,22 @@ class FileStore {
       }
     }
 
+    for (const sr of db.storyRequests || []) {
+      if (sr.treeId === treeId && sr.personId === duplicatePerson.id) {
+        sr.personId = preferredPerson.id;
+      }
+    }
+    for (const cm of db.circleMembers || []) {
+      if (cm.treeId === treeId && cm.personId === duplicatePerson.id) {
+        cm.personId = preferredPerson.id;
+      }
+    }
+    for (const dp of db.deletedPersons || []) {
+      if (dp.treeId === treeId && dp.originalPersonId === duplicatePerson.id) {
+        dp.originalPersonId = preferredPerson.id;
+      }
+    }
+
     this._rewriteTreeChangeRecordsForMerge(db, {
       treeId,
       duplicatePersonId: duplicatePerson.id,
@@ -8302,7 +8375,9 @@ class FileStore {
     });
     db.circles = db.circles.filter((entry) => !removedTreeIds.has(entry.treeId));
     db.circleMembers = db.circleMembers.filter(
-      (entry) => !removedTreeIds.has(entry.treeId),
+      (entry) =>
+        !removedTreeIds.has(entry.treeId) &&
+        !removedPersonIds.has(entry.personId),
     );
 
     const nextPosts = [];
@@ -8537,6 +8612,68 @@ class FileStore {
         (entry) => entry.claimerId !== userId,
       );
     }
+    if (Array.isArray(db.storyRequests)) {
+      db.storyRequests = db.storyRequests.filter(
+        (entry) =>
+          entry.requesterUserId !== userId &&
+          entry.targetUserId !== userId &&
+          !removedTreeIds.has(entry.treeId),
+      );
+    }
+    if (Array.isArray(db.kinshipChecks)) {
+      db.kinshipChecks = db.kinshipChecks.filter(
+        (entry) =>
+          entry.initiatorUserId !== userId && entry.targetUserId !== userId,
+      );
+    }
+    if (Array.isArray(db.gatherings)) {
+      db.gatherings = db.gatherings
+        .filter(
+          (entry) =>
+            entry.authorId !== userId && !removedTreeIds.has(entry.treeId),
+        )
+        .map((entry) =>
+          Array.isArray(entry.rsvps)
+            ? {
+                ...entry,
+                rsvps: entry.rsvps.filter((r) => r.userId !== userId),
+              }
+            : entry,
+        );
+    }
+    if (Array.isArray(db.polls)) {
+      db.polls = db.polls
+        .filter(
+          (entry) =>
+            entry.authorId !== userId && !removedTreeIds.has(entry.treeId),
+        )
+        .map((entry) =>
+          Array.isArray(entry.responses)
+            ? {
+                ...entry,
+                responses: entry.responses.filter((r) => r.userId !== userId),
+              }
+            : entry,
+        );
+    }
+    if (Array.isArray(db.graphPersonEditGrants)) {
+      db.graphPersonEditGrants = db.graphPersonEditGrants.filter(
+        (entry) =>
+          entry.grantorUserId !== userId && entry.granteeUserId !== userId,
+      );
+    }
+    if (Array.isArray(db.semyaMembers)) {
+      db.semyaMembers = db.semyaMembers.filter(
+        (entry) => entry.userId !== userId,
+      );
+    }
+    if (Array.isArray(db.profileArticles)) {
+      db.profileArticles = db.profileArticles.filter(
+        (entry) =>
+          !removedTreeIds.has(entry.treeId) &&
+          !removedPersonIds.has(entry.personId),
+      );
+    }
     if (Array.isArray(db.calls)) {
       // Drop calls where the deleted user was the only initiator,
       // and scrub the user from participant lists of group calls.
@@ -8714,12 +8851,7 @@ class FileStore {
   async listUserTrees(userId, prefetchedDb = null) {
     const db = prefetchedDb || (await this.readSharedSnapshot());
     return db.trees
-      .filter((tree) => {
-        return (
-          tree.creatorId === userId ||
-          (Array.isArray(tree.memberIds) && tree.memberIds.includes(userId))
-        );
-      })
+      .filter((tree) => this._userCanAccessTreeRecord(tree, userId, db))
       .sort((left, right) =>
         String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")),
       )
@@ -8800,6 +8932,28 @@ class FileStore {
     db.semyi.push(semya);
     db.semyaMembers.push(ownerMembership);
 
+    for (const memberIdRaw of Array.isArray(tree.memberIds) ? tree.memberIds : []) {
+      const memberId = String(memberIdRaw || "").trim();
+      if (!memberId || memberId === ownerId) {
+        continue;
+      }
+      const exists = db.semyaMembers.some(
+        (entry) => entry.semyaId === semya.id && entry.userId === memberId,
+      );
+      if (!exists) {
+        db.semyaMembers.push({
+          id: crypto.randomUUID(),
+          semyaId: semya.id,
+          userId: memberId,
+          role: "viewer",
+          joinedAt: createdAt,
+          invitedByUserId: ownerId,
+          hasInviteGrant: false,
+          hiddenAt: null,
+        });
+      }
+    }
+
     // Phase B Ship 5: reverse-FK + dual-write. Write tree.semyaId
     // atomically с семья record так чтобы requireTreeAccess (когда
     // feature flag ON) могла O(1) lookup семья без index walk.
@@ -8818,15 +8972,18 @@ class FileStore {
   // ИСКЛЮЧИТЕЛЬНО членство в семье — без dual-write новый участник
   // ловил бы 403 сразу после флипа. Роль viewer — как в миграции
   // (решение Q1: безопасный дефолт, owner повышает вручную).
-  _ensureSemyaMembershipForLegacyJoin(db, tree, userId) {
+  _ensureSemyaMembershipForLegacyJoin(db, tree, userId, {allowUnhide = false} = {}) {
     const normalizedUserId = String(userId || "").trim();
     const semyaId = String(tree?.semyaId || "").trim();
     if (!normalizedUserId || !semyaId) {
       return;
     }
     const semya = (db.semyi || []).find((entry) => entry.id === semyaId);
-    if (!semya || semya.deletedAt) {
+    if (!semya) {
       return;
+    }
+    if (semya.deletedAt) {
+      throw new Error("SEMYA_DELETED");
     }
     db.semyaMembers = Array.isArray(db.semyaMembers) ? db.semyaMembers : [];
     const existing = db.semyaMembers.find(
@@ -8834,8 +8991,12 @@ class FileStore {
         entry.semyaId === semyaId && entry.userId === normalizedUserId,
     );
     if (existing) {
-      // Явное повторное вступление снимает скрытие (kick) — как re-invite.
-      existing.hiddenAt = null;
+      if (existing.hiddenAt) {
+        if (!allowUnhide) {
+          throw new Error("KICKED_FROM_SEMYA");
+        }
+        existing.hiddenAt = null;
+      }
       return;
     }
     db.semyaMembers.push({
@@ -9461,14 +9622,21 @@ class FileStore {
       invitation.status = "accepted";
       invitation.acceptedAt = now;
 
-      const existingMembership = (db.semyaMembers || []).find(
+      db.semyaMembers = Array.isArray(db.semyaMembers) ? db.semyaMembers : [];
+      const existingMembership = db.semyaMembers.find(
         (m) =>
           m.semyaId === invitation.semyaId &&
-          m.userId === acceptingUserId &&
-          !m.hiddenAt,
+          m.userId === acceptingUserId,
       );
       let membership;
       if (existingMembership) {
+        if (existingMembership.hiddenAt) {
+          existingMembership.hiddenAt = null;
+          existingMembership.role = invitation.role;
+          existingMembership.joinedAt = now;
+          existingMembership.invitedByUserId = invitation.inviterUserId;
+          existingMembership.hasInviteGrant = false;
+        }
         membership = existingMembership;
       } else {
         membership = {
@@ -9484,6 +9652,23 @@ class FileStore {
         db.semyaMembers.push(membership);
       }
 
+      const boundTree = (db.trees || []).find((t) => t.id === semya.treeId);
+      if (boundTree) {
+        boundTree.memberIds = Array.isArray(boundTree.memberIds)
+          ? boundTree.memberIds
+          : [];
+        if (!boundTree.memberIds.includes(acceptingUserId)) {
+          boundTree.memberIds.push(acceptingUserId);
+        }
+        boundTree.members = Array.isArray(boundTree.members)
+          ? boundTree.members
+          : [];
+        if (!boundTree.members.includes(acceptingUserId)) {
+          boundTree.members.push(acceptingUserId);
+        }
+        boundTree.updatedAt = now;
+      }
+
       semya.updatedAt = now;
       return {
         invitation: structuredClone(invitation),
@@ -9492,7 +9677,7 @@ class FileStore {
     });
   }
 
-  async revokeInvitation({invitationId, actingUserId}) {
+  async revokeInvitation({invitationId, actingUserId, semyaId = null}) {
     if (!invitationId || typeof invitationId !== "string") {
       throw new Error("INVALID_INVITATION_ID");
     }
@@ -9504,7 +9689,7 @@ class FileStore {
     const invitation = (db.semyaInvitations || []).find(
       (inv) => inv.id === invitationId,
     );
-    if (!invitation) {
+    if (!invitation || (semyaId && invitation.semyaId !== semyaId)) {
       throw new Error("INVITATION_NOT_FOUND");
     }
     // Per Ship 4 spec: revoker = inviter либо semya owner.
@@ -9631,7 +9816,7 @@ class FileStore {
     }
   }
 
-  async revokeBrowseToken({tokenId, actingUserId}) {
+  async revokeBrowseToken({tokenId, actingUserId, semyaId = null}) {
     if (!tokenId || typeof tokenId !== "string") {
       throw new Error("INVALID_TOKEN_ID");
     }
@@ -9641,7 +9826,7 @@ class FileStore {
 
     const db = await this._read();
     const token = (db.semyaBrowseTokens || []).find((t) => t.id === tokenId);
-    if (!token) {
+    if (!token || (semyaId && token.semyaId !== semyaId)) {
       throw new Error("TOKEN_NOT_FOUND");
     }
     if (token.revokedAt) {
@@ -10043,13 +10228,48 @@ class FileStore {
     tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
     tree.members = Array.isArray(tree.members) ? tree.members : [];
 
+    const useSemyaModel =
+      String(process.env.RODNYA_FEDERATED_SEMYI_ENABLED || "")
+        .trim()
+        .toLowerCase() === "true";
+    const boundSemya = tree.semyaId
+      ? (db.semyi || []).find((s) => s.id === tree.semyaId && !s.deletedAt)
+      : null;
+    const activeSemyaMembership = boundSemya
+      ? (db.semyaMembers || []).find(
+          (m) =>
+            m.semyaId === boundSemya.id &&
+            m.userId === userId &&
+            !m.hiddenAt,
+        )
+      : null;
+
     const isCreator = tree.creatorId === userId;
     const isMember = tree.memberIds.includes(userId) || tree.members.includes(userId);
-    if (!isCreator && !isMember) {
+    if (useSemyaModel && boundSemya) {
+      if (!activeSemyaMembership) {
+        return false;
+      }
+    } else if (!isCreator && !isMember) {
       return false;
     }
 
-    if (isCreator) {
+    const canDelete = boundSemya
+      ? activeSemyaMembership?.role === "owner" ||
+        (!useSemyaModel && !activeSemyaMembership && isCreator)
+      : isCreator;
+
+    if (canDelete) {
+      if (boundSemya) {
+        const deletedAt = nowIso();
+        boundSemya.deletedAt = deletedAt;
+        boundSemya.updatedAt = deletedAt;
+        for (const m of db.semyaMembers || []) {
+          if (m.semyaId === boundSemya.id && !m.hiddenAt) {
+            m.hiddenAt = deletedAt;
+          }
+        }
+      }
       db.trees.splice(treeIndex, 1);
       db.persons = db.persons.filter((entry) => entry.treeId !== treeId);
       db.relations = db.relations.filter((entry) => entry.treeId !== treeId);
@@ -10078,6 +10298,15 @@ class FileStore {
       db.comments = db.comments.filter(
         (entry) => !removedPostIds.includes(entry.postId),
       );
+      db.gatherings = (db.gatherings || []).filter((entry) => entry.treeId !== treeId);
+      db.polls = (db.polls || []).filter((entry) => entry.treeId !== treeId);
+      db.storyRequests = (db.storyRequests || []).filter((entry) => entry.treeId !== treeId);
+      db.profileArticles = (db.profileArticles || []).filter((entry) => entry.treeId !== treeId);
+      if (removedChatIds.length > 0) {
+        const removedChatSet = new Set(removedChatIds);
+        db.chatDrafts = (db.chatDrafts || []).filter((entry) => !removedChatSet.has(entry.chatId));
+        db.chatPins = ensureChatPins(db).filter((entry) => !removedChatSet.has(entry.chatId));
+      }
       db.notifications = db.notifications.filter(
         (entry) => entry.data?.treeId !== treeId,
       );
@@ -10099,6 +10328,9 @@ class FileStore {
 
     tree.memberIds = tree.memberIds.filter((entry) => entry !== userId);
     tree.members = tree.members.filter((entry) => entry !== userId);
+    if (activeSemyaMembership && !activeSemyaMembership.hiddenAt) {
+      activeSemyaMembership.hiddenAt = nowIso();
+    }
     tree.updatedAt = nowIso();
 
     for (const person of db.persons) {
@@ -10273,7 +10505,18 @@ class FileStore {
     if (!tree) {
       return null;
     }
-    if (tree.creatorId !== actorId) {
+    const isSemyaOwner = Boolean(
+      tree.semyaId &&
+      (db.semyi || []).some((s) => s.id === tree.semyaId && !s.deletedAt) &&
+      (db.semyaMembers || []).some(
+        (m) =>
+          m.semyaId === tree.semyaId &&
+          m.userId === actorId &&
+          m.role === "owner" &&
+          !m.hiddenAt,
+      ),
+    );
+    if (tree.creatorId !== actorId && !isSemyaOwner) {
       return false;
     }
     const person = db.persons.find(
@@ -10493,7 +10736,7 @@ class FileStore {
     }
 
     const accessibleTrees = db.trees.filter((tree) =>
-      this._userCanAccessTreeRecord(tree, normalizedUserId),
+      this._userCanAccessTreeRecord(tree, normalizedUserId, db),
     );
     if (accessibleTrees.length === 0) {
       return [];
@@ -10572,10 +10815,27 @@ class FileStore {
     };
   }
 
-  _userCanAccessTreeRecord(tree, userId) {
+  _userCanAccessTreeRecord(tree, userId, db = null) {
     const normalizedUserId = normalizeNullableString(userId);
     if (!tree || !normalizedUserId) {
       return false;
+    }
+    const useSemyaModel =
+      String(process.env.RODNYA_FEDERATED_SEMYI_ENABLED || "")
+        .trim()
+        .toLowerCase() === "true";
+    if (useSemyaModel && tree.semyaId && db) {
+      const semya = (db.semyi || []).find(
+        (entry) => entry.id === tree.semyaId && !entry.deletedAt,
+      );
+      if (semya) {
+        return (db.semyaMembers || []).some(
+          (m) =>
+            m.semyaId === semya.id &&
+            m.userId === normalizedUserId &&
+            !m.hiddenAt,
+        );
+      }
     }
     const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
     const members = Array.isArray(tree.members) ? tree.members : [];
@@ -10620,7 +10880,7 @@ class FileStore {
     if (!sourcePerson) return [];
 
     const accessibleTrees = db.trees.filter((tree) =>
-      this._userCanAccessTreeRecord(tree, normalizedUserId),
+      this._userCanAccessTreeRecord(tree, normalizedUserId, db),
     );
     if (accessibleTrees.length <= 1) {
       // Only one accessible tree → nothing cross-tree to suggest.
@@ -15067,17 +15327,22 @@ class FileStore {
 
       const isOriginalActor = row.deletedByUserId === actorUserId;
       let isSemyaMember = false;
+      let hasHiddenRow = false;
+      let activeSemyaExists = false;
       if (row.semyaId) {
-        isSemyaMember = (db.semyaMembers || []).some(
-          (m) =>
-            m.userId === actorUserId &&
-            m.semyaId === row.semyaId &&
-            !m.hiddenAt,
-        );
         const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
         if (semya?.deletedAt) {
           throw new Error("SEMYA_DELETED");
         }
+        activeSemyaExists = Boolean(semya && !semya.deletedAt);
+        const memberRows = (db.semyaMembers || []).filter(
+          (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
+        );
+        isSemyaMember = memberRows.some((m) => !m.hiddenAt);
+        hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
+      }
+      if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
+        throw new Error("FORBIDDEN");
       }
       if (!isOriginalActor && !isSemyaMember) {
         throw new Error("FORBIDDEN");
@@ -15098,16 +15363,26 @@ class FileStore {
       }
 
       if (row.snapshot?.userId) {
-        tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
-        if (!tree.memberIds.includes(row.snapshot.userId)) {
-          tree.memberIds.push(row.snapshot.userId);
+        const kickedSnapshotUser =
+          tree.semyaId &&
+          (db.semyaMembers || []).some(
+            (m) =>
+              m.semyaId === tree.semyaId &&
+              m.userId === row.snapshot.userId &&
+              Boolean(m.hiddenAt),
+          );
+        if (!kickedSnapshotUser) {
+          tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+          if (!tree.memberIds.includes(row.snapshot.userId)) {
+            tree.memberIds.push(row.snapshot.userId);
+          }
+          tree.members = Array.isArray(tree.members) ? tree.members : [];
+          if (!tree.members.includes(row.snapshot.userId)) {
+            tree.members.push(row.snapshot.userId);
+          }
+          this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
+          tree.updatedAt = nowIso();
         }
-        tree.members = Array.isArray(tree.members) ? tree.members : [];
-        if (!tree.members.includes(row.snapshot.userId)) {
-          tree.members.push(row.snapshot.userId);
-        }
-        this._ensureSemyaMembershipForLegacyJoin(db, tree, row.snapshot.userId);
-        tree.updatedAt = nowIso();
       }
 
       row.restoredAt = nowIso();
@@ -15160,13 +15435,19 @@ class FileStore {
 
     const isOriginalActor = row.deletedByUserId === actorUserId;
     let isSemyaMember = false;
+    let hasHiddenRow = false;
+    let activeSemyaExists = false;
     if (row.semyaId) {
-      isSemyaMember = (db.semyaMembers || []).some(
-        (m) =>
-          m.userId === actorUserId &&
-          m.semyaId === row.semyaId &&
-          !m.hiddenAt,
+      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
+      activeSemyaExists = Boolean(semya && !semya.deletedAt);
+      const memberRows = (db.semyaMembers || []).filter(
+        (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
       );
+      isSemyaMember = memberRows.some((m) => !m.hiddenAt);
+      hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
+    }
+    if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
+      throw new Error("FORBIDDEN");
     }
     if (!isOriginalActor && !isSemyaMember) {
       throw new Error("FORBIDDEN");
@@ -15718,8 +15999,9 @@ class FileStore {
     // person передан напрямую (уже под рукой из фильтра ниже) — было
     // O(persons_в_дереве²) global-scan через четыре .find() внутри
     // _buildPersonViewFromGraph на каждого. См. docs/speed_measurement.md.
+    const tree = (db.trees || []).find((entry) => entry.id === treeId) || null;
     const graphIndex = this._buildPersonGraphIndex(db);
-    const treePersons = db.persons
+    let treePersons = db.persons
       .filter((person) => person.treeId === treeId)
       .map((person) =>
         this._buildPersonViewFromGraph(db, treeId, person.id, {
@@ -15728,20 +16010,34 @@ class FileStore {
         }),
       )
       .filter(Boolean);
-    if (treePersons.length === 0 && !db.trees.some((tree) => tree.id === treeId)) {
+    if (treePersons.length === 0 && !tree) {
       return null;
     }
 
+    let snapshotRelations = db.relations;
+    if (tree?.semyaId && viewerUserId) {
+      const hiddenIds = await this.listHiddenPersonIdsForCaller(
+        tree.semyaId,
+        viewerUserId,
+        db,
+      );
+      if (hiddenIds.length > 0) {
+        const hiddenSet = new Set(hiddenIds);
+        treePersons = treePersons.filter((p) => !hiddenSet.has(p.id));
+        snapshotRelations = db.relations.filter(
+          (rel) => !hiddenSet.has(rel.person1Id) && !hiddenSet.has(rel.person2Id),
+        );
+      }
+    }
+
     const viewerPerson = viewerUserId
-      ? db.persons.find(
-          (person) => person.treeId === treeId && person.userId === viewerUserId,
-        )
+      ? treePersons.find((person) => person.userId === viewerUserId)
       : null;
 
     return buildTreeGraphSnapshot({
       treeId,
       persons: treePersons,
-      relations: db.relations,
+      relations: snapshotRelations,
       viewerPersonId: viewerPerson?.id || null,
     });
   }
@@ -16574,7 +16870,9 @@ class FileStore {
       if (!tree.members.includes(invitation.userId)) {
         tree.members.push(invitation.userId);
       }
-      this._ensureSemyaMembershipForLegacyJoin(db, tree, invitation.userId);
+      this._ensureSemyaMembershipForLegacyJoin(db, tree, invitation.userId, {
+        allowUnhide: true,
+      });
       tree.updatedAt = nowIso();
     }
 
@@ -17374,12 +17672,24 @@ class FileStore {
     // the primary one. User-visible bug: post in branchIds=[A, B],
     // viewer in B only, post.treeId=A → viewer never sees it even
     // though the author fan-out targeted B explicitly.
+    const normalizedViewerUserId = normalizeNullableString(viewerUserId);
+    if (!normalizedViewerUserId) {
+      return true;
+    }
+    if (post.authorId === normalizedViewerUserId) {
+      return true;
+    }
+    const primaryTree = (db.trees || []).find(
+      (entry) => entry.id === post.treeId,
+    );
     if (
+      primaryTree &&
+      this._userCanAccessTreeRecord(primaryTree, normalizedViewerUserId, db) &&
       this._canUserViewCircleContent(db, {
         treeId: post.treeId,
         circleId: post.circleId,
         authorId: post.authorId,
-        viewerUserId,
+        viewerUserId: normalizedViewerUserId,
       }, cache)
     ) {
       return true;
@@ -17387,18 +17697,77 @@ class FileStore {
     const branchIds = Array.isArray(post.branchIds) ? post.branchIds : [];
     for (const branchId of branchIds) {
       if (!branchId || branchId === post.treeId) continue;
+      const branchTree = (db.trees || []).find(
+        (entry) => entry.id === branchId,
+      );
       if (
+        branchTree &&
+        this._userCanAccessTreeRecord(branchTree, normalizedViewerUserId, db) &&
         this._canUserViewCircleContent(db, {
           treeId: branchId,
           circleId: null,
           authorId: post.authorId,
-          viewerUserId,
+          viewerUserId: normalizedViewerUserId,
         }, cache)
       ) {
         return true;
       }
     }
     return false;
+  }
+
+  _listAccessibleTreeUserIds(db, tree) {
+    if (!tree) return [];
+    const useSemyaModel =
+      String(process.env.RODNYA_FEDERATED_SEMYI_ENABLED || "")
+        .trim()
+        .toLowerCase() === "true";
+    if (useSemyaModel && tree.semyaId) {
+      const semya = (db.semyi || []).find(
+        (entry) => entry.id === tree.semyaId && !entry.deletedAt,
+      );
+      if (semya) {
+        return Array.from(
+          new Set(
+            (db.semyaMembers || [])
+              .filter((m) => m.semyaId === semya.id && !m.hiddenAt)
+              .map((m) => normalizeNullableString(m.userId))
+              .filter(Boolean),
+          ),
+        );
+      }
+    }
+    return Array.from(
+      new Set(
+        [tree.creatorId, ...(Array.isArray(tree.memberIds) ? tree.memberIds : [])]
+          .map((id) => normalizeNullableString(id))
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  async canUserViewScopedItem({item, userId, db: prefetchedDb = null} = {}) {
+    if (!item) return false;
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) return false;
+    const db = prefetchedDb || (await this.readSharedSnapshot());
+    const branchIds = new Set(
+      [item.treeId, ...(Array.isArray(item.branchIds) ? item.branchIds : [])]
+        .map((id) => normalizeNullableString(id))
+        .filter(Boolean),
+    );
+    let hasAccessibleTree = false;
+    for (const branchId of branchIds) {
+      const tree = (db.trees || []).find((entry) => entry.id === branchId);
+      if (tree && this._userCanAccessTreeRecord(tree, normalizedUserId, db)) {
+        hasAccessibleTree = true;
+        break;
+      }
+    }
+    if (!hasAccessibleTree) {
+      return false;
+    }
+    return this._canUserViewCirclePost(db, item, normalizedUserId);
   }
 
   // ── Phase 6.3: «Эта неделя в семье» digest ─────────────────────────
@@ -18170,14 +18539,17 @@ class FileStore {
         ? post.branchIds
         : [post.treeId].filter(Boolean),
     );
+    const circleCache = this._createCircleVisibilityCache();
     const audienceUserIds = new Set();
     for (const branchId of branchIds) {
       const tree = db.trees.find((entry) => entry.id === branchId);
       if (!tree) continue;
-      const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+      const memberIds = this._listAccessibleTreeUserIds(db, tree);
       for (const memberId of memberIds) {
-        if (!memberId) continue;
-        if (memberId === post.authorId) continue;
+        if (!memberId || memberId === post.authorId) continue;
+        if (!this._canUserViewCirclePost(db, post, memberId, circleCache)) {
+          continue;
+        }
         audienceUserIds.add(memberId);
       }
     }
@@ -18320,14 +18692,17 @@ class FileStore {
         ? gathering.branchIds
         : [gathering.treeId].filter(Boolean),
     );
+    const circleCache = this._createCircleVisibilityCache();
     const audienceUserIds = new Set();
     for (const branchId of branchIds) {
       const tree = db.trees.find((entry) => entry.id === branchId);
       if (!tree) continue;
-      const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+      const memberIds = this._listAccessibleTreeUserIds(db, tree);
       for (const memberId of memberIds) {
-        if (!memberId) continue;
-        if (memberId === gathering.authorId) continue;
+        if (!memberId || memberId === gathering.authorId) continue;
+        if (!this._canUserViewCirclePost(db, gathering, memberId, circleCache)) {
+          continue;
+        }
         audienceUserIds.add(memberId);
       }
     }
@@ -18515,14 +18890,17 @@ class FileStore {
         ? poll.branchIds
         : [poll.treeId].filter(Boolean),
     );
+    const circleCache = this._createCircleVisibilityCache();
     const audienceUserIds = new Set();
     for (const branchId of branchIds) {
       const tree = db.trees.find((entry) => entry.id === branchId);
       if (!tree) continue;
-      const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+      const memberIds = this._listAccessibleTreeUserIds(db, tree);
       for (const memberId of memberIds) {
-        if (!memberId) continue;
-        if (memberId === poll.authorId) continue;
+        if (!memberId || memberId === poll.authorId) continue;
+        if (!this._canUserViewCirclePost(db, poll, memberId, circleCache)) {
+          continue;
+        }
         audienceUserIds.add(memberId);
       }
     }
@@ -18551,6 +18929,12 @@ class FileStore {
     const poll = db.polls.find((entry) => entry.id === pollId);
     if (!poll) {
       return null;
+    }
+    if (poll.closesAt) {
+      const closesAtMs = Date.parse(poll.closesAt);
+      if (Number.isFinite(closesAtMs) && closesAtMs <= Date.now()) {
+        return "POLL_CLOSED";
+      }
     }
     poll.responses = Array.isArray(poll.responses) ? poll.responses : [];
     const validOptionIds = new Set(
@@ -18718,20 +19102,28 @@ class FileStore {
       throw new Error("HARD_DELETE_ELAPSED");
     }
 
-    // Permission: actor was original deleter (= author per route gate)
-    // либо owner of семья bound к post's tree.
+    // Permission: actor was original deleter (= author per route gate, still
+    // active in bound semya) либо active owner of семья bound к post's tree.
     const isOriginalActor = row.deletedByUserId === actorUserId;
     let isSemyaOwner = false;
+    let allowedAsOriginal = isOriginalActor;
     const tree = (db.trees || []).find((t) => t.id === row.treeId);
     if (tree?.semyaId) {
       const semya = (db.semyi || []).find(
         (s) => s.id === tree.semyaId && !s.deletedAt,
       );
-      if (semya?.ownerId === actorUserId) {
-        isSemyaOwner = true;
+      if (semya) {
+        const memberRows = (db.semyaMembers || []).filter(
+          (m) => m.semyaId === semya.id && m.userId === actorUserId,
+        );
+        const activeMem = memberRows.find((m) => !m.hiddenAt);
+        isSemyaOwner = activeMem?.role === "owner";
+        if (!activeMem) {
+          allowedAsOriginal = false;
+        }
       }
     }
-    if (!isOriginalActor && !isSemyaOwner) {
+    if (!allowedAsOriginal && !isSemyaOwner) {
       throw new Error("FORBIDDEN");
     }
 
@@ -19793,6 +20185,9 @@ class FileStore {
     if (!normalizedParticipantId) {
       return undefined;
     }
+    if (chat.createdBy && normalizedParticipantId === chat.createdBy) {
+      return undefined;
+    }
 
     const currentParticipantIds = normalizeParticipantIds(chat.participantIds || []);
     if (!currentParticipantIds.includes(normalizedParticipantId)) {
@@ -20491,10 +20886,7 @@ class FileStore {
           if (!isCallBusyState(call.state)) {
             return false;
           }
-          return (
-            call.participantIds.includes(initiatorId) ||
-            call.participantIds.includes(recipientId)
-          );
+          return participantIds.some((pid) => call.participantIds.includes(pid));
         });
       if (hasBusyCall) {
         return skip("BUSY");
@@ -20742,11 +21134,26 @@ class FileStore {
       if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
         return skip(false);
       }
-      if (call.state !== "ringing") {
+      const isGroupCall = call.participantIds.length > 2;
+      if (call.state !== "ringing" && !(isGroupCall && call.state === "active")) {
         return skip(undefined);
       }
 
       const timestamp = nowIso();
+      if (isGroupCall) {
+        storedCall.participantIds = call.participantIds.filter((id) => id !== userId);
+        if (storedCall.sessionByUserId && typeof storedCall.sessionByUserId === "object") {
+          delete storedCall.sessionByUserId[userId];
+        }
+        if (storedCall.joinedSessionByUserId && typeof storedCall.joinedSessionByUserId === "object") {
+          delete storedCall.joinedSessionByUserId[userId];
+        }
+        if (storedCall.participantIds.length > 1) {
+          storedCall.updatedAt = timestamp;
+          return structuredClone(normalizeStoredCall(storedCall));
+        }
+      }
+
       storedCall.state = "rejected";
       storedCall.updatedAt = timestamp;
       storedCall.endedAt = timestamp;
@@ -20774,6 +21181,22 @@ class FileStore {
       storedCall.updatedAt = timestamp;
       storedCall.endedAt = timestamp;
       storedCall.endedReason = "cancelled";
+      return structuredClone(normalizeStoredCall(storedCall));
+    });
+  }
+
+  async endStaleCall({callId, reason = "room_gone"}) {
+    return this._mutate((db, skip) => {
+      const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+      const call = normalizeStoredCall(storedCall);
+      if (!storedCall || !call || isCallTerminalState(call.state)) {
+        return skip(null);
+      }
+      const timestamp = nowIso();
+      storedCall.state = "ended";
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = timestamp;
+      storedCall.endedReason = normalizeNullableString(reason) || "room_gone";
       return structuredClone(normalizeStoredCall(storedCall));
     });
   }
@@ -20943,13 +21366,24 @@ class FileStore {
               (value) => value !== normalizedParticipantIdentity,
             );
         }
-        if (
-          normalizedEvent === "participant_left" &&
-          call.participantIds.length > 2 &&
-          storedCall.metrics.connectedParticipantIds.length > 0
-        ) {
-          storedCall.updatedAt = timestamp;
-          return structuredClone(normalizeStoredCall(storedCall));
+        if (normalizedEvent === "participant_left") {
+          const leftUserId = normalizedParticipantIdentity.split("#")[0];
+          const sameUserStillConnected =
+            Boolean(leftUserId) &&
+            storedCall.metrics.connectedParticipantIds.some(
+              (id) => String(id || "").split("#")[0] === leftUserId,
+            );
+          if (sameUserStillConnected) {
+            storedCall.updatedAt = timestamp;
+            return structuredClone(normalizeStoredCall(storedCall));
+          }
+          if (
+            call.participantIds.length > 2 &&
+            storedCall.metrics.connectedParticipantIds.length > 0
+          ) {
+            storedCall.updatedAt = timestamp;
+            return structuredClone(normalizeStoredCall(storedCall));
+          }
         }
         storedCall.state = "ended";
         storedCall.updatedAt = timestamp;
@@ -21982,7 +22416,10 @@ class FileStore {
     const normalizedId = normalizeNullableString(checkId);
     if (!normalizedId) return null;
     const db = await this._read();
-    this._sweepExpiredKinshipChecks(db);
+    const newlyExpired = this._sweepExpiredKinshipChecks(db);
+    if (newlyExpired.length > 0) {
+      await this._write(db);
+    }
     const check = (db.kinshipChecks || []).find((c) => c.id === normalizedId);
     if (!check) return null;
     return structuredClone(check);
@@ -22141,14 +22578,35 @@ class FileStore {
   // `_mutate`'s applyFn.
   _isUserInTreeOrSemya(db, tree, userId) {
     if (!tree || !userId) return false;
-    const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
-    if (tree.creatorId === userId || memberIds.includes(userId)) return true;
+    const useSemyaModel =
+      String(process.env.RODNYA_FEDERATED_SEMYI_ENABLED || "")
+        .trim()
+        .toLowerCase() === "true";
     if (tree.semyaId) {
-      return (db.semyaMembers || []).some(
-        (m) => m.semyaId === tree.semyaId && m.userId === userId && !m.hiddenAt,
-      );
+      const semya = (db.semyi || []).find((s) => s.id === tree.semyaId);
+      if (semya?.deletedAt) {
+        return false;
+      }
+      if (semya) {
+        const activeMem = (db.semyaMembers || []).some(
+          (m) => m.semyaId === semya.id && m.userId === userId && !m.hiddenAt,
+        );
+        if (useSemyaModel) {
+          return activeMem;
+        }
+        const hiddenMem = (db.semyaMembers || []).some(
+          (m) => m.semyaId === semya.id && m.userId === userId && Boolean(m.hiddenAt),
+        );
+        if (hiddenMem) {
+          return false;
+        }
+        if (activeMem) {
+          return true;
+        }
+      }
     }
-    return false;
+    const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+    return tree.creatorId === userId || memberIds.includes(userId);
   }
 
   /// Create a pending story request. Cheap shape validation happens
@@ -22341,6 +22799,23 @@ class FileStore {
       if (request.targetUserId !== normalizedActor) return fail("NOT_TARGET");
       if (request.status !== "pending") return fail("NOT_PENDING");
 
+      const tree = (db.trees || []).find((t) => t.id === request.treeId);
+      const heroPerson = this._findPersonRecordById(db, request.personId);
+      if (!tree || !heroPerson || heroPerson.treeId !== request.treeId) {
+        return fail("NOT_FOUND");
+      }
+      if (!this._isUserInTreeOrSemya(db, tree, normalizedActor)) {
+        return fail("FORBIDDEN_NOT_MEMBER");
+      }
+      const isBlockedPair = (db.userBlocks || []).some(
+        (b) =>
+          (b.blockerId === request.requesterUserId && b.blockedId === normalizedActor) ||
+          (b.blockerId === normalizedActor && b.blockedId === request.requesterUserId),
+      );
+      if (isBlockedPair) {
+        return fail("FORBIDDEN_BLOCKED");
+      }
+
       // Map the answer's wire shape → an article block type/content. MVP-1
       // decision §0.3/§0.4: audio stores no transcript (речь не
       // расшифровывается), video is out of scope (no `video` block type
@@ -22349,19 +22824,32 @@ class FileStore {
       let blockContent;
       if (kind === "audio") {
         const url = normalizeNullableString(answer?.mediaUrl);
-        if (!url) return fail("INVALID_ANSWER");
+        if (!url || !enforceSafeMediaOrLinkUrl(url, {allowEmpty: false}).ok) {
+          return fail("INVALID_ANSWER");
+        }
+        const duration = Number(answer?.durationSec);
+        if (Number.isFinite(duration) && (duration < 0 || duration > 36000)) {
+          return fail("INVALID_ANSWER");
+        }
         blockType = "audio";
         blockContent = {url, durationSec: answer?.durationSec, transcript: null};
       } else if (kind === "text") {
         const text = String(answer?.text || "").trim();
-        if (!text) return fail("INVALID_ANSWER");
+        if (!text || text.length > 20000) return fail("INVALID_ANSWER");
         blockType = "paragraph";
         blockContent = {spans: [text]};
       } else {
         const url = normalizeNullableString(answer?.mediaUrl);
-        if (!url) return fail("INVALID_ANSWER");
+        const caption = normalizeNullableString(answer?.caption);
+        if (
+          !url ||
+          !enforceSafeMediaOrLinkUrl(url, {allowEmpty: false}).ok ||
+          (caption && caption.length > 1000)
+        ) {
+          return fail("INVALID_ANSWER");
+        }
         blockType = "photo";
-        blockContent = {url, caption: normalizeNullableString(answer?.caption)};
+        blockContent = {url, caption};
       }
 
       let block;

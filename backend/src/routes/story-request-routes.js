@@ -33,7 +33,13 @@ const {
 
 function registerStoryRequestRoutes(
   app,
-  {store, requireAuth, requireGraphPersonEdit, createAndDispatchNotification},
+  {
+    store,
+    requireAuth,
+    requireTreeAccess,
+    requireGraphPersonEdit,
+    createAndDispatchNotification,
+  },
 ) {
   function truncate(text, max) {
     const value = String(text || "");
@@ -124,11 +130,28 @@ function registerStoryRequestRoutes(
       return;
     }
 
-    // Initiator must be able to edit the hero person — this IS the
-    // permission that lets the eventual answer land as an article block
-    // (§1: "инициатор обязан иметь право редактировать персону").
-    const gate = await requireGraphPersonEdit(req, res, treeId, personId, "edit");
-    if (!gate) return;
+    const tree = await requireTreeAccess(req, res, treeId, {
+      requiredRole: "viewer",
+    });
+    if (!tree) return;
+
+    const person = await store.findPerson(
+      tree.id,
+      personId,
+      req.storeSnapshot || null,
+    );
+    if (!person) {
+      res.status(404).json({message: "Человек не найден"});
+      return;
+    }
+    const isTargetOwnerAboutSelf =
+      Boolean(person.userId) && person.userId === targetUserId;
+    if (!isTargetOwnerAboutSelf) {
+      // Asking a third person about a claimed/anonymous hero still requires
+      // edit rights on that hero person so the eventual answer can land.
+      const gate = await requireGraphPersonEdit(req, res, treeId, personId, "edit");
+      if (!gate) return;
+    }
 
     const outcome = await store.createStoryRequest({
       treeId,
@@ -237,13 +260,28 @@ function registerStoryRequestRoutes(
       return;
     }
 
+    const mediaUrlRaw =
+      req.body?.mediaUrl ?? req.body?.audioUrl ?? req.body?.photoUrl;
+    const rawDurationMs = req.body?.audioDurationMs;
+    let durationSec = req.body?.durationSec;
+    if (rawDurationMs !== undefined && rawDurationMs !== null) {
+      const parsedMs = Number(rawDurationMs);
+      if (!Number.isFinite(parsedMs) || parsedMs < 0 || parsedMs > 36_000_000) {
+        res.status(400).json({message: "Некорректная длительность аудио"});
+        return;
+      }
+      if (durationSec === undefined || durationSec === null) {
+        durationSec = Math.round(parsedMs / 1000);
+      }
+    }
+
     const outcome = await store.answerStoryRequest({
       requestId: req.params.id,
       actorUserId: req.auth.user.id,
       answer: {
         kind,
-        mediaUrl: req.body?.mediaUrl,
-        durationSec: req.body?.durationSec,
+        mediaUrl: mediaUrlRaw,
+        durationSec,
         text: req.body?.text,
         caption: req.body?.caption,
       },
@@ -256,6 +294,13 @@ function registerStoryRequestRoutes(
     }
     if (outcome.error === "NOT_TARGET") {
       res.status(403).json({message: "Отвечать может только тот, кому задали вопрос"});
+      return;
+    }
+    if (
+      outcome.error === "FORBIDDEN_BLOCKED" ||
+      outcome.error === "FORBIDDEN_NOT_MEMBER"
+    ) {
+      res.status(403).json({message: "Доступ к этому запросу больше недоступен"});
       return;
     }
     if (outcome.error === "NOT_PENDING") {
