@@ -10,6 +10,7 @@ import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/models/onboarding_state.dart';
 import '../backend/models/semya.dart';
 import '../backend/models/semya_invitation.dart';
+import '../services/semya_invitation_deep_link_service.dart';
 
 /// Phase 6 chunk 2 (PHASE-6-PROPOSAL.md §3.1): wizard state controller.
 ///
@@ -170,6 +171,7 @@ class OnboardingController extends ChangeNotifier {
     try {
       final result = await svc.acceptInvitation(token);
       if (_disposed) return null;
+      SemyaInvitationDeepLinkService().clearPendingToken();
       // Mark onboarding skipped — recipient теперь in семья, не нужно
       // продолжать «create» wizard flow.
       final onboardingSvc = _service;

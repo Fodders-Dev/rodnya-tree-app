@@ -119,14 +119,8 @@
       <a class="button primary hidden" id="open-external" href="#">Открыть во внешнем браузере</a>
       <a class="button primary" id="open-app" href="#">Открыть в приложении</a>
       <a class="button secondary" id="open-web" href="#">Продолжить в браузере</a>
-      <!-- DL fix: apps.rustore.ru/app/… отдаёт 404 (листинг RuStore —
-           черновик). По умолчанию ведём на канонический каталог
-           (www.rustore.ru/catalog/app/… — 200; станет полноценным после
-           публикации). Скрипт апгрейдит href на прямой OTA-apkUrl, когда
-           /v1/app/latest его отдаёт (живой канал сегодня — sideload/OTA).
-           TODO: после публикации листинга можно вести прямо на него. -->
       <a class="button secondary" id="install"
-         href="https://www.rustore.ru/catalog/app/com.ahjkuio.rodnya_family_app"
+         href="#open-web"
          rel="noreferrer">Скачать приложение</a>
     </div>
     <small id="diag"></small>
@@ -144,29 +138,17 @@
       //
       // Тап ВНЕ webview на верифицированном устройстве сюда не попадает —
       // ОС откроет приложение раньше, чем страница загрузится.
-      var APP_HOST = 'rodnya-tree.ru';
+      var APP_HOST = window.location.host || 'rodnya-tree.ru';
       var PACKAGE = 'com.ahjkuio.rodnya_family_app';
 
       var origin = window.location.origin;
       var pathname = window.location.pathname || '/';
       var ua = navigator.userAgent || '';
 
-      // Каноничные путь+параметры инвайта.
-      //   токен-форма:  /invite/{token}
-      //   параметр-форма: /invite?treeId=…&personId=…
-      //
-      // ФИКС 2 (security): берём параметры ТОЛЬКО из search и пропускаем
-      // через URLSearchParams → toString(), так что в data-часть intent://
-      // и в хеш-роут попадают исключительно корректно закодированные
-      // key=value. Сырые '#'/';'/'%' из ввода не доезжают до данных перед
-      // доверенным суффиксом #Intent;…  — крафт вроде
-      // /invite#x?treeId=a#Intent;package=evil;end больше не протаскивает
-      // чужой #Intent-сегмент (hash вообще не читаем; '#' в значении →
-      // %23). Токен прогоняем через encodeURIComponent.
       var appLinkPath; // путь для intent:// + App Link
       var webHashRoute; // фолбэк в web-флоу (хеш-роут SPA)
       var tokenMatch = pathname.match(/\/invite\/([^/?#]+)/);
-      if (tokenMatch && tokenMatch[1]) {
+      if (tokenMatch && tokenMatch[1] && tokenMatch[1] !== 'index.html') {
         var token = encodeURIComponent(tokenMatch[1]);
         appLinkPath = '/invite/' + token;
         webHashRoute = '/#/invite/' + token;
@@ -178,6 +160,10 @@
       }
 
       var webUrl = origin + webHashRoute;
+      var installBtn = document.getElementById('install');
+      if (installBtn) {
+        installBtn.href = webUrl;
+      }
 
       // Прямой лонч приложения: intent:// на верифицированный https App Link
       // с явным package и web-флоу как browser_fallback_url. ВТОРИЧНЫЙ путь —
@@ -245,7 +231,7 @@
       // Telegram, Instagram, VK, Facebook, Line + общий маркер Android
       // WebView ("; wv)").
       var isInAppWebview =
-        /\b(Telegram|Instagram|VKApp|VKAndroidApp|FB_IAB|FBAN|FBAV|Line)\b/i.test(ua) ||
+        /\b(Telegram|Instagram|VKApp|VKAndroidApp|OKApp|MAX|Viber|FB_IAB|FBAN|FBAV|Line)\b/i.test(ua) ||
         /;\s*wv[);]/i.test(ua);
 
       if (isInAppWebview) {
@@ -291,10 +277,10 @@
         if (Date.now() - started < 2400) return;
         document.getElementById('spinner').classList.add('hidden');
         document.getElementById('title').textContent =
-          'Приложение не открылось';
+          'Продолжаем в браузере…';
         document.getElementById('subtitle').textContent =
-          'Если «Родня» установлена — нажмите «Открыть в приложении». ' +
-          'Иначе продолжите в браузере или установите приложение.';
+          'Если переход не сработал автоматически, нажмите «Продолжить в браузере».';
+        window.location.replace(webUrl);
       }, 2500);
     })();
   </script>

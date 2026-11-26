@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/semya_manage_capable_family_tree_service.dart';
 import '../backend/models/semya.dart';
 import '../utils/photo_url.dart';
 import '../providers/semya_details_controller.dart';
@@ -209,13 +210,17 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
               details.callerRole,
             ),
           const _SectionHeader('Управление'),
-          _OwnerOnlyTile(
-            icon: Icons.settings_outlined,
-            label: 'Управление семьёй',
-            subtitle: 'Переименовать, удалить, изменить роли участников.',
-            visibleAsOwner: details.callerRole == SemyaRole.owner,
-            placeholder: 'Появится в следующем обновлении',
-          ),
+          if (details.callerRole == SemyaRole.owner &&
+              controller.resolveServiceForAction()
+                  is SemyaManageCapableFamilyTreeService)
+            ListTile(
+              key: const Key('semya-details-rename'),
+              leading: const Icon(Icons.drive_file_rename_outline_rounded),
+              title: const Text('Переименовать семью'),
+              subtitle: Text(details.semya.name),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => _renameSemya(controller, details),
+            ),
           // Ship FE3 (2026-05-26): «Приглашения» tile активен для всех
           // member'ов (viewer+) — даже non-inviter может see existing
           // invitations и понять контекст. Кнопка «Пригласить» в самом
@@ -305,6 +310,44 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _renameSemya(
+    SemyaDetailsController controller,
+    SemyaDetails details,
+  ) async {
+    final service = controller.resolveServiceForAction();
+    if (service is! SemyaManageCapableFamilyTreeService) return;
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (_) => _SemyaRenameDialog(initialName: details.semya.name),
+    );
+    if (newName == null || newName.isEmpty || newName == details.semya.name) {
+      return;
+    }
+    try {
+      await (service as SemyaManageCapableFamilyTreeService).updateSemya(
+        semyaId: details.semya.id,
+        name: newName,
+      );
+      await controller.load();
+      if (GetIt.I.isRegistered<TreeProvider>()) {
+        unawaited(GetIt.I<TreeProvider>().refreshAvailableTrees());
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Название семьи обновлено')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e is SemyaError ? e.message : 'Не удалось переименовать семью',
+          ),
+        ),
+      );
+    }
   }
 
   List<Widget> _buildMemberRows(
@@ -638,40 +681,6 @@ class _TreeAccessTile extends StatelessWidget {
   }
 }
 
-class _OwnerOnlyTile extends StatelessWidget {
-  const _OwnerOnlyTile({
-    required this.icon,
-    required this.label,
-    required this.subtitle,
-    required this.visibleAsOwner,
-    required this.placeholder,
-  });
-
-  final IconData icon;
-  final String label;
-  final String subtitle;
-  final bool visibleAsOwner;
-  final String placeholder;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isEnabled = visibleAsOwner;
-    return ListTile(
-      enabled: false, // FE2 — disabled placeholder for both states.
-      leading: Icon(
-        icon,
-        color: isEnabled
-            ? theme.colorScheme.onSurfaceVariant
-            : theme.disabledColor,
-      ),
-      title: Text(label),
-      subtitle: Text(isEnabled ? placeholder : subtitle),
-      trailing: const Icon(Icons.lock_outline_rounded, size: 16),
-    );
-  }
-}
-
 class _MemberRow extends StatelessWidget {
   const _MemberRow({
     required this.membership,
@@ -920,6 +929,54 @@ class _ErrorState extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SemyaRenameDialog extends StatefulWidget {
+  const _SemyaRenameDialog({required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<_SemyaRenameDialog> createState() => _SemyaRenameDialogState();
+}
+
+class _SemyaRenameDialogState extends State<_SemyaRenameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Название семьи'),
+      content: TextField(
+        key: const Key('semya-rename-field'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 80,
+        decoration: const InputDecoration(
+          labelText: 'Новое название',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('semya-rename-save'),
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Сохранить'),
+        ),
+      ],
     );
   }
 }

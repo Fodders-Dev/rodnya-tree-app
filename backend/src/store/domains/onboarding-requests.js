@@ -143,6 +143,17 @@ module.exports = {
     // persons + relations to avoid ghost tree.
     if (existingState && existingState.treeId) {
       const prevTreeId = existingState.treeId;
+      const prevSemyaIds = new Set(
+        (db.semyi || [])
+          .filter((s) => s.treeId === prevTreeId)
+          .map((s) => s.id),
+      );
+      if (prevSemyaIds.size > 0) {
+        db.semyi = (db.semyi || []).filter((s) => !prevSemyaIds.has(s.id));
+        db.semyaMembers = (db.semyaMembers || []).filter(
+          (m) => !prevSemyaIds.has(m.semyaId),
+        );
+      }
       db.persons = (db.persons || []).filter((p) => p.treeId !== prevTreeId);
       db.relations = (db.relations || []).filter(
         (r) => r.treeId !== prevTreeId,
@@ -159,9 +170,30 @@ module.exports = {
       user.profile.birthDate = String(profile.birthDate);
     }
 
-    // Create tree.
+    // Create tree + auto-bind Semya so every onboarded user immediately has a family container.
     const treeId = crypto.randomUUID();
+    const semyaId = crypto.randomUUID();
     const now = nowIso();
+    const semya = {
+      id: semyaId,
+      name: "Моя семья",
+      ownerId: normalizedUser,
+      treeId,
+      description: null,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    };
+    const ownerMembership = {
+      id: crypto.randomUUID(),
+      semyaId,
+      userId: normalizedUser,
+      role: "owner",
+      joinedAt: now,
+      invitedByUserId: null,
+      hasInviteGrant: true,
+      hiddenAt: null,
+    };
     const tree = {
       id: treeId,
       name: "Моя семья",
@@ -172,7 +204,13 @@ module.exports = {
       createdAt: now,
       updatedAt: now,
       isPrivate: true,
+      kind: "family",
+      semyaId,
     };
+    db.semyi = db.semyi || [];
+    db.semyi.push(semya);
+    db.semyaMembers = db.semyaMembers || [];
+    db.semyaMembers.push(ownerMembership);
     db.trees = db.trees || [];
     db.trees.push(tree);
 

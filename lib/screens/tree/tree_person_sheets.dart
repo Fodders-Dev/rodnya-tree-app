@@ -625,8 +625,9 @@ extension _TreePersonSheets on _TreeViewScreenState {
                             _buildTreeSheetAction(
                               icon: Icons.chat_bubble_outline_rounded,
                               label: 'Написать',
-                              onPressed: () =>
-                                  context.push('/chat/${person.userId}'),
+                              onPressed: () => context.push(
+                                '/chat/${person.userId}?relativeId=${Uri.encodeComponent(person.id)}',
+                              ),
                             ),
                           ],
                           const SizedBox(width: 8),

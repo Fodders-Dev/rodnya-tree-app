@@ -125,13 +125,25 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
       );
       return;
     }
+    var nextRoute = '/';
+    TreeProvider? treeProvider;
     if (GetIt.I.isRegistered<TreeProvider>()) {
-      await GetIt.I<TreeProvider>().refreshAvailableTrees();
+      treeProvider = GetIt.I<TreeProvider>();
     } else {
       try {
-        await Provider.of<TreeProvider>(context, listen: false)
-            .refreshAvailableTrees();
+        treeProvider = Provider.of<TreeProvider>(context, listen: false);
       } catch (_) {}
+    }
+    if (treeProvider != null) {
+      await treeProvider.refreshAvailableTrees();
+      final joinedTreeId = result.treeId;
+      if (joinedTreeId != null && joinedTreeId.isNotEmpty) {
+        treeProvider.selectTree(
+          joinedTreeId,
+          invitation.semyaName ?? 'Семья',
+        );
+        nextRoute = '/tree';
+      }
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -141,7 +153,7 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
         ),
       ),
     );
-    context.go('/');
+    context.go(nextRoute);
   }
 
   Widget _buildStep(OnboardingController controller) {

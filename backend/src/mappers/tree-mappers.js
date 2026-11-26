@@ -29,6 +29,7 @@ function mapTree(tree) {
     publicSlug: tree.publicSlug || null,
     isCertified: tree.isCertified === true,
     certificationNote: tree.certificationNote || null,
+    semyaId: tree.semyaId || null,
   };
 }
 

@@ -25,7 +25,16 @@ IconData _notificationIconForType(String type) {
     case 'chat_message':
       return Icons.chat_bubble_outline;
     case 'tree_invitation':
+    case 'tree_invitation_accepted':
+    case 'semya_invitation_received':
+    case 'semya_invitation_accepted':
       return Icons.account_tree_outlined;
+    case 'kinship_check_requested':
+    case 'kinship_check_verified':
+    case 'kinship_check_rejected':
+    case 'kinship_check_expired':
+    case 'kinship_check_revoked':
+      return Icons.verified_outlined;
     case 'tree_update':
       return Icons.account_tree_outlined;
     case 'call':
@@ -66,6 +75,22 @@ String _notificationLabelForType(String type) {
       return 'Новое сообщение';
     case 'tree_invitation':
       return 'Приглашение в дерево';
+    case 'tree_invitation_accepted':
+      return 'Приглашение в дерево принято';
+    case 'semya_invitation_received':
+      return 'Приглашение в семью';
+    case 'semya_invitation_accepted':
+      return 'Приглашение в семью принято';
+    case 'kinship_check_requested':
+      return 'Запрос подтверждения родства';
+    case 'kinship_check_verified':
+      return 'Родство подтверждено';
+    case 'kinship_check_rejected':
+      return 'Родство не подтверждено';
+    case 'kinship_check_expired':
+      return 'Срок проверки родства истёк';
+    case 'kinship_check_revoked':
+      return 'Проверка родства отозвана';
     case 'tree_update':
       return 'Обновление дерева';
     case 'call':

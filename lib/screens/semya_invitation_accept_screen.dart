@@ -26,11 +26,13 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/models/semya.dart';
 import '../providers/tree_provider.dart';
 import '../services/semya_invitation_deep_link_service.dart';
+import '../utils/user_facing_error.dart';
 
 class SemyaInvitationAcceptScreen extends StatefulWidget {
   const SemyaInvitationAcceptScreen({
@@ -98,8 +100,29 @@ class _SemyaInvitationAcceptScreenState
       final result = await service.acceptInvitation(trimmed);
       // Clear persisted token — accepted successfully.
       deepLinkSvc.clearPendingToken();
+      if (GetIt.I.isRegistered<AuthServiceInterface>()) {
+        final auth = GetIt.I<AuthServiceInterface>();
+        if (auth.currentRequiresOnboarding) {
+          await auth.markOnboardingSkipped();
+        }
+      }
+      var targetRoute = '/';
       if (GetIt.I.isRegistered<TreeProvider>()) {
-        unawaited(GetIt.I<TreeProvider>().refreshAvailableTrees());
+        final treeProvider = GetIt.I<TreeProvider>();
+        await treeProvider.refreshAvailableTrees();
+        final joinedTreeId = result.treeId;
+        if (joinedTreeId != null && joinedTreeId.isNotEmpty) {
+          final match = treeProvider.availableTrees
+              .where((t) => t.id == joinedTreeId)
+              .toList();
+          treeProvider.selectTree(
+            joinedTreeId,
+            match.isNotEmpty
+                ? match.first.name
+                : (result.invitation.semyaName ?? 'Семья'),
+          );
+          targetRoute = '/tree';
+        }
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -110,15 +133,18 @@ class _SemyaInvitationAcceptScreenState
           ),
         ),
       );
-      context.go('/');
+      context.go(targetRoute);
     } on SemyaError catch (error) {
       // Clear persisted token only on terminal errors — keep если
       // network blip (user retries via different entry point).
       final terminalCodes = {
         'INVITATION_NOT_FOUND',
         'INVITATION_NOT_PENDING',
+        'INVITATION_EXPIRED',
         'WRONG_RECIPIENT',
+        'FORBIDDEN',
         'SEMYA_NOT_FOUND',
+        'SEMYA_DELETED',
       };
       if (terminalCodes.contains(error.code)) {
         deepLinkSvc.clearPendingToken();
@@ -135,7 +161,10 @@ class _SemyaInvitationAcceptScreenState
       if (!mounted) return;
       setState(() {
         _processing = false;
-        _errorMessage = 'Не удалось принять приглашение: $error';
+        _errorMessage = humanizeError(
+          error,
+          fallback: 'Не удалось принять приглашение. Попробуйте ещё раз.',
+        );
       });
     }
   }
@@ -144,16 +173,15 @@ class _SemyaInvitationAcceptScreenState
     switch (error.code) {
       case 'INVITATION_NOT_FOUND':
         return 'Приглашение не найдено';
+      case 'INVITATION_EXPIRED':
+        return 'Срок действия приглашения истёк';
       case 'INVITATION_NOT_PENDING':
-        // Backend lazy-expires + flips status on accept/revoke. Hard
-        // discriminate невозможен без extra round-trip; surface
-        // backend's localized message (e.g. «приглашение не активно»)
-        // verbatim — оно уже differentiates accepted vs revoked
-        // в практике.
         return error.message;
       case 'WRONG_RECIPIENT':
+      case 'FORBIDDEN':
         return 'Приглашение оформлено на другого пользователя';
       case 'SEMYA_NOT_FOUND':
+      case 'SEMYA_DELETED':
         return 'Семья больше недоступна';
       default:
         return 'Не удалось принять приглашение: ${error.message}';

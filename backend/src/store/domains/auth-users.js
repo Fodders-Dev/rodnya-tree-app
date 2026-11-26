@@ -1431,6 +1431,18 @@ module.exports = {
       tree.members.push(userId);
     }
     this._ensureSemyaMembershipForLegacyJoin(db, tree, userId);
+    // Invited user joined a family tree via person-card link — mark incomplete onboarding skipped.
+    db.onboardingStates = db.onboardingStates || [];
+    const onboardingIdx = db.onboardingStates.findIndex((s) => s.userId === userId);
+    if (onboardingIdx >= 0 && !db.onboardingStates[onboardingIdx].completed) {
+      db.onboardingStates[onboardingIdx] = {
+        ...db.onboardingStates[onboardingIdx],
+        skipped: true,
+        skippedAt: db.onboardingStates[onboardingIdx].skippedAt || nowIso(),
+        updatedAt: nowIso(),
+      };
+      this._onboardingIncompleteCache?.set(userId, false);
+    }
     tree.updatedAt = nowIso();
     this._reconcilePersonIdentities(db);
 

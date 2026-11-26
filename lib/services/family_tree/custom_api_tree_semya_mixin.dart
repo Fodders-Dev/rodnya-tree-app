@@ -1,7 +1,77 @@
 part of '../custom_api_family_tree_service.dart';
 
 mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
-  // ---------- Phase B Ship FE1: семя read endpoints ----------
+  // ---------- Phase B Ship FE1 / Track 2: семя endpoints ----------
+
+  @override
+  Future<Semya> createSemya({
+    required String name,
+    required String treeId,
+    String? description,
+  }) async {
+    final trimmedName = name.trim();
+    final trimmedTreeId = treeId.trim();
+    final trimmedDesc = description?.trim();
+    if (trimmedName.isEmpty || trimmedTreeId.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Нужны название семьи и дерево',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/semya',
+        body: {
+          'name': trimmedName,
+          'treeId': trimmedTreeId,
+          if (trimmedDesc != null && trimmedDesc.isNotEmpty)
+            'description': trimmedDesc,
+        },
+      );
+      final rawSemya = response['semya'];
+      if (rawSemya is! Map) {
+        throw const CustomApiException('createSemya не вернул semya объект');
+      }
+      return Semya.fromJson(Map<String, dynamic>.from(rawSemya));
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'semya_create');
+    }
+  }
+
+  @override
+  Future<Semya> updateSemya({
+    required String semyaId,
+    String? name,
+    String? description,
+  }) async {
+    final trimmedId = semyaId.trim();
+    final trimmedName = name?.trim();
+    final trimmedDesc = description?.trim();
+    if (trimmedId.isEmpty || (trimmedName == null && description == null)) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректные параметры',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'PATCH',
+        path: '/v1/semya/$trimmedId',
+        body: {
+          if (trimmedName != null) 'name': trimmedName,
+          if (description != null) 'description': trimmedDesc,
+        },
+      );
+      final rawSemya = response['semya'];
+      if (rawSemya is! Map) {
+        throw const CustomApiException('updateSemya не вернул semya объект');
+      }
+      return Semya.fromJson(Map<String, dynamic>.from(rawSemya));
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'semya_update');
+    }
+  }
 
   @override
   Future<List<Semya>> listMySemya() async {
@@ -659,7 +729,8 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
         code = 'INVALID_INPUT';
         break;
       case 403:
-        if (endpoint == 'accept_invitation' &&
+        if ((endpoint == 'invitation_accept' ||
+                endpoint == 'accept_invitation') &&
             (lower.contains('адресовано') || lower.contains('recipient'))) {
           code = 'WRONG_RECIPIENT';
         } else {
@@ -667,7 +738,10 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
         }
         break;
       case 404:
-        if (endpoint.contains('invitation') || lower.contains('приглаш')) {
+        if (lower.contains('семь')) {
+          code = 'SEMYA_NOT_FOUND';
+        } else if (endpoint.contains('invitation') ||
+            lower.contains('приглаш')) {
           code = 'INVITATION_NOT_FOUND';
         } else if (endpoint.contains('browse_token') ||
             lower.contains('ссылк') ||

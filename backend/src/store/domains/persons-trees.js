@@ -61,7 +61,15 @@ module.exports = {
       .digest("hex");
   },
 
-  async createTree({creatorId, name, description, isPrivate, kind, includeRules = null}) {
+  async createTree({
+    creatorId,
+    name,
+    description,
+    isPrivate,
+    kind,
+    includeRules = null,
+    bindSemya = false,
+  }) {
     // Phase 3.4-prep fix-1: pre-flight validation на includeRules
     // ДО touch'а DB. `applyIncludeRulesToBranch` throws на explicit
     // invalid type — нужно catch'нуть здесь, чтобы caller (POST
@@ -84,6 +92,8 @@ module.exports = {
     const normalizedKind = String(kind || "family").trim().toLowerCase() === "friends"
       ? "friends"
       : "family";
+    const shouldBindSemya = Boolean(bindSemya) && normalizedKind === "family";
+    const boundSemyaId = shouldBindSemya ? crypto.randomUUID() : null;
     const tree = {
       id: crypto.randomUUID(),
       name: String(name || "").trim(),
@@ -99,9 +109,34 @@ module.exports = {
       isCertified: false,
       certificationNote: null,
       // Phase B Ship 5: reverse-FK к семья. Null = tree «свободный»
-      // (не bound к семье). createSemya sets к семья.id atomically.
-      semyaId: null,
+      // (не bound к семье). createSemya / bindSemya sets к семья.id atomically.
+      semyaId: boundSemyaId,
     };
+
+    if (shouldBindSemya) {
+      db.semyi = db.semyi || [];
+      db.semyaMembers = db.semyaMembers || [];
+      db.semyi.push({
+        id: boundSemyaId,
+        name: tree.name || "Моя семья",
+        ownerId: creatorId,
+        treeId: tree.id,
+        description: null,
+        createdAt,
+        updatedAt: createdAt,
+        deletedAt: null,
+      });
+      db.semyaMembers.push({
+        id: crypto.randomUUID(),
+        semyaId: boundSemyaId,
+        userId: creatorId,
+        role: "owner",
+        joinedAt: createdAt,
+        invitedByUserId: null,
+        hasInviteGrant: true,
+        hiddenAt: null,
+      });
+    }
 
     const creator = db.users.find((entry) => entry.id === creatorId);
     const creatorProfile = creator?.profile || {};

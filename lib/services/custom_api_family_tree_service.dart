@@ -19,6 +19,7 @@ import '../backend/interfaces/kinship_check_capable_family_tree_service.dart';
 import '../backend/interfaces/person_tree_resolution_capable_family_tree_service.dart';
 import '../backend/interfaces/relatives_cache_capable_family_tree_service.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
+import '../backend/interfaces/semya_manage_capable_family_tree_service.dart';
 import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/story_request_capable_family_tree_service.dart';
@@ -94,7 +95,8 @@ class CustomApiFamilyTreeService extends _CustomApiFamilyTreeHost
         StoryRequestCapableFamilyTreeService,
         PersonTreeResolutionCapableFamilyTreeService,
         RelativesCacheCapableFamilyTreeService,
-        SemyaCapableFamilyTreeService {
+        SemyaCapableFamilyTreeService,
+        SemyaManageCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required super.authService,
     required super.runtimeConfig,

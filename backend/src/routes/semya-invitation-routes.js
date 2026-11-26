@@ -167,14 +167,21 @@ function registerSemyaInvitationRoutes(
       });
 
       // Dispatch только на первое создание, не idempotent re-call.
-      if (outcome.created && recipientUserId) {
+      const notifyUserId =
+        recipientUserId ||
+        outcome.invitation.recipientUserId ||
+        (recipientEmail
+          ? (await store.findUserByEmail(recipientEmail).catch(() => null))?.id
+          : null);
+      if (outcome.created && notifyUserId) {
         await createAndDispatchNotification({
-          userId: recipientUserId,
+          userId: notifyUserId,
           type: "semya_invitation_received",
           title: "Приглашение в семью",
-          body: "Вас пригласили в семью на Rodnya — откройте, чтобы принять.",
+          body: "Вас пригласили в семью в Родне — откройте, чтобы принять.",
           data: {
             invitationId: outcome.invitation.id,
+            token: outcome.invitation.token,
             semyaId: req.params.id,
             inviterUserId: req.auth.user.id,
             role,
@@ -286,7 +293,12 @@ function registerSemyaInvitationRoutes(
       });
 
       // Notify inviter inviting accepted.
+      let semyaTreeId = null;
       try {
+        const semya = await store
+          .findSemyaById(outcome.invitation.semyaId)
+          .catch(() => null);
+        semyaTreeId = semya?.treeId || null;
         await createAndDispatchNotification({
           userId: outcome.invitation.inviterUserId,
           type: "semya_invitation_accepted",
@@ -295,6 +307,7 @@ function registerSemyaInvitationRoutes(
           data: {
             invitationId: outcome.invitation.id,
             semyaId: outcome.invitation.semyaId,
+            treeId: semyaTreeId,
             acceptedByUserId: req.auth.user.id,
           },
         });
@@ -307,6 +320,7 @@ function registerSemyaInvitationRoutes(
 
       res.json({
         invitation: mapInvitation(outcome.invitation),
+        treeId: semyaTreeId,
         membership: {
           id: outcome.membership.id,
           semyaId: outcome.membership.semyaId,

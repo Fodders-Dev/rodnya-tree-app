@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../backend/backend_runtime_config.dart';
 import '../backend/models/semya.dart';
 import '../backend/models/semya_invitation.dart';
 import '../providers/semya_invitations_controller.dart';
@@ -94,14 +95,8 @@ class _SemyaInviteScreenState extends State<SemyaInviteScreen> {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       children: [
-        // Плотность (чанк 25): пояснение — не абзац, а одна вводная
-        // строка (maxLines 2 — страховка для узких экранов), 14sp вместо
-        // bodyMedium по умолчанию (14-15).
         Text(
-          'Укажите контакт, чтобы подписать приглашение. Родня создаст '
-          'персональную ссылку — отправить её нужно будет самостоятельно.',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+          'Укажите email или телефон — Родня создаст ссылку, которую вы отправите сами.',
           style: theme.textTheme.bodyMedium?.copyWith(
             fontSize: 14,
             color: theme.colorScheme.onSurfaceVariant,
@@ -112,6 +107,11 @@ class _SemyaInviteScreenState extends State<SemyaInviteScreen> {
           key: const Key('semya-invite-email'),
           controller: _emailController,
           keyboardType: TextInputType.emailAddress,
+          onChanged: (value) {
+            if (value.trim().isNotEmpty && _phoneController.text.isNotEmpty) {
+              _phoneController.clear();
+            }
+          },
           decoration: const InputDecoration(
             labelText: 'Email',
             border: OutlineInputBorder(),
@@ -123,6 +123,11 @@ class _SemyaInviteScreenState extends State<SemyaInviteScreen> {
           key: const Key('semya-invite-phone'),
           controller: _phoneController,
           keyboardType: TextInputType.phone,
+          onChanged: (value) {
+            if (value.trim().isNotEmpty && _emailController.text.isNotEmpty) {
+              _emailController.clear();
+            }
+          },
           decoration: const InputDecoration(
             labelText: 'Телефон',
             border: OutlineInputBorder(),
@@ -212,7 +217,13 @@ class _SuccessView extends StatelessWidget {
 
   final SemyaInvitation invitation;
 
-  String get _shareLink => 'https://rodnya-tree.ru/invite/${invitation.token}';
+  String get _shareLink {
+    final base = BackendRuntimeConfig.current.publicAppUrl.replaceAll(
+      RegExp(r'/+$'),
+      '',
+    );
+    return '$base/invite/${invitation.token}';
+  }
 
   Future<void> _copyLink(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: _shareLink));
@@ -225,7 +236,7 @@ class _SuccessView extends StatelessWidget {
 
   Future<void> _shareLinkNow() async {
     await SharePlus.instance.share(
-      ShareParams(text: 'Приглашение в семью на Rodnya: $_shareLink'),
+      ShareParams(text: 'Приглашение в семью в Родне: $_shareLink'),
     );
   }
 
@@ -349,7 +360,8 @@ class _InviteActionPill extends StatelessWidget {
     final scheme = theme.colorScheme;
     return Material(
       color: Colors.transparent,
-      shape: StadiumBorder(side: BorderSide(color: scheme.outlineVariant, width: 1.2)),
+      shape: StadiumBorder(
+          side: BorderSide(color: scheme.outlineVariant, width: 1.2)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,

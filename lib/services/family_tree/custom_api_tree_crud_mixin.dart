@@ -19,6 +19,7 @@ mixin _CustomApiTreeCrudMixin on _CustomApiFamilyTreeHost {
       'description': description,
       'isPrivate': isPrivate,
       'kind': kind.name,
+      if (kind == TreeKind.family) 'bindSemya': true,
     };
     if (includeRules != null) {
       body['includeRules'] = includeRules.toJson();

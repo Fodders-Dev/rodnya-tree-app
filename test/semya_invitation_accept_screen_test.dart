@@ -162,8 +162,7 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
   Future<void> permanentlyDeletePerson(String deletedPersonId) async {}
 
   @override
-  Future<List<DeletedPost>> listMyDeletedPosts() async =>
-      const <DeletedPost>[];
+  Future<List<DeletedPost>> listMyDeletedPosts() async => const <DeletedPost>[];
 
   @override
   Future<void> restoreDeletedPost(String deletedPostId) async {}
@@ -261,5 +260,25 @@ void main() {
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.text('Проверяем приглашение...'), findsOneWidget);
+  });
+
+  testWidgets('INVITATION_EXPIRED and FORBIDDEN clear pending token',
+      (tester) async {
+    for (final code in ['INVITATION_EXPIRED', 'FORBIDDEN']) {
+      final service = _FakeSemyaService(
+        acceptError: SemyaError(code: code, message: 'err'),
+      );
+      final deepLink = _FakeDeepLinkService();
+      final router = _buildRouter(
+        SemyaInvitationAcceptScreen(
+          token: 'tok',
+          serviceOverride: service,
+          deepLinkServiceOverride: deepLink,
+        ),
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      expect(deepLink.clearCalls, 1, reason: 'Failed to clear token on $code');
+    }
   });
 }

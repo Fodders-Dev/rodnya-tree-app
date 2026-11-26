@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
+import 'package:rodnya/backend/interfaces/semya_manage_capable_family_tree_service.dart';
 import 'package:rodnya/backend/models/semya.dart';
 import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
@@ -16,7 +17,10 @@ import 'package:rodnya/backend/models/semya_pull_person_result.dart';
 import 'package:rodnya/screens/semya_details_screen.dart';
 
 class _FakeFamilyTreeService
-    implements FamilyTreeServiceInterface, SemyaCapableFamilyTreeService {
+    implements
+        FamilyTreeServiceInterface,
+        SemyaCapableFamilyTreeService,
+        SemyaManageCapableFamilyTreeService {
   _FakeFamilyTreeService({
     this.details,
     this.memberships = const <SemyaMembership>[],
@@ -24,6 +28,27 @@ class _FakeFamilyTreeService
 
   SemyaDetails? details;
   List<SemyaMembership> memberships;
+  String? lastUpdatedName;
+
+  @override
+  Future<Semya> createSemya({
+    required String name,
+    required String treeId,
+    String? description,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<Semya> updateSemya({
+    required String semyaId,
+    String? name,
+    String? description,
+  }) async {
+    lastUpdatedName = name;
+    final next = details!.semya.copyWith(name: name, description: description);
+    details = SemyaDetails(semya: next, membership: details!.membership);
+    return next;
+  }
 
   @override
   Future<List<Semya>> listMySemya() async => const <Semya>[];
@@ -132,8 +157,7 @@ class _FakeFamilyTreeService
   // методы falling through к noSuchMethod (тесты SemyaDetailsScreen
   // не trigger'ят их).
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 SemyaDetails _details({
@@ -250,8 +274,9 @@ void main() {
     expect(find.text('Повторить'), findsOneWidget);
   });
 
-  testWidgets('owner-only management tile remains locked placeholder; '
-      'invitations tile now active (FE3)', (tester) async {
+  testWidgets(
+      'owner sees active rename tile (no locked placeholder) and can rename',
+      (tester) async {
     final fake = _FakeFamilyTreeService(details: _details());
     getIt.registerSingleton<FamilyTreeServiceInterface>(fake);
 
@@ -262,14 +287,21 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Управление семьёй'), findsOneWidget);
-    expect(find.text('Приглашения'), findsOneWidget);
-    // FE3 (2026-05-26): «Приглашения» tile changed from disabled
-    // placeholder к active ListTile → only «Управление семьёй»
-    // remains locked placeholder. One lock icon expected (was 2).
-    expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
-    // Invitations tile теперь shows chevron (navigable).
+    expect(find.byIcon(Icons.lock_outline_rounded), findsNothing);
+    expect(find.byKey(const Key('semya-details-rename')), findsOneWidget);
     expect(find.byKey(const Key('semya-details-invitations')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('semya-details-rename')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('semya-rename-field')),
+      'Семья Волковых',
+    );
+    await tester.tap(find.byKey(const Key('semya-rename-save')));
+    await tester.pumpAndSettle();
+
+    expect(fake.lastUpdatedName, 'Семья Волковых');
+    expect(find.text('Семья Волковых'), findsWidgets);
   });
 
   testWidgets('viewer role surfaces correctly', (tester) async {

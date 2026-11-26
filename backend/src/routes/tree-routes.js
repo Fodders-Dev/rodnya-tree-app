@@ -58,7 +58,8 @@ function registerTreeRoutes(
     }
   }
   app.post("/v1/trees", requireAuth, async (req, res) => {
-    const {name, description, isPrivate, kind, includeRules} = req.body || {};
+    const {name, description, isPrivate, kind, includeRules, bindSemya} =
+      req.body || {};
     if (!String(name || "").trim()) {
       res.status(400).json({message: "Нужно название дерева"});
       return;
@@ -78,6 +79,7 @@ function registerTreeRoutes(
         kind,
         includeRules:
           includeRules && typeof includeRules === "object" ? includeRules : null,
+        bindSemya: Boolean(bindSemya),
       });
       res.status(201).json({tree: mapTree(tree)});
     } catch (error) {

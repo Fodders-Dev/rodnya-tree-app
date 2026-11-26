@@ -18,7 +18,8 @@ abstract class _CustomApiFamilyTreeBase
         StoryRequestCapableFamilyTreeService,
         PersonTreeResolutionCapableFamilyTreeService,
         RelativesCacheCapableFamilyTreeService,
-        SemyaCapableFamilyTreeService {
+        SemyaCapableFamilyTreeService,
+        SemyaManageCapableFamilyTreeService {
   _CustomApiFamilyTreeBase({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,

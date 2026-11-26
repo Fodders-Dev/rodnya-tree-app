@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/semya_invitation.dart';
 import '../providers/semya_invitations_controller.dart';
@@ -107,7 +108,11 @@ class _SemyaInvitationsListScreenState
   }
 
   Future<void> _copyLink(SemyaInvitation invitation) async {
-    final link = 'https://rodnya-tree.ru/invite/${invitation.token}';
+    final base = BackendRuntimeConfig.current.publicAppUrl.replaceAll(
+      RegExp(r'/+$'),
+      '',
+    );
+    final link = '$base/invite/${invitation.token}';
     await Clipboard.setData(ClipboardData(text: link));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

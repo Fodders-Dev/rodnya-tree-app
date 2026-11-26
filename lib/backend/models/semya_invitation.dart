@@ -173,12 +173,14 @@ class SemyaInvitationAcceptResult {
     required this.semyaId,
     required this.role,
     required this.membershipId,
+    this.treeId,
   });
 
   final SemyaInvitation invitation;
   final String semyaId;
   final SemyaRole role;
   final String membershipId;
+  final String? treeId;
 
   factory SemyaInvitationAcceptResult.fromJson(Map<String, dynamic> json) {
     final invRaw = json['invitation'];
@@ -189,14 +191,14 @@ class SemyaInvitationAcceptResult {
     final invitation = SemyaInvitation.fromJson(
       Map<String, dynamic>.from(invRaw),
     );
-    final memMap = memRaw is Map
-        ? Map<String, dynamic>.from(memRaw)
-        : <String, dynamic>{};
+    final memMap =
+        memRaw is Map ? Map<String, dynamic>.from(memRaw) : <String, dynamic>{};
     return SemyaInvitationAcceptResult(
       invitation: invitation,
       semyaId: (memMap['semyaId'] ?? invitation.semyaId).toString(),
       role: SemyaRole.fromServerValue(memMap['role']),
       membershipId: (memMap['id'] ?? '').toString(),
+      treeId: _nullableString(json['treeId']),
     );
   }
 }

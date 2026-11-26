@@ -15,6 +15,7 @@ import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_auth_service.dart';
 import '../services/onboarding_service.dart';
+import '../services/semya_invitation_deep_link_service.dart';
 import 'package:app_links/app_links.dart';
 
 import '../theme/app_theme.dart';
@@ -284,10 +285,11 @@ class _AuthScreenState extends State<AuthScreen> {
           return;
         }
 
-        // Phase 6 chunk 4a: wizard takes precedence over Phase 1 carousel.
-        // requiresOnboarding=true → /setup (functional account setup).
-        // Carousel stays as fallback для legacy/login paths без flag.
-        if (_authService.currentRequiresOnboarding) {
+        final pendingInviteToken =
+            SemyaInvitationDeepLinkService().pendingToken;
+        if (pendingInviteToken != null && pendingInviteToken.isNotEmpty) {
+          context.go('/invite/$pendingInviteToken');
+        } else if (_authService.currentRequiresOnboarding) {
           context.go('/setup');
         } else if (shouldShowOnboarding) {
           context.go('/onboarding');
@@ -1232,6 +1234,10 @@ class _AuthScreenState extends State<AuthScreen> {
   /// отдельно в email-submit path (только для пользователей
   /// без requiresOnboarding flag).
   String _resolvePostAuthRedirect() {
+    final pendingInviteToken = SemyaInvitationDeepLinkService().pendingToken;
+    if (pendingInviteToken != null && pendingInviteToken.isNotEmpty) {
+      return '/invite/$pendingInviteToken';
+    }
     if (_authService.currentRequiresOnboarding) {
       return '/setup';
     }
