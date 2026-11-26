@@ -65,7 +65,8 @@ class _CreateChatSheet extends StatefulWidget {
   State<_CreateChatSheet> createState() => _CreateChatSheetState();
 }
 
-class _CreateChatSheetState extends State<_CreateChatSheet> {
+class _CreateChatSheetState extends State<_CreateChatSheet>
+    with SingleTickerProviderStateMixin {
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
   final TextEditingController _titleController = TextEditingController();
@@ -73,6 +74,7 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
   final Set<String> _selectedUserIds = <String>{};
   final Set<String> _selectedBranchRootIds = <String>{};
 
+  late final TabController _tabController;
   _ChatComposerMode _mode = _ChatComposerMode.direct;
 
   bool _isLoading = true;
@@ -83,18 +85,35 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(
+      length: 4,
+      initialIndex: _mode.index,
+      vsync: this,
+    );
+    _tabController.addListener(_handleTabChanged);
     _loadParticipants();
     _searchController.addListener(_handleSearchChanged);
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // DefaultTabController handles state, but we might want to listen to it
+  void _handleTabChanged() {
+    if (!mounted) return;
+    final nextMode = _ChatComposerMode.values[_tabController.index];
+    if (nextMode == _mode) return;
+    setState(() {
+      _mode = nextMode;
+      if (nextMode == _ChatComposerMode.direct && _selectedUserIds.length > 1) {
+        final first = _selectedUserIds.first;
+        _selectedUserIds
+          ..clear()
+          ..add(first);
+      }
+    });
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_handleTabChanged);
+    _tabController.dispose();
     _searchController.removeListener(_handleSearchChanged);
     _titleController.dispose();
     _searchController.dispose();
@@ -353,197 +372,175 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
           candidate.relationLabel.toLowerCase().contains(search);
     }).toList();
 
-    return DefaultTabController(
-      length: 4,
-      initialIndex: _mode.index,
-      child: Builder(
-        builder: (context) {
-          final tabController = DefaultTabController.of(context);
-          tabController.addListener(() {
-            if (tabController.indexIsChanging) {
-              setState(() {
-                _mode = _ChatComposerMode.values[tabController.index];
-              });
-            }
-          });
-
-          return SafeArea(
-            child: Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 8,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 8,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+        ),
+        child: SizedBox(
+          height: 620,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'Новый чат',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Закрыть',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                    style: IconButton.styleFrom(
+                      backgroundColor: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.5),
+                    ),
+                  ),
+                ],
               ),
-              child: SizedBox(
-                height: 620,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Новый чат',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          tooltip: 'Закрыть',
-                          onPressed: () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.close),
-                          style: IconButton.styleFrom(
-                            backgroundColor: theme
-                                .colorScheme.surfaceContainerHighest
-                                .withValues(alpha: 0.5),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    GlassPanel(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 10,
-                      ),
-                      child: TabBar(
-                        dividerColor: Colors.transparent,
-                        indicatorSize: TabBarIndicatorSize.tab,
-                        indicator: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          color: theme.colorScheme.primary,
-                        ),
-                        labelColor: theme.colorScheme.onPrimary,
-                        unselectedLabelColor:
-                            theme.colorScheme.onSurfaceVariant,
-                        labelStyle: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 13),
-                        // «Ветка»/«Ветки» were near-indistinguishable —
-                        // relabel to spell out single vs multi.
-                        tabs: const [
-                          Tab(text: 'Личный'),
-                          Tab(text: 'Группа'),
-                          Tab(text: 'Одна ветка'),
-                          Tab(text: 'Несколько'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _buildComposerPill(
-                          icon: isFriendsTree
-                              ? Icons.diversity_3_outlined
-                              : Icons.account_tree_outlined,
-                          label:
-                              context.read<TreeProvider>().selectedTreeName ??
-                                  (isFriendsTree ? 'Круг' : 'Дерево'),
-                        ),
-                        _buildComposerPill(
-                          icon: Icons.people_outline,
-                          label: _selectionStatusLabel,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    GlassPanel(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: TextField(
-                        controller: _searchController,
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.search, size: 20),
-                          hintText: _mode == _ChatComposerMode.direct ||
-                                  _mode == _ChatComposerMode.group
-                              ? (isFriendsTree
-                                  ? 'Найти человека'
-                                  : 'Найти родственника')
-                              : 'Найти ветку',
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 14,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (_mode != _ChatComposerMode.direct) ...[
-                      GlassPanel(
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        child: TextField(
-                          controller: _titleController,
-                          textCapitalization: TextCapitalization.sentences,
-                          decoration: InputDecoration(
-                            hintText: _mode == _ChatComposerMode.group
-                                ? (isFriendsTree
-                                    ? 'Название группы'
-                                    : 'Название семьи')
-                                : 'Название',
-                            prefixIcon: const Icon(Icons.title, size: 20),
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 14,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    Expanded(
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _errorMessage != null
-                              ? Center(
-                                  child: Text(
-                                    _errorMessage!,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                        color: theme.colorScheme.error),
-                                  ),
-                                )
-                              : TabBarView(
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  children: [
-                                    _buildParticipantSelector(
-                                        filteredParticipants,
-                                        multi: false),
-                                    _buildParticipantSelector(
-                                        filteredParticipants,
-                                        multi: true),
-                                    _buildBranchSelector(filteredBranches,
-                                        multi: false),
-                                    _buildBranchSelector(filteredBranches,
-                                        multi: true),
-                                  ],
-                                ),
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: FilledButton.icon(
-                        onPressed:
-                            _canSubmitCurrentMode ? _submitCurrentMode : null,
-                        style: FilledButton.styleFrom(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        icon: Icon(_submitIcon),
-                        label: Text(_submitLabel),
-                      ),
-                    ),
+              const SizedBox(height: 12),
+              GlassPanel(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  dividerColor: Colors.transparent,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicator: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: theme.colorScheme.primary,
+                  ),
+                  labelColor: theme.colorScheme.onPrimary,
+                  unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
+                  labelStyle: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13),
+                  // «Ветка»/«Ветки» were near-indistinguishable —
+                  // relabel to spell out single vs multi.
+                  tabs: const [
+                    Tab(text: 'Личный'),
+                    Tab(text: 'Группа'),
+                    Tab(text: 'Одна ветка'),
+                    Tab(text: 'Несколько'),
                   ],
                 ),
               ),
-            ),
-          );
-        },
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildComposerPill(
+                    icon: isFriendsTree
+                        ? Icons.diversity_3_outlined
+                        : Icons.account_tree_outlined,
+                    label: context.read<TreeProvider>().selectedTreeName ??
+                        (isFriendsTree ? 'Круг' : 'Дерево'),
+                  ),
+                  _buildComposerPill(
+                    icon: Icons.people_outline,
+                    label: _selectionStatusLabel,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              GlassPanel(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    hintText: _mode == _ChatComposerMode.direct ||
+                            _mode == _ChatComposerMode.group
+                        ? (isFriendsTree
+                            ? 'Найти человека'
+                            : 'Найти родственника')
+                        : 'Найти ветку',
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 14,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (_mode != _ChatComposerMode.direct) ...[
+                GlassPanel(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: TextField(
+                    controller: _titleController,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      hintText: _mode == _ChatComposerMode.group
+                          ? (isFriendsTree
+                              ? 'Название группы'
+                              : 'Название семьи')
+                          : 'Название',
+                      prefixIcon: const Icon(Icons.title, size: 20),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 14,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _errorMessage != null
+                        ? Center(
+                            child: Text(
+                              _errorMessage!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: theme.colorScheme.error),
+                            ),
+                          )
+                        : TabBarView(
+                            controller: _tabController,
+                            physics: const NeverScrollableScrollPhysics(),
+                            children: [
+                              _buildParticipantSelector(filteredParticipants,
+                                  multi: false),
+                              _buildParticipantSelector(filteredParticipants,
+                                  multi: true),
+                              _buildBranchSelector(filteredBranches,
+                                  multi: false),
+                              _buildBranchSelector(filteredBranches,
+                                  multi: true),
+                            ],
+                          ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: FilledButton.icon(
+                  onPressed: _canSubmitCurrentMode ? _submitCurrentMode : null,
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: Icon(_submitIcon),
+                  label: Text(_submitLabel),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

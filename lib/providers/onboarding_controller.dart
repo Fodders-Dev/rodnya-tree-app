@@ -394,25 +394,31 @@ class OnboardingController extends ChangeNotifier {
 /// Draft slot для relatives step. In-memory только (Q8 — form lost
 /// on abandon, resume restarts step).
 class OnboardingRelativeDraft {
+  static int _nextId = 0;
+
   OnboardingRelativeDraft({
+    String? id,
     this.name = '',
     this.relationToMe,
     this.gender,
     this.birthDate,
-  });
+  }) : id = id ?? 'draft_${++_nextId}';
 
+  final String id;
   String name;
   OnboardingRelationToMe? relationToMe;
   String? gender;
   String? birthDate;
 
   OnboardingRelativeDraft copyWith({
+    String? id,
     String? name,
     OnboardingRelationToMe? relationToMe,
     String? gender,
     String? birthDate,
   }) {
     return OnboardingRelativeDraft(
+      id: id ?? this.id,
       name: name ?? this.name,
       relationToMe: relationToMe ?? this.relationToMe,
       gender: gender ?? this.gender,

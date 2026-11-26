@@ -214,6 +214,8 @@ class CallCoordinatorService extends ChangeNotifier
   // so the room never reconnected and «Переподключение» stuck forever
   // while audio was actually live.
   bool _connectAttemptInFlight = false;
+  int _connectGeneration = 0;
+  bool _disposed = false;
   bool _microphoneEnabled = true;
   // True когда LiveKit вернул успех на `setMicrophoneEnabled(true)` но
   // фактическая publication отсутствует (publication == null либо
@@ -447,7 +449,9 @@ class CallCoordinatorService extends ChangeNotifier
     unawaited(() async {
       try {
         await _callService.startRealtimeBridge();
-        await resync();
+        if (_currentCall == null && !_disposed) {
+          await resync();
+        }
         completer.complete();
       } catch (_) {
         _runtimeReadyFuture = null;
@@ -555,10 +559,15 @@ class CallCoordinatorService extends ChangeNotifier
       return null;
     }
 
+    final callIdBeforeFetch = _currentCall?.id;
     try {
       final activeCall = await _callService.getActiveCall(chatId: chatId);
+      if (_disposed) {
+        return null;
+      }
       if (activeCall == null) {
-        if (chatId == null || _currentCall?.chatId == chatId) {
+        if (callIdBeforeFetch == _currentCall?.id &&
+            (chatId == null || _currentCall?.chatId == chatId)) {
           await _applyCall(null);
         }
         return null;
@@ -964,6 +973,7 @@ class CallCoordinatorService extends ChangeNotifier
       _dismissStaleNativeIncomingCalls();
       _cancelRingingRecovery();
       _cancelActiveCallRecovery();
+      _connectGeneration++;
       _currentCall = null;
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
@@ -1003,6 +1013,7 @@ class CallCoordinatorService extends ChangeNotifier
       _locallyStartedCallIds.remove(nextCall.id);
       _cancelRingingRecovery();
       _cancelActiveCallRecovery();
+      _connectGeneration++;
       _currentCall = null;
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
@@ -1251,6 +1262,33 @@ class CallCoordinatorService extends ChangeNotifier
     }
   }
 
+  bool _isConnectStillValid(int gen, String callId) {
+    return !_disposed &&
+        gen == _connectGeneration &&
+        _currentCall?.id == callId &&
+        _currentCall?.state == CallState.active;
+  }
+
+  Future<void> _disposeOrphanedAttemptRoom(
+    Room room,
+    EventsListener<RoomEvent> listener,
+  ) async {
+    try {
+      if (identical(_roomListener, listener)) {
+        _roomListener = null;
+      }
+      await listener.dispose();
+    } catch (_) {}
+    try {
+      if (identical(_room, room)) {
+        _room = null;
+        _connectedRoomName = null;
+      }
+      await room.disconnect();
+      await room.dispose();
+    } catch (_) {}
+  }
+
   Future<void> _ensureConnected(
     CallInvite call, {
     bool reconnect = false,
@@ -1277,6 +1315,7 @@ class CallCoordinatorService extends ChangeNotifier
     }
 
     _connectAttemptInFlight = true;
+    final myGen = ++_connectGeneration;
     if (reconnect) {
       _isReconnectingRoom = true;
       _armReconnectWatchdog();
@@ -1291,6 +1330,14 @@ class CallCoordinatorService extends ChangeNotifier
 
     final hasMediaPermissions =
         await _mediaPermissionRequester.call(call.mediaMode);
+    if (!_isConnectStillValid(myGen, call.id)) {
+      _isConnectingRoom = false;
+      _isReconnectingRoom = false;
+      _connectAttemptInFlight = false;
+      _cancelReconnectWatchdog();
+      if (!_disposed) notifyListeners();
+      return;
+    }
     if (!hasMediaPermissions) {
       _hasMediaPermissionIssue = true;
       // UX-аудит P1: для аудио-звонка камера не запрашивается вовсе —
@@ -1306,7 +1353,15 @@ class CallCoordinatorService extends ChangeNotifier
       return;
     }
 
-    await _disposeRoom();
+    await _disposeRoom(bumpGeneration: false);
+    if (!_isConnectStillValid(myGen, call.id)) {
+      _isConnectingRoom = false;
+      _isReconnectingRoom = false;
+      _connectAttemptInFlight = false;
+      _cancelReconnectWatchdog();
+      if (!_disposed) notifyListeners();
+      return;
+    }
 
     final room = Room(roomOptions: _callRoomOptions);
     final listener = room.createListener();
@@ -1409,6 +1464,10 @@ class CallCoordinatorService extends ChangeNotifier
         session.token,
         connectOptions: _callConnectOptions,
       );
+      if (!_isConnectStillValid(myGen, call.id)) {
+        await _disposeOrphanedAttemptRoom(room, listener);
+        return;
+      }
       debugPrint(
         '[call] room.connect ok uptime=${_uptimeSinceConnect()}ms',
       );
@@ -1418,7 +1477,12 @@ class CallCoordinatorService extends ChangeNotifier
       // может silently fail (publication == null) даже когда room
       // успешно connected. Этот fix surface'ит failure через
       // `microphonePublishFailed` flag вместо silently lying в UI.
-      _microphonePublishFailed = !(await _publishLocalMicrophone(room));
+      final micPublished = await _publishLocalMicrophone(room);
+      if (!_isConnectStillValid(myGen, call.id)) {
+        await _disposeOrphanedAttemptRoom(room, listener);
+        return;
+      }
+      _microphonePublishFailed = !micPublished;
       // Камеру для видео-звонка публикуем БЕЗУСЛОВНО по mediaMode, а
       // `_cameraEnabled` выставляем из РЕЗУЛЬТАТА. Раньше здесь было
       // «_cameraEnabled = isVideo (до mic-await) … setCameraEnabled(
@@ -1430,6 +1494,10 @@ class CallCoordinatorService extends ChangeNotifier
       // больше не роняет весь connect (звук живёт, юзеру — Q1-баннер).
       if (call.mediaMode.isVideo) {
         final published = await _publishLocalCamera(room);
+        if (!_isConnectStillValid(myGen, call.id)) {
+          await _disposeOrphanedAttemptRoom(room, listener);
+          return;
+        }
         _cameraPublishFailed = !published;
         _cameraEnabled = published;
       }
@@ -1448,11 +1516,25 @@ class CallCoordinatorService extends ChangeNotifier
       // преференции).
       await _audioRouteService.attachRoom(room,
           isVideo: call.mediaMode.isVideo);
+      if (!_isConnectStillValid(myGen, call.id)) {
+        await _disposeOrphanedAttemptRoom(room, listener);
+        return;
+      }
       await refreshInputDevices();
+      if (!_isConnectStillValid(myGen, call.id)) {
+        await _disposeOrphanedAttemptRoom(room, listener);
+        return;
+      }
       await _applyCallPreferences(room, call);
+      if (!_isConnectStillValid(myGen, call.id)) {
+        await _disposeOrphanedAttemptRoom(room, listener);
+        return;
+      }
     } catch (error) {
-      await listener.dispose();
-      await room.dispose();
+      await _disposeOrphanedAttemptRoom(room, listener);
+      if (_disposed) {
+        return;
+      }
       _hasMediaPermissionIssue = _looksLikeMediaPermissionIssue(error);
       // Mode-aware и здесь (ревью батча): аудио-звонок не должен пугать
       // «или камере» и на connect-catch пути, не только на pre-flight.
@@ -1474,7 +1556,9 @@ class CallCoordinatorService extends ChangeNotifier
       // _room); failure set a real error. Either way the watchdog's job
       // is done — a stuck overlay can't outlive a finished attempt.
       _cancelReconnectWatchdog();
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     }
   }
 
@@ -2188,10 +2272,9 @@ class CallCoordinatorService extends ChangeNotifier
     // lands before hydrate; without it we fall back to an empty string so
     // the native side shows its neutral «Родня» label, not a user id.
     final pushCallerName = _pushCallerNames[call.id]?.trim();
-    final callerName =
-        (pushCallerName != null && pushCallerName.isNotEmpty)
-            ? pushCallerName
-            : '';
+    final callerName = (pushCallerName != null && pushCallerName.isNotEmpty)
+        ? pushCallerName
+        : '';
     try {
       await service.showIncomingCall(
         callId: call.id,
@@ -2416,7 +2499,10 @@ class CallCoordinatorService extends ChangeNotifier
     return 1;
   }
 
-  Future<void> _disposeRoom() async {
+  Future<void> _disposeRoom({bool bumpGeneration = true}) async {
+    if (bumpGeneration) {
+      _connectGeneration++;
+    }
     await _audioRouteService.attachRoom(null);
     await _roomListener?.dispose();
     _roomListener = null;
@@ -2439,6 +2525,7 @@ class CallCoordinatorService extends ChangeNotifier
   }
 
   Future<void> reset() async {
+    _connectGeneration++;
     final activeCall = _currentCall;
     if (activeCall != null) {
       _pushCallerNames.remove(activeCall.id);
@@ -2488,6 +2575,8 @@ class CallCoordinatorService extends ChangeNotifier
 
   @override
   void dispose() {
+    _disposed = true;
+    _connectGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     _dismissStaleNativeIncomingCalls();
     _cancelRingingRecovery();

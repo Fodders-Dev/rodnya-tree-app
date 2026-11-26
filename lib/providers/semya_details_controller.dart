@@ -33,6 +33,19 @@ class SemyaDetailsController with ChangeNotifier {
   // while in set чтобы prevent double-clicks.
   final Set<String> _pendingMutations = <String>{};
   String? _mutationErrorMessage;
+  bool _disposed = false;
+
+  void _safeNotify() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   SemyaDetails? get details => _details;
   List<SemyaMembership> get memberships => _memberships;
@@ -58,11 +71,13 @@ class SemyaDetailsController with ChangeNotifier {
   void clearMutationError() {
     if (_mutationErrorMessage == null) return;
     _mutationErrorMessage = null;
-    notifyListeners();
+    _safeNotify();
   }
 
   /// True когда backend service capable (Phase B endpoints exposed).
   bool get isCapable => _resolveService() != null;
+
+  SemyaCapableFamilyTreeService? resolveServiceForAction() => _resolveService();
 
   SemyaCapableFamilyTreeService? _resolveService() {
     if (_injectedService != null) return _injectedService;
@@ -77,20 +92,22 @@ class SemyaDetailsController with ChangeNotifier {
   /// Loads details + memberships в parallel. Idempotent — safe call
   /// multiple times.
   Future<void> load() async {
+    if (_disposed) return;
     final service = _resolveService();
     if (service == null) {
       _hasLoaded = true;
-      notifyListeners();
+      _safeNotify();
       return;
     }
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _safeNotify();
     try {
       final results = await Future.wait([
         service.findSemyaById(semyaId),
         service.listMembershipsForSemya(semyaId),
       ]);
+      if (_disposed) return;
       final fetchedDetails = results[0] as SemyaDetails?;
       final fetchedMembers = results[1] as List<SemyaMembership>;
       _details = fetchedDetails;
@@ -102,10 +119,11 @@ class SemyaDetailsController with ChangeNotifier {
         _errorMessage = 'Не удалось загрузить семью';
       }
     } catch (error) {
+      if (_disposed) return;
       _errorMessage = _describeError(error);
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -123,15 +141,16 @@ class SemyaDetailsController with ChangeNotifier {
     SemyaRole? role,
     bool? hasInviteGrant,
   }) async {
+    if (_disposed) return false;
     final service = _resolveService();
     if (service == null) {
       _mutationErrorMessage = 'Управление участниками недоступно';
-      notifyListeners();
+      _safeNotify();
       return false;
     }
     _pendingMutations.add(userId);
     _mutationErrorMessage = null;
-    notifyListeners();
+    _safeNotify();
     try {
       await service.updateMembership(
         semyaId: semyaId,
@@ -139,6 +158,7 @@ class SemyaDetailsController with ChangeNotifier {
         role: role,
         hasInviteGrant: hasInviteGrant,
       );
+      if (_disposed) return true;
       _pendingMutations.remove(userId);
       // Refresh для consistent state. updateMembership returns updated
       // row но membership list might have дополнительные ripple
@@ -147,9 +167,10 @@ class SemyaDetailsController with ChangeNotifier {
       await load();
       return true;
     } catch (error) {
+      if (_disposed) return false;
       _pendingMutations.remove(userId);
       _mutationErrorMessage = _describeError(error);
-      notifyListeners();
+      _safeNotify();
       return false;
     }
   }
@@ -161,33 +182,36 @@ class SemyaDetailsController with ChangeNotifier {
   Future<SemyaMembershipRemoveResult?> removeMember({
     required String userId,
   }) async {
+    if (_disposed) return null;
     final service = _resolveService();
     if (service == null) {
       _mutationErrorMessage = 'Управление участниками недоступно';
-      notifyListeners();
+      _safeNotify();
       return null;
     }
     _pendingMutations.add(userId);
     _mutationErrorMessage = null;
-    notifyListeners();
+    _safeNotify();
     try {
       final result = await service.removeMembership(
         semyaId: semyaId,
         userId: userId,
       );
+      if (_disposed) return result;
       _pendingMutations.remove(userId);
       if (!result.wasSelfLeave) {
         // Caller will refresh для kick case. Self-leave UI обычно
         // pops screen, чтобы refresh бессмыслен.
         await load();
       } else {
-        notifyListeners();
+        _safeNotify();
       }
       return result;
     } catch (error) {
+      if (_disposed) return null;
       _pendingMutations.remove(userId);
       _mutationErrorMessage = _describeError(error);
-      notifyListeners();
+      _safeNotify();
       return null;
     }
   }
@@ -200,15 +224,16 @@ class SemyaDetailsController with ChangeNotifier {
     required SemyaRole role,
     bool hasInviteGrant = false,
   }) async {
+    if (_disposed) return false;
     final service = _resolveService();
     if (service == null) {
       _mutationErrorMessage = 'Управление участниками недоступно';
-      notifyListeners();
+      _safeNotify();
       return false;
     }
     _pendingMutations.add(userId);
     _mutationErrorMessage = null;
-    notifyListeners();
+    _safeNotify();
     try {
       await service.addMembership(
         semyaId: semyaId,
@@ -216,13 +241,15 @@ class SemyaDetailsController with ChangeNotifier {
         role: role,
         hasInviteGrant: hasInviteGrant,
       );
+      if (_disposed) return true;
       _pendingMutations.remove(userId);
       await load();
       return true;
     } catch (error) {
+      if (_disposed) return false;
       _pendingMutations.remove(userId);
       _mutationErrorMessage = _describeError(error);
-      notifyListeners();
+      _safeNotify();
       return false;
     }
   }

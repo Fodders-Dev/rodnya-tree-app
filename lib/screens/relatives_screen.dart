@@ -22,7 +22,9 @@ import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/models/identity_field_conflict.dart';
+import '../backend/models/semya.dart';
 import '../services/app_status_service.dart';
 import '../utils/photo_url.dart';
 import '../utils/relative_details_route.dart';
@@ -98,6 +100,9 @@ class _RelativesScreenState extends State<RelativesScreen> {
   List<FamilyPerson> _allRelatives = [];
   List<FamilyRelation> _relations = [];
   String? _currentUserPersonId;
+  SemyaRole? _callerSemyaRole;
+
+  bool get _isViewerOnly => _callerSemyaRole == SemyaRole.viewer;
   List<ChatPreview> _chatPreviews = [];
   bool _isRelationsReady = false;
   bool _isChatsReady = false;
@@ -149,6 +154,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
       _treeProviderInstance!.addListener(_handleTreeChange);
       _currentTreeId = _treeProviderInstance!.selectedTreeId;
@@ -188,6 +194,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
           _allRelatives = [];
           _relations = [];
           _currentUserPersonId = null;
+          _callerSemyaRole = null;
           _chatPreviews = [];
           _pendingRequestsCount = 0;
           _errorMessage = '';
@@ -205,6 +212,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
       _allRelatives = [];
       _relations = [];
       _currentUserPersonId = null;
+      _callerSemyaRole = null;
       _chatPreviews = [];
       _pendingRequestsCount = 0;
       _isRelationsReady = false;
@@ -214,6 +222,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
       _treeConflictsCache = const <IdentityFieldConflict>[];
     });
 
+    unawaited(_refreshSemyaRole(treeId));
     unawaited(_checkPendingRequests(treeId));
     unawaited(_refreshConflictCounts(treeId));
     try {
@@ -235,6 +244,31 @@ class _RelativesScreenState extends State<RelativesScreen> {
         });
       }
     }
+  }
+
+  Future<void> _refreshSemyaRole(String treeId) async {
+    final service = _familyService;
+    if (service is! SemyaCapableFamilyTreeService) return;
+    final capable = service as SemyaCapableFamilyTreeService;
+    try {
+      final mySemyi = await capable.listMySemya();
+      Semya? bound;
+      for (final entry in mySemyi) {
+        if (entry.treeId == treeId) {
+          bound = entry;
+          break;
+        }
+      }
+      if (bound == null) return;
+      final semya = await capable.findSemyaById(bound.id);
+      if (!mounted || _currentTreeId != treeId) return;
+      final role = semya?.callerRole;
+      if (role != _callerSemyaRole) {
+        setState(() {
+          _callerSemyaRole = role;
+        });
+      }
+    } catch (_) {}
   }
 
   /// Phase 3.4 chunk 5: best-effort fetch identity conflicts на
@@ -638,23 +672,23 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                     if (!didPop) _closeSearch();
                                   },
                                   child: Column(
-                                  children: [
-                                    _maybeConflictTreeBanner(),
-                                    if (_showSecondaryLoadingStrip) ...[
-                                      const SizedBox(height: 10),
-                                      _buildSecondaryLoadingStrip(),
-                                    ],
-                                    Expanded(
-                                      child: _buildRelativesList(
-                                        key: ValueKey(
-                                          'relatives_$selectedTreeId',
+                                    children: [
+                                      _maybeConflictTreeBanner(),
+                                      if (_showSecondaryLoadingStrip) ...[
+                                        const SizedBox(height: 10),
+                                        _buildSecondaryLoadingStrip(),
+                                      ],
+                                      Expanded(
+                                        child: _buildRelativesList(
+                                          key: ValueKey(
+                                            'relatives_$selectedTreeId',
+                                          ),
+                                          relativesForTab: visibleRelatives,
+                                          isOnlineTab: false,
                                         ),
-                                        relativesForTab: visibleRelatives,
-                                        isOnlineTab: false,
                                       ),
-                                    ),
-                                  ],
-                                ),
+                                    ],
+                                  ),
                                 ),
                         ),
                       ),
@@ -691,19 +725,20 @@ class _RelativesScreenState extends State<RelativesScreen> {
                 ),
                 const SizedBox(width: 10),
               ],
-              Expanded(
-                child: SizedBox(
-                  height: 46,
-                  child: FilledButton.icon(
-                    key: const Key('add-relative-action'),
-                    onPressed: () {
-                      unawaited(_startAddRelativeFlow(selectedTreeId));
-                    },
-                    icon: const Icon(Icons.add),
-                    label: Text(_graphAddLabel(treeProvider)),
+              if (!_isViewerOnly)
+                Expanded(
+                  child: SizedBox(
+                    height: 46,
+                    child: FilledButton.icon(
+                      key: const Key('add-relative-action'),
+                      onPressed: () {
+                        unawaited(_startAddRelativeFlow(selectedTreeId));
+                      },
+                      icon: const Icon(Icons.add),
+                      label: Text(_graphAddLabel(treeProvider)),
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -951,13 +986,14 @@ class _RelativesScreenState extends State<RelativesScreen> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              FilledButton.icon(
-                onPressed: _currentTreeId == null
-                    ? null
-                    : () => unawaited(_startAddRelativeFlow(_currentTreeId!)),
-                icon: const Icon(Icons.person_add_alt_1_outlined),
-                label: const Text('Добавить'),
-              ),
+              if (!_isViewerOnly)
+                FilledButton.icon(
+                  onPressed: _currentTreeId == null
+                      ? null
+                      : () => unawaited(_startAddRelativeFlow(_currentTreeId!)),
+                  icon: const Icon(Icons.person_add_alt_1_outlined),
+                  label: const Text('Добавить'),
+                ),
               OutlinedButton.icon(
                 onPressed: _currentTreeId == null
                     ? null
@@ -1163,7 +1199,17 @@ class _RelativesScreenState extends State<RelativesScreen> {
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
+    final String currentUserId = _authService.currentUserId ?? '';
+    final String trimmedQuery = _searchQuery.trim().toLowerCase();
     final inAppCount = _allRelatives.where((p) {
+      if (p.userId == currentUserId) return false;
+      if (trimmedQuery.isNotEmpty) {
+        final name = p.displayName.toLowerCase();
+        final relation = (p.relation ?? '').toLowerCase();
+        if (!name.contains(trimmedQuery) && !relation.contains(trimmedQuery)) {
+          return false;
+        }
+      }
       final id = p.userId;
       return id != null && id.isNotEmpty;
     }).length;
@@ -1318,7 +1364,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                         fontWeight: FontWeight.w800,
                       ),
                 ),
-                if (!isOnlineTab) ...[
+                if (!isOnlineTab && !_isViewerOnly) ...[
                   const SizedBox(height: 6),
                   Text(
                     'Добавьте первого человека.',
@@ -1538,16 +1584,18 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   leading: MouseRegion(
                     cursor: SystemMouseCursors.click,
                     child: GestureDetector(
-                      onTap: () {
+                      onTap: () async {
                         debugPrint(
                           'Avatar tapped for ${relative.displayName}, navigating to details...',
                         );
-                        context.push(
+                        await context.push(
                           relativeDetailsRoute(
                             relative.id,
                             treeId: relative.treeId,
                           ),
                         );
+                        if (!mounted || _currentTreeId == null) return;
+                        unawaited(_loadDataForSelectedTree(_currentTreeId!));
                       },
                       child: CircleAvatar(
                         radius: 22,
@@ -1739,7 +1787,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                             const Icon(Icons.chevron_right),
                           ],
                         ),
-                  onTap: () {
+                  onTap: () async {
                     if (isOnlineTab) {
                       if (canStartChat) {
                         _openChatWithRelative(relative);
@@ -1747,23 +1795,27 @@ class _RelativesScreenState extends State<RelativesScreen> {
                         debugPrint(
                           'Cannot chat with self or invalid user, navigating to details for ${relative.displayName}',
                         );
-                        context.push(
+                        await context.push(
                           relativeDetailsRoute(
                             relative.id,
                             treeId: relative.treeId,
                           ),
                         );
+                        if (!mounted || _currentTreeId == null) return;
+                        unawaited(_loadDataForSelectedTree(_currentTreeId!));
                       }
                     } else {
                       debugPrint(
                         'Offline tab, navigating to details for ${relative.displayName}',
                       );
-                      context.push(
+                      await context.push(
                         relativeDetailsRoute(
                           relative.id,
                           treeId: relative.treeId,
                         ),
                       );
+                      if (!mounted || _currentTreeId == null) return;
+                      unawaited(_loadDataForSelectedTree(_currentTreeId!));
                     }
                   },
                   contentPadding: const EdgeInsets.symmetric(
@@ -1880,7 +1932,9 @@ class _RelativesScreenState extends State<RelativesScreen> {
 
   bool _canInviteRelative(FamilyPerson relative) {
     final userId = relative.userId;
-    return (userId == null || userId.isEmpty) &&
+    return relative.isAlive &&
+        relative.deathDate == null &&
+        (userId == null || userId.isEmpty) &&
         relative.id != _currentUserPersonId &&
         _currentTreeId != null;
   }

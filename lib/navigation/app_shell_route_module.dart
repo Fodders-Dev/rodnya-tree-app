@@ -260,6 +260,11 @@ class AppShellRouteModule {
                 },
               ),
               GoRoute(
+                path: 'post/:postId',
+                parentNavigatorKey: rootNavigatorKey,
+                redirect: (context, state) => '/',
+              ),
+              GoRoute(
                 // Phase E2: «Новая встреча» composer (mirrors post/create).
                 path: 'gathering/create',
                 parentNavigatorKey: rootNavigatorKey,

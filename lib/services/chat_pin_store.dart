@@ -176,7 +176,10 @@ class HybridChatPinStore implements ChatPinStore {
     try {
       final remoteSnapshot = await remoteClient.getChatPinnedMessage(chatId);
       if (remoteSnapshot == null || remoteSnapshot.messageId.trim().isEmpty) {
-        return localSnapshot;
+        if (localSnapshot != null) {
+          await localStore.clearPinnedMessage(key);
+        }
+        return null;
       }
       if (localSnapshot == null ||
           remoteSnapshot.pinnedAt.isAfter(localSnapshot.pinnedAt)) {

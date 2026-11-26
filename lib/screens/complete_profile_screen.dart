@@ -36,6 +36,62 @@ class CompleteProfileScreen extends StatefulWidget {
   final UserProfile? initialData;
   final Map<String, bool>? requiredFields;
 
+  static const List<String> _knownDialCodes = <String>[
+    '+375',
+    '+380',
+    '+998',
+    '+996',
+    '+995',
+    '+994',
+    '+993',
+    '+992',
+    '+374',
+    '+373',
+    '+372',
+    '+371',
+    '+370',
+    '+972',
+    '+971',
+    '+49',
+    '+44',
+    '+33',
+    '+90',
+    '+86',
+    '+81',
+    '+61',
+    '+48',
+    '+39',
+    '+34',
+    '+7',
+    '+1',
+  ];
+
+  /// Splits an E.164 phone string into `(countryCode, localNumber)` using a
+  /// longest-match table of common dial codes so `+79991234567` yields `+7`
+  /// instead of `+79`.
+  @visibleForTesting
+  static MapEntry<String, String> parsePhoneWithCountryCode(
+    String phoneNumber,
+  ) {
+    final trimmed = phoneNumber.trim();
+    if (!trimmed.startsWith('+') || trimmed.length <= 2) {
+      return MapEntry<String, String>('', trimmed);
+    }
+    for (final code in _knownDialCodes) {
+      if (trimmed.startsWith(code) && trimmed.length > code.length) {
+        return MapEntry<String, String>(
+          code,
+          trimmed.substring(code.length),
+        );
+      }
+    }
+    final fallbackSplit = trimmed.length > 12 ? 3 : 2;
+    return MapEntry<String, String>(
+      trimmed.substring(0, fallbackSplit),
+      trimmed.substring(fallbackSplit),
+    );
+  }
+
   @override
   State<CompleteProfileScreen> createState() => _CompleteProfileScreenState();
 }
@@ -115,14 +171,13 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         _selectedCountry = countryName.isNotEmpty ? countryName : 'Россия';
 
         if (data.phoneNumber.isNotEmpty) {
-          final phoneNumber = data.phoneNumber;
-          if (phoneNumber.startsWith('+') && phoneNumber.length > 2) {
-            final separatorIndex = phoneNumber.length > 11 ? 2 : 1;
-            _countryCode = phoneNumber.substring(0, separatorIndex + 1);
-            _phoneController.text = phoneNumber.substring(separatorIndex + 1);
-          } else {
-            _phoneController.text = phoneNumber;
+          final parsedPhone = CompleteProfileScreen.parsePhoneWithCountryCode(
+            data.phoneNumber,
+          );
+          if (parsedPhone.key.isNotEmpty) {
+            _countryCode = parsedPhone.key;
           }
+          _phoneController.text = parsedPhone.value;
         }
       });
     } catch (e) {
@@ -178,7 +233,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Профиль сохранён.')),
       );
-      context.go(await _resolvePostSaveLocation());
+      final targetLocation = await _resolvePostSaveLocation();
+      if (!mounted) return;
+      context.go(targetLocation);
     } catch (e) {
       debugPrint('Ошибка при сохранении профиля: $e');
       if (!mounted) return;
@@ -538,8 +595,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
                   label: 'Женский',
                   icon: Icons.female_rounded,
                   isSelected: _selectedGender == Gender.female,
-                  onTap: () =>
-                      setState(() => _selectedGender = Gender.female),
+                  onTap: () => setState(() => _selectedGender = Gender.female),
                 ),
               ),
               const SizedBox(width: 6),
@@ -548,8 +604,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
                   label: 'Не указан',
                   icon: Icons.circle_outlined,
                   isSelected: _selectedGender == Gender.unknown,
-                  onTap: () =>
-                      setState(() => _selectedGender = Gender.unknown),
+                  onTap: () => setState(() => _selectedGender = Gender.unknown),
                 ),
               ),
             ],
@@ -581,9 +636,8 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
                           ? 'Когда родились'
                           : dateFormat.format(_birthDate!),
                       style: AppTheme.sans(
-                        color: _birthDate == null
-                            ? tokens.inkMuted
-                            : tokens.ink,
+                        color:
+                            _birthDate == null ? tokens.inkMuted : tokens.ink,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0,
@@ -648,6 +702,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         ),
       ),
       onSelect: (Country country) {
+        if (!mounted) return;
         setState(() {
           _countryCode = '+${country.phoneCode}';
           _selectedCountry = country.nameLocalized?.trim().isNotEmpty == true
@@ -666,6 +721,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
       lastDate: DateTime.now(),
     );
 
+    if (!mounted) return;
     if (picked != null && picked != _birthDate) {
       setState(() {
         _birthDate = picked;

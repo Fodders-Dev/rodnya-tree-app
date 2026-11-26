@@ -80,7 +80,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : MemoryCallPreferences();
   bool _isLoading = false;
   bool _notificationsEnabled = true;
-  bool _profilePrivate = false;
   CallPreferencesSnapshot _callSettings = CallPreferencesSnapshot.defaults();
   bool _callSettingsLoading = true;
   bool _callSettingsSaving = false;
@@ -418,7 +417,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       choices: choices,
       selectedId: _callSettings.defaultMicrophoneDeviceId,
     );
-    if (choice == null) {
+    if (!mounted || choice == null) {
       return;
     }
     await _saveCallPreferences(
@@ -448,7 +447,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       choices: choices,
       selectedId: _callSettings.defaultCameraDeviceId,
     );
-    if (choice == null) {
+    if (!mounted || choice == null) {
       return;
     }
     await _saveCallPreferences(
@@ -509,7 +508,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       choices: choices,
       selectedId: _callSettings.defaultAudioOutputId,
     );
-    if (choice == null) {
+    if (!mounted || choice == null) {
       return;
     }
     await _saveCallPreferences(
@@ -621,25 +620,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                ...choices.map(
-                  (choice) {
-                    final selected = choice.id == selectedId ||
-                        (choice.id == null &&
-                            (selectedId == null || selectedId.isEmpty));
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(choice.icon),
-                      title: Text(choice.label),
-                      subtitle: Text(choice.subtitle),
-                      trailing: selected
-                          ? Icon(
-                              Icons.check_rounded,
-                              color: theme.colorScheme.primary,
-                            )
-                          : null,
-                      onTap: () => Navigator.of(context).pop(choice),
-                    );
-                  },
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: choices.map(
+                        (choice) {
+                          final selected = choice.id == selectedId ||
+                              (choice.id == null &&
+                                  (selectedId == null || selectedId.isEmpty));
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(choice.icon),
+                            title: Text(choice.label),
+                            subtitle: Text(choice.subtitle),
+                            trailing: selected
+                                ? Icon(
+                                    Icons.check_rounded,
+                                    color: theme.colorScheme.primary,
+                                  )
+                                : null,
+                            onTap: () => Navigator.of(context).pop(choice),
+                          );
+                        },
+                      ).toList(growable: false),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -681,6 +687,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
 
+      if (!mounted) return;
       setState(() {
         // Считаем премиумом, если покупка найдена и ее статус не null
         // (в API v8 статус может быть числом или отсутствовать? Проверяем на null)
@@ -692,13 +699,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
     } catch (e) {
       debugPrint("Error checking premium status: $e");
+      if (!mounted) return;
       setState(() {
         _isPremium = false;
       }); // Считаем не премиумом при ошибке
     } finally {
-      setState(() {
-        _billingLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _billingLoading = false;
+        });
+      }
     }
   }
 
@@ -746,9 +756,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final products = await _rustoreService.getProducts([PREMIUM_PRODUCT_ID]);
       if (products.isEmpty) {
         debugPrint("Product $PREMIUM_PRODUCT_ID not found in RuStore.");
-        if (mounted) {
-          _showMessage('Премиум сейчас недоступен. Попробуйте позже.');
-        }
+        if (!mounted) return;
+        _showMessage('Премиум сейчас недоступен. Попробуйте позже.');
         setState(() {
           _billingLoading = false;
         });
@@ -848,9 +857,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final products = await _rustoreService.getProducts([ONE_TIME_PRODUCT_ID]);
       if (products.isEmpty) {
         debugPrint("Product $ONE_TIME_PRODUCT_ID not found in RuStore.");
-        if (mounted) {
-          _showMessage('Разовая покупка сейчас недоступна. Попробуйте позже.');
-        }
+        if (!mounted) return;
+        _showMessage('Разовая покупка сейчас недоступна. Попробуйте позже.');
         setState(() {
           _oneTimePurchaseLoading = false;
         });
@@ -956,9 +964,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
         _checkPremiumStatus(); // Обновляем статус
       } else {
-        if (mounted) {
-          _showMessage('Не удалось удалить тестовую покупку.');
-        }
+        if (!mounted) return;
+        _showMessage('Не удалось удалить тестовую покупку.');
         setState(() {
           _billingLoading = false;
         });
@@ -971,99 +978,104 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final TextEditingController passwordController = TextEditingController();
     bool isPasswordVisible = false;
 
-    return showGlassDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final theme = Theme.of(context);
+    try {
+      await showGlassDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final theme = Theme.of(context);
 
-            return GlassDialogFrame(
-              icon: Icons.delete_forever,
-              tint: theme.colorScheme.error,
-              title: 'Удалить аккаунт',
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Это действие нельзя отменить.',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
+              return GlassDialogFrame(
+                icon: Icons.delete_forever,
+                tint: theme.colorScheme.error,
+                title: 'Удалить аккаунт',
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Это действие нельзя отменить.',
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Введите пароль для подтверждения.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                    const SizedBox(height: 6),
+                    Text(
+                      'Введите пароль для подтверждения.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceContainerLowest
-                          .withValues(alpha: 0.9),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: TextField(
-                      controller: passwordController,
-                      obscureText: !isPasswordVisible,
-                      decoration: InputDecoration(
-                        hintText: 'Пароль',
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 16,
-                        ),
-                        suffixIcon: IconButton(
-                          tooltip: isPasswordVisible
-                              ? 'Скрыть пароль'
-                              : 'Показать пароль',
-                          icon: Icon(
-                            isPasswordVisible
-                                ? Icons.visibility_off
-                                : Icons.visibility,
+                    const SizedBox(height: 14),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerLowest
+                            .withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: TextField(
+                        controller: passwordController,
+                        obscureText: !isPasswordVisible,
+                        decoration: InputDecoration(
+                          hintText: 'Пароль',
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 16,
                           ),
-                          onPressed: () {
-                            setDialogState(() {
-                              isPasswordVisible = !isPasswordVisible;
-                            });
-                          },
+                          suffixIcon: IconButton(
+                            tooltip: isPasswordVisible
+                                ? 'Скрыть пароль'
+                                : 'Показать пароль',
+                            icon: Icon(
+                              isPasswordVisible
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                isPasswordVisible = !isPasswordVisible;
+                              });
+                            },
+                          ),
                         ),
                       ),
                     ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Отмена'),
+                  ),
+                  FilledButton.tonal(
+                    style: FilledButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                    ),
+                    onPressed: () {
+                      final password = passwordController.text;
+                      Navigator.of(dialogContext).pop();
+                      if (password.isNotEmpty) {
+                        _deleteAccount(password);
+                      } else {
+                        _showMessage(
+                          'Введите пароль для удаления аккаунта.',
+                          backgroundColor: theme.colorScheme.error,
+                        );
+                      }
+                    },
+                    child: const Text('Удалить'),
                   ),
                 ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Отмена'),
-                ),
-                FilledButton.tonal(
-                  style: FilledButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
-                  ),
-                  onPressed: () {
-                    Navigator.of(dialogContext).pop();
-                    if (passwordController.text.isNotEmpty) {
-                      _deleteAccount(passwordController.text);
-                    } else {
-                      _showMessage(
-                        'Введите пароль для удаления аккаунта.',
-                        backgroundColor: theme.colorScheme.error,
-                      );
-                    }
-                  },
-                  child: const Text('Удалить'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      passwordController.dispose();
+    }
   }
 
   // Улучшенная функция для удаления аккаунта с надежным перенаправлением
@@ -1197,19 +1209,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ]),
       _buildSectionCard('Уведомления и доступ', [
         _buildNotificationsRow(),
-        _buildSwitchRow(
-          icon: Icons.lock_outline,
-          title: 'Приватный профиль',
-          subtitle: _profilePrivate
-              ? 'Профиль доступен только приглашённым'
-              : 'Профиль можно найти в Родне',
-          value: _profilePrivate,
-          onChanged: (value) {
-            setState(() {
-              _profilePrivate = value;
-            });
-          },
-        ),
         _buildActionRow(
           icon: Icons.block_outlined,
           title: 'Заблокированные',
@@ -1540,7 +1539,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       height: 1,
       thickness: 0.7,
       indent: 52,
-      color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
+      color:
+          Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
     );
     final spacedChildren = <Widget>[];
     for (var i = 0; i < children.length; i++) {

@@ -160,6 +160,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   bool _isLoadingHistory = false;
   bool _isUpdatingIdentity = false;
   bool _isUpdatingPrivacy = false;
+  bool _dossierLoadFailed = false;
 
   FamilyPerson? _person;
   List<FamilyPerson> _treePeople = [];
@@ -488,15 +489,27 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       }
     }
 
+    _dossierLoadFailed = false;
     try {
       _dossier = await _familyService.getPersonDossier(
         _currentTreeId!,
         widget.personId,
       );
+      _dossierLoadFailed = false;
       _person = _dossier!.person;
       _userProfile = _dossier!.linkedProfile;
+    } on NoSuchMethodError {
+      _dossier = null;
+      _dossierLoadFailed = false;
+    } on UnimplementedError {
+      _dossier = null;
+      _dossierLoadFailed = false;
+    } on UnsupportedError {
+      _dossier = null;
+      _dossierLoadFailed = false;
     } catch (_) {
       _dossier = null;
+      _dossierLoadFailed = true;
     }
 
     // 2. Если есть userId, пытаемся загрузить UserProfile
@@ -816,7 +829,15 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   }
 
   bool _canEditOrDelete() {
-    return _person != null && (_dossier?.canEditFamilyFields ?? false);
+    if (_person == null) {
+      return false;
+    }
+    if (_dossier != null) {
+      return _dossier!.canEditFamilyFields;
+    }
+    // Fail closed on real dossier fetch/403/network errors; only fall back to
+    // editable when the service doesn't implement getPersonDossier (legacy/test fakes).
+    return !_dossierLoadFailed;
   }
 
   /// Phase 3.4 chunk 5: открывает reusable conflict-resolution

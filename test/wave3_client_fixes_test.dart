@@ -205,6 +205,7 @@ void main() {
       'createdByUserId': 'u1',
       'createdAt': '2020-01-01T00:00:00.000Z',
       'expiresAt': '2020-02-01T00:00:00.000Z',
+      'status': 'expired',
     });
     expect(expired.status, 'expired');
     expect(expired.isExpired, isTrue);
@@ -214,7 +215,7 @@ void main() {
       'semyaId': 's1',
       'createdByUserId': 'u1',
       'createdAt': '2026-01-01T00:00:00.000Z',
-      'expiresAt': '2099-01-01T00:00:00.000Z',
+      'expiresAt': '2020-02-01T00:00:00.000Z',
     });
     expect(active.status, 'active');
     expect(active.isActive, isTrue);

@@ -201,6 +201,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
       _treeProviderInstance!.addListener(_handleTreeChange);
       _currentTreeId = _treeProviderInstance!.selectedTreeId;
@@ -1357,36 +1358,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildWideHomeColumns() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-      // Чанк 26: было `Expanded(child: ConstrainedBox(maxWidth: 720))` —
-      // Expanded hands its child a *tight* width, and BoxConstraints
-      // .enforce() lets that incoming tight width win over a smaller
-      // declared max (classic Flutter gotcha: a tight constraint always
-      // overrides an inner ConstrainedBox's max). The feed silently
-      // rendered at whatever the Row allocated (measured 800dp at both
-      // 1280×900 and 1440×900, never the intended 720) — plain non-flex
-      // children get a loose/unbounded main-axis constraint instead, so
-      // the cap actually applies. Center + mainAxisSize.min then puts the
-      // fixed-width feed+gap+sidebar block in the middle of the column
-      // instead of hugging the left edge with a lone gap trailing on the
-      // right.
-      child: Center(
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Feed column — capped 640–720dp so post media stays readable.
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 720),
-              child: _buildHomeFeedColumn(),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final feedWidth =
+              (constraints.maxWidth - 24 - 340).clamp(320.0, 720.0);
+          return Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: feedWidth,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    child: _buildHomeFeedColumn(),
+                  ),
+                ),
+                const SizedBox(width: 24),
+                SizedBox(
+                  width: 340,
+                  child: _buildHomeSidebarColumn(),
+                ),
+              ],
             ),
-            const SizedBox(width: 24),
-            // Sidebar column.
-            SizedBox(
-              width: 340,
-              child: _buildHomeSidebarColumn(),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

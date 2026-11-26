@@ -260,11 +260,20 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       if (!mounted) {
         return;
       }
-      await _coordinator.activateCall(call);
+      final latestCall = _coordinator.currentCall;
+      if (latestCall == null ||
+          latestCall.id != call.id ||
+          latestCall.state.isTerminal) {
+        return;
+      }
+      await _coordinator.activateCall(latestCall);
+      if (!mounted) {
+        return;
+      }
       final result = await navigator.push<CallInvite>(
         MaterialPageRoute<CallInvite>(
           builder: (_) => CallScreen(
-            initialCall: call,
+            initialCall: latestCall,
             title: presentation.title,
             photoUrl: presentation.photoUrl,
             coordinator: _coordinator,
@@ -412,14 +421,28 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
     if (notificationService == null) {
       return;
     }
-    final presentation = await _resolvePresentation(call);
-    await notificationService.showIncomingCallNotification(
-      callId: call.id,
-      callerName: presentation.title,
-      isVideo: call.mediaMode.isVideo,
-      chatId: call.chatId,
-    );
     _notifiedCallId = call.id;
+    try {
+      final presentation = await _resolvePresentation(call);
+      final latestCall = _coordinator.currentCall;
+      if (!mounted ||
+          latestCall == null ||
+          latestCall.id != call.id ||
+          latestCall.state != CallState.ringing ||
+          _notifiedCallId != call.id) {
+        return;
+      }
+      await notificationService.showIncomingCallNotification(
+        callId: call.id,
+        callerName: presentation.title,
+        isVideo: call.mediaMode.isVideo,
+        chatId: call.chatId,
+      );
+    } catch (_) {
+      if (_notifiedCallId == call.id) {
+        _notifiedCallId = null;
+      }
+    }
   }
 
   Future<void> _dismissIncomingCallNotification(String callId) async {

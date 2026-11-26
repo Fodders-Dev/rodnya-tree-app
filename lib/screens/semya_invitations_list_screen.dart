@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/semya_invitation.dart';
 import '../providers/semya_invitations_controller.dart';
 import 'semya_invite_screen.dart';
@@ -20,10 +22,12 @@ class SemyaInvitationsListScreen extends StatefulWidget {
     super.key,
     required this.semyaId,
     required this.canInvite,
+    this.isOwner = false,
   });
 
   final String semyaId;
   final bool canInvite;
+  final bool isOwner;
 
   @override
   State<SemyaInvitationsListScreen> createState() =>
@@ -37,8 +41,7 @@ class _SemyaInvitationsListScreenState
   @override
   void initState() {
     super.initState();
-    _controller =
-        SemyaInvitationsController(semyaId: widget.semyaId);
+    _controller = SemyaInvitationsController(semyaId: widget.semyaId);
     WidgetsBinding.instance.addPostFrameCallback((_) => _controller.load());
   }
 
@@ -104,8 +107,7 @@ class _SemyaInvitationsListScreenState
   }
 
   Future<void> _copyLink(SemyaInvitation invitation) async {
-    final link =
-        'https://rodnya-tree.ru/invite/${invitation.token}';
+    final link = 'https://rodnya-tree.ru/invite/${invitation.token}';
     await Clipboard.setData(ClipboardData(text: link));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -155,6 +157,9 @@ class _SemyaInvitationsListScreenState
     // тонут среди принятых/отозванных. Чисто отображение — порядок и
     // содержимое controller.invitations не меняются, только группировка
     // при рендере.
+    final currentUserId = GetIt.I.isRegistered<AuthServiceInterface>()
+        ? GetIt.I<AuthServiceInterface>().currentUserId
+        : null;
     final pending = controller.invitations.where((i) => i.isPending).toList();
     final history = controller.invitations.where((i) => i.isTerminal).toList();
     return RefreshIndicator(
@@ -167,8 +172,13 @@ class _SemyaInvitationsListScreenState
             for (final inv in pending)
               _InvitationTile(
                 invitation: inv,
-                onRevoke: () => _confirmRevoke(inv),
-                onCopyLink: () => _copyLink(inv),
+                onRevoke: (widget.isOwner ||
+                        (widget.canInvite &&
+                            (currentUserId == null ||
+                                inv.inviterUserId == currentUserId)))
+                    ? () => _confirmRevoke(inv)
+                    : null,
+                onCopyLink: widget.canInvite ? () => _copyLink(inv) : null,
               ),
           ],
           if (history.isNotEmpty) ...[
@@ -343,13 +353,15 @@ class _InvitationTile extends StatelessWidget {
                         color: _statusForeground(theme, invitation.status),
                       ),
                     ),
-                    Text(
-                      ' · ${invitation.role.displayLabel}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontSize: 13,
-                        color: theme.colorScheme.onSurfaceVariant,
+                    Flexible(
+                      child: Text(
+                        ' · ${invitation.role.displayLabel}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 13,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ],

@@ -22,8 +22,7 @@ class OnboardingWizardScreen extends StatefulWidget {
   const OnboardingWizardScreen({super.key});
 
   @override
-  State<OnboardingWizardScreen> createState() =>
-      _OnboardingWizardScreenState();
+  State<OnboardingWizardScreen> createState() => _OnboardingWizardScreenState();
 }
 
 class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
@@ -126,6 +125,15 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
       );
       return;
     }
+    if (GetIt.I.isRegistered<TreeProvider>()) {
+      await GetIt.I<TreeProvider>().refreshAvailableTrees();
+    } else {
+      try {
+        await Provider.of<TreeProvider>(context, listen: false)
+            .refreshAvailableTrees();
+      } catch (_) {}
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -150,7 +158,8 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    controller.error ?? 'Не удалось пропустить — попробуйте ещё раз.',
+                    controller.error ??
+                        'Не удалось пропустить — попробуйте ещё раз.',
                   ),
                 ),
               );
@@ -222,8 +231,8 @@ class _WizardStepIndicator extends StatelessWidget {
                   ? Theme.of(context).colorScheme.primary
                   : isPast
                       ? Theme.of(context).colorScheme.primary.withValues(
-                          alpha: 0.5,
-                        )
+                            alpha: 0.5,
+                          )
                       : Theme.of(context).colorScheme.surfaceContainerHigh,
             ),
           ),
@@ -259,88 +268,86 @@ class _WelcomeStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final hasInvitations = controller.hasPendingInvitations;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 32),
-          Center(
-            child: Icon(
-              Icons.account_tree_rounded,
-              size: 96,
-              color: theme.colorScheme.primary,
-            ),
-          ),
-          const SizedBox(height: 32),
-          Text(
-            'Добро пожаловать в Родню',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Соберите семейное дерево вместе с родственниками и\n'
-            'найдите дальних родных через цепочку знакомых.',
-            style: theme.textTheme.bodyLarge?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          // Ship FE9 (2026-05-27): pending invitations CTA section.
-          // Renders когда есть приглашения addressed к caller — top of
-          // welcome step pushes invitation accept выше «Начать» since
-          // joining existing семья more likely user intent.
-          if (hasInvitations) ...[
-            const SizedBox(height: 24),
-            ...controller.pendingInvitations
-                .map((inv) => _PendingInvitationCard(
-                      invitation: inv,
-                      onAccept: () => onAcceptInvitation(inv),
-                      isAccepting: controller.isAccepting,
-                    )),
-          ],
-          const Spacer(),
-          if (controller.isSubmitting)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else ...[
-            // «Начать» (create own семя) — primary action когда нет
-            // приглашений; secondary когда есть (invitation cards
-            // outranks visually).
-            FilledButton(
-              key: const Key('onboarding-create-button'),
-              onPressed: controller.isAccepting
-                  ? null
-                  : () => controller.setStep(OnboardingStep.profile),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'Создать свою семью',
-                  style: TextStyle(fontSize: 16),
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: IntrinsicHeight(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 32),
+                  Center(
+                    child: Icon(
+                      Icons.account_tree_rounded,
+                      size: 96,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  Text(
+                    'Добро пожаловать в Родню',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Соберите семейное дерево вместе с родственниками и\n'
+                    'найдите дальних родных через цепочку знакомых.',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (hasInvitations) ...[
+                    const SizedBox(height: 24),
+                    ...controller.pendingInvitations.map(
+                      (inv) => _PendingInvitationCard(
+                        invitation: inv,
+                        onAccept: () => onAcceptInvitation(inv),
+                        isAccepting: controller.isAccepting,
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+                  if (controller.isSubmitting)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else ...[
+                    FilledButton(
+                      key: const Key('onboarding-create-button'),
+                      onPressed: controller.isAccepting
+                          ? null
+                          : () => controller.setStep(OnboardingStep.profile),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          'Создать свою семью',
+                          style: TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      key: const Key('onboarding-skip-button'),
+                      onPressed: controller.isAccepting ? null : onSkip,
+                      child: const Text(
+                        'Пропустить',
+                        style: TextStyle(fontSize: 14),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            // Ship Q1 (2026-05-25): explicit «skip» path после Артём's
-            // observation что mandatory wizard blocked его mama от
-            // making calls. Skip → backend persists state.skipped=true,
-            // session.requiresOnboarding=false, home screen surfaces
-            // resume banner. Wizard остаётся available via banner CTA.
-            TextButton(
-              key: const Key('onboarding-skip-button'),
-              onPressed: controller.isAccepting ? null : onSkip,
-              child: const Text(
-                'Пропустить',
-                style: TextStyle(fontSize: 14),
-              ),
-            ),
-          ],
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -365,8 +372,7 @@ class _PendingInvitationCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final semyaName = (invitation.semyaName ?? '').trim();
-    final displayName =
-        semyaName.isNotEmpty ? semyaName : 'Семья';
+    final displayName = semyaName.isNotEmpty ? semyaName : 'Семья';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Card(
@@ -446,7 +452,8 @@ class _ProfileStepState extends State<_ProfileStep> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.controller.profileName);
+    _nameController =
+        TextEditingController(text: widget.controller.profileName);
     _nameController.addListener(() {
       widget.controller.setProfileName(_nameController.text);
     });
@@ -462,73 +469,87 @@ class _ProfileStepState extends State<_ProfileStep> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Расскажите о себе',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Это будет ваша карточка в дереве.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: _nameController,
-            decoration: const InputDecoration(
-              labelText: 'Имя и фамилия',
-              border: OutlineInputBorder(),
-            ),
-            textCapitalization: TextCapitalization.words,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Пол (необязательно)',
-            style: theme.textTheme.labelLarge,
-          ),
-          const SizedBox(height: 8),
-          SegmentedButton<String?>(
-            segments: const [
-              ButtonSegment<String?>(value: 'male', label: Text('Муж')),
-              ButtonSegment<String?>(value: 'female', label: Text('Жен')),
-              ButtonSegment<String?>(value: null, label: Text('Не указ.')),
-            ],
-            selected: <String?>{controller.profileGender},
-            onSelectionChanged: (selection) {
-              if (selection.isNotEmpty) {
-                controller.setProfileGender(selection.first);
-              }
-            },
-            emptySelectionAllowed: true,
-          ),
-          const Spacer(),
-          Row(
-            children: [
-              TextButton(
-                onPressed: () => controller.setStep(OnboardingStep.welcome),
-                child: const Text('Назад'),
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: IntrinsicHeight(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Расскажите о себе',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Это будет ваша карточка в дереве.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: _nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Имя и фамилия',
+                      border: OutlineInputBorder(),
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Пол (необязательно)',
+                    style: theme.textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  SegmentedButton<String?>(
+                    segments: const [
+                      ButtonSegment<String?>(value: 'male', label: Text('Муж')),
+                      ButtonSegment<String?>(
+                          value: 'female', label: Text('Жен')),
+                      ButtonSegment<String?>(
+                          value: null, label: Text('Не указ.')),
+                    ],
+                    selected: <String?>{controller.profileGender},
+                    onSelectionChanged: (selection) {
+                      if (selection.isNotEmpty) {
+                        controller.setProfileGender(selection.first);
+                      }
+                    },
+                    emptySelectionAllowed: true,
+                  ),
+                  const Spacer(),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () =>
+                            controller.setStep(OnboardingStep.welcome),
+                        child: const Text('Назад'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: controller.profileStepValid
+                            ? () => controller.setStep(OnboardingStep.relatives)
+                            : null,
+                        child: const Padding(
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Text('Далее'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              const Spacer(),
-              FilledButton(
-                onPressed: controller.profileStepValid
-                    ? () => controller.setStep(OnboardingStep.relatives)
-                    : null,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text('Далее'),
-                ),
-              ),
-            ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -569,7 +590,9 @@ class _RelativesStep extends StatelessWidget {
               itemCount: controller.relatives.length,
               separatorBuilder: (_, __) => const SizedBox(height: 12),
               itemBuilder: (context, index) {
+                final draft = controller.relatives[index];
                 return _RelativeSlot(
+                  key: ValueKey<String>(draft.id),
                   index: index,
                   controller: controller,
                 );
@@ -611,7 +634,11 @@ class _RelativesStep extends StatelessWidget {
 }
 
 class _RelativeSlot extends StatefulWidget {
-  const _RelativeSlot({required this.index, required this.controller});
+  const _RelativeSlot({
+    super.key,
+    required this.index,
+    required this.controller,
+  });
 
   final int index;
   final OnboardingController controller;
@@ -682,8 +709,8 @@ class _RelativeSlotState extends State<_RelativeSlot> {
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
-                  onPressed: () => widget.controller
-                      .removeRelativeSlot(widget.index),
+                  onPressed: () =>
+                      widget.controller.removeRelativeSlot(widget.index),
                   icon: Icon(
                     Icons.delete_outline,
                     size: 18,
@@ -715,63 +742,74 @@ class _FinishStep extends StatelessWidget {
     final theme = Theme.of(context);
     final validRelativeCount =
         controller.relatives.where((r) => r.isValid).length;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 32),
-          Center(
-            child: Icon(
-              Icons.check_circle_outline,
-              size: 96,
-              color: theme.colorScheme.primary,
-            ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            validRelativeCount > 0
-                ? 'Готово — соберём дерево'
-                : 'Готово — начнём с пустого дерева',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            validRelativeCount > 0
-                ? 'Создадим вашу карточку и $validRelativeCount '
-                    '${_relativeCountLabel(validRelativeCount)} в дереве.'
-                : 'Создадим только вашу карточку. Родственников '
-                    'добавите позже из дерева.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const Spacer(),
-          if (controller.isSubmitting)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else
-            FilledButton(
-              onPressed: onFinish,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'Открыть дерево',
-                  style: TextStyle(fontSize: 16),
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: IntrinsicHeight(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 32),
+                  Center(
+                    child: Icon(
+                      Icons.check_circle_outline,
+                      size: 96,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    validRelativeCount > 0
+                        ? 'Готово — соберём дерево'
+                        : 'Готово — начнём с пустого дерева',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    validRelativeCount > 0
+                        ? 'Создадим вашу карточку и $validRelativeCount '
+                            '${_relativeCountLabel(validRelativeCount)} в дереве.'
+                        : 'Создадим только вашу карточку. Родственников '
+                            'добавите позже из дерева.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const Spacer(),
+                  const SizedBox(height: 16),
+                  if (controller.isSubmitting)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else
+                    FilledButton(
+                      onPressed: onFinish,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          'Открыть дерево',
+                          style: TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+                  TextButton(
+                    onPressed: () =>
+                        controller.setStep(OnboardingStep.relatives),
+                    child: const Text('Назад'),
+                  ),
+                ],
               ),
             ),
-          TextButton(
-            onPressed: () => controller.setStep(OnboardingStep.relatives),
-            child: const Text('Назад'),
           ),
-        ],
+        ),
       ),
     );
   }

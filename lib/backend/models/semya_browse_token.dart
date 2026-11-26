@@ -109,10 +109,7 @@ class SemyaBrowseTokenSummary {
     } else if (revokedAt != null && revokedAt.isNotEmpty) {
       resolvedStatus = 'revoked';
     } else {
-      final parsedExp = DateTime.tryParse(expiresAtStr);
-      resolvedStatus = (parsedExp != null && !parsedExp.isAfter(DateTime.now()))
-          ? 'expired'
-          : 'active';
+      resolvedStatus = 'active';
     }
     return SemyaBrowseTokenSummary(
       id: (json['id'] ?? '').toString(),

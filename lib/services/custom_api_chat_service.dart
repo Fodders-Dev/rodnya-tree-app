@@ -1942,6 +1942,7 @@ class CustomApiChatService
       'senderName': message['senderName'],
       'clientMessageId': message['clientMessageId'],
       'expiresAt': message['expiresAt'],
+      'call': message['call'],
       'replyTo': message['replyTo'],
       'reactions': message['reactions'],
       'deliveredTo': message['deliveredTo'],
@@ -2011,39 +2012,40 @@ class CustomApiChatService
             ? 'chat-voice/$userId'
             : 'chat-media/$userId',
       );
-      if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
-        final attachmentType = _attachmentTypeForFile(attachment, uploadedUrl);
-        final presentation = _attachmentPresentationForFile(
-          attachment,
-          attachmentType,
-        );
-        final metadata = await _buildAttachmentMetadata(
-          attachment,
-          attachmentType,
-        );
-        // V4 (ревью FR3): для исходящего видео генерим постер (первый кадр)
-        // и грузим его — thumbnailUrl уезжает в сообщении, поэтому превью
-        // видят и отправитель, и получатель. Best-effort: нет постера →
-        // остаётся тёмная плитка с play-иконкой.
-        final thumbnailUrl = attachmentType == ChatAttachmentType.video
-            ? await _buildVideoPosterUrl(attachment, storageService, userId)
-            : null;
-        uploadedAttachments.add(
-          ChatAttachment(
-            type: attachmentType,
-            url: uploadedUrl,
-            presentation: presentation,
-            mimeType: attachment.mimeType,
-            fileName: _attachmentFileName(attachment, uploadedUrl),
-            sizeBytes: await attachment.length(),
-            durationMs: metadata.durationMs,
-            waveform: metadata.waveform,
-            width: metadata.width,
-            height: metadata.height,
-            thumbnailUrl: thumbnailUrl,
-          ),
-        );
+      if (uploadedUrl == null || uploadedUrl.isEmpty) {
+        throw const CustomApiException('Не удалось загрузить вложение.');
       }
+      final attachmentType = _attachmentTypeForFile(attachment, uploadedUrl);
+      final presentation = _attachmentPresentationForFile(
+        attachment,
+        attachmentType,
+      );
+      final metadata = await _buildAttachmentMetadata(
+        attachment,
+        attachmentType,
+      );
+      // V4 (ревью FR3): для исходящего видео генерим постер (первый кадр)
+      // и грузим его — thumbnailUrl уезжает в сообщении, поэтому превью
+      // видят и отправитель, и получатель. Best-effort: нет постера →
+      // остаётся тёмная плитка с play-иконкой.
+      final thumbnailUrl = attachmentType == ChatAttachmentType.video
+          ? await _buildVideoPosterUrl(attachment, storageService, userId)
+          : null;
+      uploadedAttachments.add(
+        ChatAttachment(
+          type: attachmentType,
+          url: uploadedUrl,
+          presentation: presentation,
+          mimeType: attachment.mimeType,
+          fileName: _attachmentFileName(attachment, uploadedUrl),
+          sizeBytes: await attachment.length(),
+          durationMs: metadata.durationMs,
+          waveform: metadata.waveform,
+          width: metadata.width,
+          height: metadata.height,
+          thumbnailUrl: thumbnailUrl,
+        ),
+      );
       onProgress?.call(
         ChatSendProgress(
           stage: ChatSendProgressStage.uploading,

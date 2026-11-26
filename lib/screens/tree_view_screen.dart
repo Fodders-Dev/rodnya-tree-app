@@ -555,6 +555,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     // handler не ran потому что process suspended).
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
       _treeProviderInstance!.addListener(_handleTreeChange); // Подписываемся
       _syncTreeFromRouteOrProvider();
@@ -997,8 +998,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                   ),
                   OutlinedButton.icon(
                     key: const Key('tree-empty-create-friends'),
-                    onPressed: () =>
-                        context.push('/trees/create?kind=friends'),
+                    onPressed: () => context.push('/trees/create?kind=friends'),
                     icon: const Icon(Icons.diversity_3_outlined),
                     label: const Text('Круг друзей'),
                   ),
@@ -1189,16 +1189,23 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                   ),
                   const SizedBox(width: 8),
                 ],
-                const Flexible(child: BranchSwitcherChip()),
-                const Spacer(),
+                const Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: BranchSwitcherChip(),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 // Bug fix (S20 FE: RenderFlex overflowed by 191px on a
                 // narrow phone). The trailing action controls now live
-                // in a horizontal scroll view, so the topbar never
-                // overflows at any width — it degrades to a scroll
-                // instead. reverse:true keeps the rightmost «⋮» actions
-                // menu in view; lower-priority controls scroll off the
-                // left when space is tight.
-                Flexible(
+                // in a constrained horizontal scroll view, so the topbar
+                // never overflows at any width and leaves no dead Spacer
+                // gap.
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width *
+                        (isPhone ? 0.52 : 0.62),
+                  ),
                   child: SingleChildScrollView(
                     key: const Key('tree-topbar-actions-scroll'),
                     scrollDirection: Axis.horizontal,
@@ -2019,18 +2026,12 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           personData: personData,
         );
       }
-      // Stamp the recenter id BEFORE the reload — when _loadData
-      // sets peopleData the InteractiveFamilyTree's didUpdateWidget
-      // sees both the new data + the new recenter target in one
-      // pass and schedules the focus once layout is recomputed.
+      await _loadData(treeId);
+      if (!mounted) return;
       setState(() {
         _recenterOnPersonIdAfterReload = newPersonId;
       });
-      await _loadData(treeId);
-      if (mounted) {
-        _showTreeUndoToast(
-            'Карточка добавлена. Соедините её длинным нажатием.');
-      }
+      _showTreeUndoToast('Карточка добавлена. Соедините её длинным нажатием.');
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

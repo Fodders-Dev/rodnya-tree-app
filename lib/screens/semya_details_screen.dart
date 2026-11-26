@@ -1,12 +1,16 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/semya.dart';
 import '../utils/photo_url.dart';
 import '../providers/semya_details_controller.dart';
+import '../providers/tree_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/browse_tokens_list_section.dart';
 import '../widgets/deleted_persons_section.dart';
@@ -150,7 +154,10 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
             memberCount: controller.memberships.length,
           ),
           const SizedBox(height: 8),
-          _TreeAccessTile(treeId: details.semya.treeId),
+          _TreeAccessTile(
+            treeId: details.semya.treeId,
+            semyaName: details.semya.name,
+          ),
           const _SectionHeader('Участники'),
           if (controller.memberships.isEmpty)
             Padding(
@@ -183,6 +190,7 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
                           builder: (_) => SemyaInvitationsListScreen(
                             semyaId: details.semya.id,
                             canInvite: details.canInvite,
+                            isOwner: details.callerRole == SemyaRole.owner,
                           ),
                         ),
                       ),
@@ -228,6 +236,7 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
                   builder: (_) => SemyaInvitationsListScreen(
                     semyaId: details.semya.id,
                     canInvite: details.canInvite,
+                    isOwner: details.callerRole == SemyaRole.owner,
                   ),
                 ),
               );
@@ -407,6 +416,15 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
     final result = await controller.removeMember(userId: currentUserId);
     if (!context.mounted) return;
     if (result != null && result.wasSelfLeave) {
+      if (GetIt.I.isRegistered<TreeProvider>()) {
+        unawaited(GetIt.I<TreeProvider>().loadInitialTree());
+      } else {
+        try {
+          unawaited(
+            Provider.of<TreeProvider>(context, listen: false).loadInitialTree(),
+          );
+        } catch (_) {}
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Вы покинули семью ${details.semya.name}')),
       );
@@ -582,9 +600,13 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _TreeAccessTile extends StatelessWidget {
-  const _TreeAccessTile({required this.treeId});
+  const _TreeAccessTile({
+    required this.treeId,
+    required this.semyaName,
+  });
 
   final String treeId;
+  final String semyaName;
 
   @override
   Widget build(BuildContext context) {
@@ -592,9 +614,26 @@ class _TreeAccessTile extends StatelessWidget {
       key: const Key('semya-details-open-tree'),
       leading: const Icon(Icons.account_tree_rounded),
       title: const Text('Открыть дерево'),
-      subtitle: Text('id: $treeId'),
+      subtitle: Text(semyaName),
       trailing: const Icon(Icons.chevron_right_rounded),
-      onTap: () => Navigator.of(context).maybePop(),
+      onTap: () {
+        if (GetIt.I.isRegistered<TreeProvider>()) {
+          unawaited(GetIt.I<TreeProvider>().selectTree(treeId, semyaName));
+        } else {
+          try {
+            unawaited(
+              Provider.of<TreeProvider>(context, listen: false)
+                  .selectTree(treeId, semyaName),
+            );
+          } catch (_) {}
+        }
+        final router = GoRouter.maybeOf(context);
+        if (router != null) {
+          router.go('/tree');
+        } else {
+          Navigator.of(context).maybePop();
+        }
+      },
     );
   }
 }
@@ -742,11 +781,11 @@ class _MemberRow extends StatelessWidget {
                     hasInviteGrant: enabled,
                   ),
                   onKick: () async {
-                    // Capture the messenger BEFORE the kick — a successful
-                    // kick reloads the list and disposes this row (and its
-                    // context), so we can't show the undo toast from the
-                    // row's context afterwards.
+                    // Capture messenger + underlying service BEFORE the kick:
+                    // the 10-second undo SnackBar may outlive this screen/controller.
                     final messenger = ScaffoldMessenger.of(context);
+                    final service = controller.resolveServiceForAction();
+                    final targetSemyaId = controller.semyaId;
                     final removed = await controller.removeMember(
                       userId: membership.userId,
                     );
@@ -759,13 +798,21 @@ class _MemberRow extends StatelessWidget {
                         action: SnackBarAction(
                           label: 'Отменить',
                           onPressed: () async {
-                            // Re-add restores editor/viewer (owners aren't
-                            // kicked). joinedAt is reassigned server-side.
-                            final restored = await controller.addMember(
-                              userId: kicked.userId,
-                              role: kicked.role,
-                              hasInviteGrant: kicked.hasInviteGrant,
-                            );
+                            bool restored = false;
+                            if (service != null) {
+                              try {
+                                await service.addMembership(
+                                  semyaId: targetSemyaId,
+                                  userId: kicked.userId,
+                                  role: kicked.role,
+                                  hasInviteGrant: kicked.hasInviteGrant,
+                                );
+                                restored = true;
+                                if (context.mounted) {
+                                  unawaited(controller.refresh());
+                                }
+                              } catch (_) {}
+                            }
                             messenger.showSnackBar(
                               SnackBar(
                                 content: Text(

@@ -154,13 +154,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _storiesUnavailable = false;
   String? _lastStoriesTreeId;
 
-  TreeKind? _selectedTreeKind(BuildContext context) =>
-      context.select<TreeProvider, TreeKind?>(
-        (provider) => provider.selectedTreeKind,
-      );
+  TreeKind? _selectedTreeKind(BuildContext context, {bool listen = true}) =>
+      listen
+          ? context.select<TreeProvider, TreeKind?>(
+              (provider) => provider.selectedTreeKind,
+            )
+          : context.read<TreeProvider>().selectedTreeKind;
 
-  bool _isFriendsTree(BuildContext context) =>
-      _selectedTreeKind(context) == TreeKind.friends;
+  bool _isFriendsTree(BuildContext context, {bool listen = true}) =>
+      _selectedTreeKind(context, listen: listen) == TreeKind.friends;
 
   String _graphStatLabel(BuildContext context, int count) =>
       _isFriendsTree(context)
@@ -188,7 +190,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ? 'Здесь появятся заметки и фото.'
           : 'Появятся после первой публикации.';
 
-  String _graphSelectionHint(BuildContext context) => _isFriendsTree(context)
+  String _graphSelectionHint(BuildContext context) => _isFriendsTree(context,
+          listen: false)
       ? 'Сначала выберите активный круг друзей на вкладке "Дерево" или "Родные"'
       : 'Сначала выберите активное дерево на вкладке "Дерево" или "Родные"';
 
@@ -1920,11 +1923,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _shareProfileLink() {
     final profile = _userProfile;
     if (profile == null) return;
-    final username = profile.username.trim();
     final fullName = _getSafeDisplayName(profile);
-    final link = username.isNotEmpty
-        ? 'https://rodnya-tree.ru/u/$username'
-        : 'https://rodnya-tree.ru/u/${profile.id}';
+    final baseUrl =
+        BackendRuntimeConfig.current.publicAppUrl.replaceAll(RegExp(r'/$'), '');
+    final link = '$baseUrl/user/${profile.id}';
     final body = 'Профиль $fullName в Родне\n$link';
     SharePlus.instance
         .share(ShareParams(text: body))

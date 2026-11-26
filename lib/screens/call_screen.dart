@@ -74,7 +74,9 @@ class _CallScreenState extends State<CallScreen> {
   // the call is ringing and we're the callee. Was missing entirely —
   // user reported "звонки в тишину идут".
   Timer? _ringerTimer;
+  Timer? _vibrationPulseTimer;
   AudioPlayer? _ringerPlayer;
+  final Set<AudioPlayer> _oneShotPlayers = <AudioPlayer>{};
   bool _ringerActive = false;
   // Active-video-call chrome auto-hide: header + status panel fade
   // out after 3s of inactivity so the remote video gets the whole
@@ -138,7 +140,11 @@ class _CallScreenState extends State<CallScreen> {
     return uid != null &&
         _resolvedCall.state == CallState.active &&
         _resolvedCall.session == null &&
-        !_resolvedCall.isOutgoingFor(uid);
+        widget.coordinator.room == null &&
+        _resolvedCall.participantIds.contains(uid) &&
+        (!_resolvedCall.isOutgoingFor(uid) ||
+            _resolvedCall.joinedOnAnotherDevice ||
+            widget.coordinator.joinedOnAnotherDevice);
   }
 
   bool get _isVideoCall => _resolvedCall.mediaMode == CallMediaMode.video;
@@ -193,6 +199,10 @@ class _CallScreenState extends State<CallScreen> {
       isVisible: false,
     );
     _stopRinger();
+    for (final player in _oneShotPlayers.toList()) {
+      unawaited(player.dispose().catchError((_) {}));
+    }
+    _oneShotPlayers.clear();
     _videoChromeHideTimer?.cancel();
     _durationTicker?.cancel();
     _terminalAutoCloseTimer?.cancel();
@@ -318,7 +328,9 @@ class _CallScreenState extends State<CallScreen> {
       void pulse() {
         if (!_ringerActive || !mounted) return;
         HapticFeedback.vibrate();
-        Timer(const Duration(milliseconds: 700), () {
+        _vibrationPulseTimer?.cancel();
+        _vibrationPulseTimer = Timer(const Duration(milliseconds: 700), () {
+          _vibrationPulseTimer = null;
           if (!_ringerActive || !mounted) return;
           HapticFeedback.heavyImpact();
         });
@@ -336,6 +348,8 @@ class _CallScreenState extends State<CallScreen> {
     _ringerActive = false;
     _ringerTimer?.cancel();
     _ringerTimer = null;
+    _vibrationPulseTimer?.cancel();
+    _vibrationPulseTimer = null;
     final player = _ringerPlayer;
     _ringerPlayer = null;
     // audioplayers выставляет AudioManager.MODE_RINGTONE под входящий рингер
@@ -365,30 +379,42 @@ class _CallScreenState extends State<CallScreen> {
     final bindingName = WidgetsBinding.instance.runtimeType.toString();
     if (bindingName.contains('TestWidgetsFlutterBinding')) return;
     final player = AudioPlayer();
+    _oneShotPlayers.add(player);
     unawaited(() async {
+      StreamSubscription<void>? completeSub;
+      Future<void> disposePlayer() async {
+        _oneShotPlayers.remove(player);
+        await completeSub?.cancel();
+        try {
+          await player.dispose();
+        } catch (_) {}
+      }
+
       try {
-        // Same telephony-aware routing as the loop. `voiceCommunicationSignalling`
-        // is exactly what Android telephony uses for connect/disconnect tones.
         await player.setAudioContext(
           AudioContext(
             android: const AudioContextAndroid(
               isSpeakerphoneOn: true,
-              audioMode: AndroidAudioMode.inCommunication,
-              stayAwake: true,
-              contentType: AndroidContentType.music,
-              usageType: AndroidUsageType.voiceCommunicationSignalling,
+              audioMode: AndroidAudioMode.normal,
+              stayAwake: false,
+              contentType: AndroidContentType.sonification,
+              usageType: AndroidUsageType.assistanceSonification,
               audioFocus: AndroidAudioFocus.gainTransientMayDuck,
             ),
             iOS: AudioContextIOS(
-              category: AVAudioSessionCategory.playAndRecord,
-              options: const {AVAudioSessionOptions.defaultToSpeaker},
+              category: AVAudioSessionCategory.ambient,
+              options: const {AVAudioSessionOptions.mixWithOthers},
             ),
           ),
         );
-        await player.setReleaseMode(ReleaseMode.release);
+        await player.setReleaseMode(ReleaseMode.stop);
+        completeSub = player.onPlayerComplete.listen((_) {
+          unawaited(disposePlayer());
+        });
         await player.play(AssetSource(asset));
       } catch (error) {
         debugPrint('[call] one-shot audio failed: $error');
+        await disposePlayer();
       }
     }());
   }
