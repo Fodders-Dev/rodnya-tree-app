@@ -17,6 +17,98 @@ const {
   nowIso,
 } = require("../helpers");
 
+function _normalizeStoryQuestionKey(text) {
+  return String(text || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function _isStoryBlockedPair(db, userA, userB) {
+  if (!userA || !userB) return false;
+  const blocks = Array.isArray(db.blocks) ? db.blocks : [];
+  if (
+    blocks.some((b) => {
+      const blocker = b.blockerId ?? b.blockerUserId;
+      const blocked = b.blockedUserId ?? b.blockedId;
+      return (
+        (blocker === userA && blocked === userB) ||
+        (blocker === userB && blocked === userA)
+      );
+    })
+  ) {
+    return true;
+  }
+  const legacyBlocks = Array.isArray(db.userBlocks) ? db.userBlocks : [];
+  return legacyBlocks.some(
+    (b) =>
+      (b.blockerId === userA && b.blockedId === userB) ||
+      (b.blockerId === userB && b.blockedId === userA),
+  );
+}
+
+function _buildAnswerBlockPayloads(answer) {
+  const blocks = [];
+  const rawAudio = answer?.audio;
+  if (rawAudio && typeof rawAudio === "object") {
+    const url = normalizeNullableString(rawAudio.mediaUrl);
+    if (!url || !enforceSafeMediaOrLinkUrl(url, {allowEmpty: false}).ok) {
+      return {error: "INVALID_ANSWER"};
+    }
+    const duration =
+      rawAudio.durationSec === undefined || rawAudio.durationSec === null
+        ? null
+        : Number(rawAudio.durationSec);
+    if (
+      duration !== null &&
+      (!Number.isFinite(duration) || duration < 0 || duration > 36000)
+    ) {
+      return {error: "INVALID_ANSWER"};
+    }
+    const transcript = normalizeNullableString(rawAudio.transcript);
+    if (transcript && transcript.length > 20000) {
+      return {error: "INVALID_ANSWER"};
+    }
+    blocks.push({
+      kind: "audio",
+      blockType: "audio",
+      content: {url, durationSec: duration, transcript},
+    });
+  }
+
+  const rawText = normalizeNullableString(answer?.text);
+  if (rawText) {
+    if (rawText.length > 20000) {
+      return {error: "INVALID_ANSWER"};
+    }
+    blocks.push({
+      kind: "text",
+      blockType: "paragraph",
+      content: {spans: [rawText]},
+    });
+  }
+
+  const rawPhoto = answer?.photo;
+  if (rawPhoto && typeof rawPhoto === "object") {
+    const url = normalizeNullableString(rawPhoto.mediaUrl);
+    const caption = normalizeNullableString(rawPhoto.caption);
+    if (
+      !url ||
+      !enforceSafeMediaOrLinkUrl(url, {allowEmpty: false}).ok ||
+      (caption && caption.length > 1000)
+    ) {
+      return {error: "INVALID_ANSWER"};
+    }
+    blocks.push({
+      kind: "photo",
+      blockType: "photo",
+      content: {url, caption},
+    });
+  }
+
+  if (blocks.length === 0) {
+    return {error: "INVALID_ANSWER"};
+  }
+  return {blocks};
+}
+
 module.exports = {
   /// State-based idempotent seed (DECISIONS.md 2026-05-13). User
   /// retry на network fail → returns existing tree. Incomplete
@@ -594,15 +686,30 @@ module.exports = {
   /// TOO_MANY_PENDING. Route layer separately gates edit permission via
   /// requireGraphPersonEdit BEFORE calling this (§1: "инициатор обязан
   /// иметь право редактировать персону").
-  async createStoryRequest({treeId, personId, requesterUserId, targetUserId, question}) {
+  async createStoryRequest({
+    treeId,
+    personId,
+    requesterUserId,
+    targetUserId = null,
+    targetName = null,
+    deliveryMode = "in_app",
+    question,
+  }) {
     const normalizedTreeId = normalizeNullableString(treeId);
     const normalizedPersonId = normalizeNullableString(personId);
     const normalizedRequester = normalizeNullableString(requesterUserId);
-    const normalizedTarget = normalizeNullableString(targetUserId);
-    if (!normalizedTreeId || !normalizedPersonId || !normalizedRequester || !normalizedTarget) {
+    const mode = deliveryMode === "public_link" ? "public_link" : "in_app";
+    const normalizedTarget =
+      mode === "in_app" ? normalizeNullableString(targetUserId) : null;
+    const normalizedTargetName =
+      normalizeNullableString(targetName)?.slice(0, 120) || null;
+    if (!normalizedTreeId || !normalizedPersonId || !normalizedRequester) {
       return {error: "INVALID_INPUT"};
     }
-    if (normalizedRequester === normalizedTarget) {
+    if (mode === "in_app" && !normalizedTarget) {
+      return {error: "INVALID_INPUT"};
+    }
+    if (mode === "in_app" && normalizedRequester === normalizedTarget) {
       return {error: "SELF_REQUEST_FORBIDDEN"};
     }
     const questionText = String(question?.text || "").trim();
@@ -614,7 +721,7 @@ module.exports = {
     // Дубль — это ТОТ ЖЕ вопрос той же паре про того же человека, а не любой
     // открытый вопрос к ней: два разных вопроса бабушке за один вечер —
     // нормальный сценарий, от спама защищает лимит открытых (TOO_MANY_PENDING).
-    const questionKey = questionText.toLowerCase().replace(/\s+/g, " ");
+    const questionKey = _normalizeStoryQuestionKey(questionText);
 
     return this._mutate((db, skip) => {
       const newlyExpired = this._sweepExpiredStoryRequests(db);
@@ -635,20 +742,29 @@ module.exports = {
       if (!tree || !person || person.treeId !== normalizedTreeId) {
         return fail("PERSON_NOT_FOUND");
       }
-      if (!this._isUserInTreeOrSemya(db, tree, normalizedTarget)) {
+      if (mode === "in_app" && !this._isUserInTreeOrSemya(db, tree, normalizedTarget)) {
         return fail("TARGET_NOT_IN_TREE");
       }
 
       db.storyRequests = db.storyRequests || [];
-      const duplicate = db.storyRequests.find(
-        (r) =>
-          r.treeId === normalizedTreeId &&
-          r.personId === normalizedPersonId &&
-          r.requesterUserId === normalizedRequester &&
-          r.targetUserId === normalizedTarget &&
-          r.status === "pending" &&
-          String(r.question?.text || "").toLowerCase().replace(/\s+/g, " ") === questionKey,
-      );
+      const targetNameKey = _normalizeStoryQuestionKey(normalizedTargetName);
+      const duplicate = db.storyRequests.find((r) => {
+        const entryMode = r.deliveryMode === "public_link" ? "public_link" : "in_app";
+        if (
+          r.treeId !== normalizedTreeId ||
+          r.personId !== normalizedPersonId ||
+          r.requesterUserId !== normalizedRequester ||
+          entryMode !== mode ||
+          r.status !== "pending" ||
+          _normalizeStoryQuestionKey(r.question?.text) !== questionKey
+        ) {
+          return false;
+        }
+        if (mode === "in_app") {
+          return r.targetUserId === normalizedTarget;
+        }
+        return _normalizeStoryQuestionKey(r.targetName) === targetNameKey;
+      });
       if (duplicate) {
         return fail("DUPLICATE_PENDING");
       }
@@ -666,6 +782,11 @@ module.exports = {
         personId: normalizedPersonId,
         requesterUserId: normalizedRequester,
         targetUserId: normalizedTarget,
+        targetName: mode === "public_link" ? normalizedTargetName : null,
+        deliveryMode: mode,
+        shareToken:
+          mode === "public_link" ? crypto.randomBytes(24).toString("hex") : null,
+        guestUploads: mode === "public_link" ? [] : undefined,
         question: {text: questionText, themeKey, sourceQuestionId},
         status: "pending",
         answer: null,
@@ -679,6 +800,99 @@ module.exports = {
       };
       db.storyRequests.push(request);
       return {
+        request: structuredClone(request),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+    });
+  },
+
+  /// Capability-token lookup for guest answer page GET /story/:token.
+  async findStoryRequestByShareToken(token) {
+    const normalizedToken = normalizeNullableString(token)?.toLowerCase();
+    if (!normalizedToken || !/^[a-f0-9]{32,128}$/.test(normalizedToken)) {
+      return {request: null, person: null, requester: null, tree: null, newlyExpired: []};
+    }
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const request = (db.storyRequests || []).find(
+        (r) =>
+          r.deliveryMode === "public_link" &&
+          typeof r.shareToken === "string" &&
+          r.shareToken.toLowerCase() === normalizedToken,
+      );
+      if (!request) {
+        const result = {
+          request: null,
+          person: null,
+          requester: null,
+          tree: null,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? result : skip(result);
+      }
+      const tree = (db.trees || []).find((t) => t.id === request.treeId) || null;
+      const person = this._findPersonRecordById(db, request.personId) || null;
+      const requester = (db.users || []).find((u) => u.id === request.requesterUserId) || null;
+      const result = {
+        request: structuredClone(request),
+        person: person ? structuredClone(person) : null,
+        requester: requester ? structuredClone(requester) : null,
+        tree: tree ? structuredClone(tree) : null,
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+      return newlyExpired.length > 0 ? result : skip(result);
+    });
+  },
+
+  async recordGuestStoryUpload({
+    token,
+    url,
+    bucket,
+    relativePath,
+    kind,
+    contentType,
+    size,
+  }) {
+    const normalizedToken = normalizeNullableString(token)?.toLowerCase();
+    const normalizedUrl = normalizeNullableString(url);
+    const normalizedKind = kind === "photo" ? "photo" : "audio";
+    if (!normalizedToken || !normalizedUrl) {
+      return {error: "INVALID_INPUT"};
+    }
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const fail = (error) => {
+        const payload = {
+          error,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? payload : skip(payload);
+      };
+      const request = (db.storyRequests || []).find(
+        (r) =>
+          r.deliveryMode === "public_link" &&
+          typeof r.shareToken === "string" &&
+          r.shareToken.toLowerCase() === normalizedToken,
+      );
+      if (!request) return fail("NOT_FOUND");
+      if (request.status !== "pending") return fail("NOT_PENDING");
+      request.guestUploads = Array.isArray(request.guestUploads) ? request.guestUploads : [];
+      if (request.guestUploads.length >= 4) {
+        return fail("GUEST_UPLOAD_LIMIT");
+      }
+      const entry = {
+        url: normalizedUrl,
+        bucket: normalizeNullableString(bucket),
+        relativePath: normalizeNullableString(relativePath),
+        kind: normalizedKind,
+        contentType: normalizeNullableString(contentType),
+        size: Number(size) || 0,
+        uploadedAt: nowIso(),
+      };
+      request.guestUploads.push(entry);
+      request.updatedAt = nowIso();
+      return {
+        upload: structuredClone(entry),
         request: structuredClone(request),
         newlyExpired: newlyExpired.map((r) => structuredClone(r)),
       };
@@ -700,7 +914,8 @@ module.exports = {
       const request = (db.storyRequests || []).find((r) => r.id === normalizedId);
       const visible =
         request &&
-        (request.requesterUserId === normalizedViewer || request.targetUserId === normalizedViewer);
+        (request.requesterUserId === normalizedViewer ||
+          (request.targetUserId && request.targetUserId === normalizedViewer));
       const result = {
         request: visible ? structuredClone(request) : null,
         newlyExpired: newlyExpired.map((r) => structuredClone(r)),
@@ -758,58 +973,30 @@ module.exports = {
       if (!this._isUserInTreeOrSemya(db, tree, normalizedActor)) {
         return fail("FORBIDDEN_NOT_MEMBER");
       }
-      const isBlockedPair = (db.userBlocks || []).some(
-        (b) =>
-          (b.blockerId === request.requesterUserId && b.blockedId === normalizedActor) ||
-          (b.blockerId === normalizedActor && b.blockedId === request.requesterUserId),
-      );
-      if (isBlockedPair) {
+      if (_isStoryBlockedPair(db, request.requesterUserId, normalizedActor)) {
         return fail("FORBIDDEN_BLOCKED");
       }
 
-      // Map the answer's wire shape → an article block type/content. MVP-1
-      // decision §0.3/§0.4: audio stores no transcript (речь не
-      // расшифровывается), video is out of scope (no `video` block type
-      // exists yet — don't add one here).
-      let blockType;
-      let blockContent;
-      if (kind === "audio") {
-        const url = normalizeNullableString(answer?.mediaUrl);
-        if (!url || !enforceSafeMediaOrLinkUrl(url, {allowEmpty: false}).ok) {
-          return fail("INVALID_ANSWER");
-        }
-        const duration = Number(answer?.durationSec);
-        if (Number.isFinite(duration) && (duration < 0 || duration > 36000)) {
-          return fail("INVALID_ANSWER");
-        }
-        blockType = "audio";
-        blockContent = {url, durationSec: answer?.durationSec, transcript: null};
-      } else if (kind === "text") {
-        const text = String(answer?.text || "").trim();
-        if (!text || text.length > 20000) return fail("INVALID_ANSWER");
-        blockType = "paragraph";
-        blockContent = {spans: [text]};
-      } else {
-        const url = normalizeNullableString(answer?.mediaUrl);
-        const caption = normalizeNullableString(answer?.caption);
-        if (
-          !url ||
-          !enforceSafeMediaOrLinkUrl(url, {allowEmpty: false}).ok ||
-          (caption && caption.length > 1000)
-        ) {
-          return fail("INVALID_ANSWER");
-        }
-        blockType = "photo";
-        blockContent = {url, caption};
+      const built = _buildAnswerBlockPayloads({
+        audio:
+          kind === "audio"
+            ? {mediaUrl: answer?.mediaUrl, durationSec: answer?.durationSec, transcript: answer?.transcript}
+            : null,
+        text: kind === "text" ? answer?.text : null,
+        photo: kind === "photo" ? {mediaUrl: answer?.mediaUrl, caption: answer?.caption} : null,
+      });
+      if (built.error) {
+        return fail(built.error);
       }
 
+      const spec = built.blocks[0];
       let block;
       let ctx;
       try {
         ctx = this._resolveArticleContext(db, request.personId);
         block = createArticleBlockRecord({
-          type: blockType,
-          content: blockContent,
+          type: spec.blockType,
+          content: spec.content,
           actorUserId: normalizedActor,
         });
       } catch (error) {
@@ -824,6 +1011,7 @@ module.exports = {
         question: structuredClone(request.question),
         askedByUserId: request.requesterUserId,
         askedAt: request.createdAt,
+        channel: "in_app",
       };
 
       const article = this._ensureProfileArticle(db, request.personId, ctx);
@@ -851,6 +1039,143 @@ module.exports = {
       return {
         request: structuredClone(request),
         block: structuredClone(block),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+    });
+  },
+
+  /// Unauthenticated guest answers a public-link story request via capability
+  /// shareToken. Supports combined answers (audio + text + photo in one submit),
+  /// verifies any submitted media URLs came from `request.guestUploads` for this
+  /// token, appends article blocks in order audio -> text -> photo with
+  /// channel="public_link" attribution, and returns any superseded upload URLs so
+  /// the route can clean them up from object storage.
+  async answerPublicStoryRequest({
+    token,
+    respondentName = null,
+    audio = null,
+    text = null,
+    photo = null,
+  }) {
+    const normalizedToken = normalizeNullableString(token)?.toLowerCase();
+    if (!normalizedToken || !/^[a-f0-9]{32,128}$/.test(normalizedToken)) {
+      return {error: "INVALID_INPUT"};
+    }
+    const cleanRespondentName =
+      normalizeNullableString(respondentName)?.slice(0, 120) || null;
+    const built = _buildAnswerBlockPayloads({audio, text, photo});
+    if (built.error) {
+      return {error: built.error};
+    }
+
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const fail = (error) => {
+        const payload = {
+          error,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? payload : skip(payload);
+      };
+
+      const request = (db.storyRequests || []).find(
+        (r) =>
+          r.deliveryMode === "public_link" &&
+          typeof r.shareToken === "string" &&
+          r.shareToken.toLowerCase() === normalizedToken,
+      );
+      if (!request) return fail("NOT_FOUND");
+      if (request.status !== "pending") return fail("NOT_PENDING");
+
+      const tree = (db.trees || []).find((t) => t.id === request.treeId);
+      const heroPerson = this._findPersonRecordById(db, request.personId);
+      if (!tree || !heroPerson || heroPerson.treeId !== request.treeId) {
+        return fail("NOT_FOUND");
+      }
+
+      const uploadedUrls = new Set(
+        (Array.isArray(request.guestUploads) ? request.guestUploads : [])
+          .map((u) => u?.url)
+          .filter(Boolean),
+      );
+      for (const spec of built.blocks) {
+        if ((spec.kind === "audio" || spec.kind === "photo") && !uploadedUrls.has(spec.content.url)) {
+          return fail("INVALID_ANSWER");
+        }
+      }
+
+      let ctx;
+      const createdBlocks = [];
+      try {
+        ctx = this._resolveArticleContext(db, request.personId);
+        const attributionName = cleanRespondentName || request.targetName || null;
+        for (const spec of built.blocks) {
+          const block = createArticleBlockRecord({
+            type: spec.blockType,
+            content: spec.content,
+            actorUserId: null,
+          });
+          block.source = {
+            requestId: request.id,
+            question: structuredClone(request.question),
+            askedByUserId: request.requesterUserId,
+            askedAt: request.createdAt,
+            respondentName: attributionName,
+            channel: "public_link",
+          };
+          createdBlocks.push(block);
+        }
+      } catch (error) {
+        if (error?.message === "PERSON_NOT_FOUND") return fail("NOT_FOUND");
+        return fail("INVALID_ANSWER");
+      }
+
+      const article = this._ensureProfileArticle(db, request.personId, ctx);
+      for (const block of createdBlocks) {
+        article.blocks.push(block);
+      }
+      const now = nowIso();
+      article.updatedAt = now;
+      this._appendTreeChangeRecord(db, {
+        treeId: ctx.treeId,
+        actorId: request.requesterUserId,
+        type: "article.block-added",
+        personId: request.personId,
+        details: {
+          blockId: createdBlocks[0].id,
+          blockIds: createdBlocks.map((b) => b.id),
+          blockType: createdBlocks[0].type,
+          storyRequestId: request.id,
+          channel: "public_link",
+        },
+      });
+
+      const usedUrls = new Set(
+        built.blocks
+          .filter((s) => s.kind === "audio" || s.kind === "photo")
+          .map((s) => s.content.url),
+      );
+      const unusedUploads = (Array.isArray(request.guestUploads) ? request.guestUploads : [])
+        .map((u) => u?.url)
+        .filter((u) => u && !usedUrls.has(u));
+
+      const attributionName = cleanRespondentName || request.targetName || null;
+      request.status = "answered";
+      request.answer = {
+        articleBlockId: createdBlocks[0].id,
+        articleBlockIds: createdBlocks.map((b) => b.id),
+        kind: built.blocks[0].kind,
+        answeredByUserId: null,
+        respondentName: attributionName,
+        answeredAt: now,
+      };
+      request.respondedAt = now;
+      request.updatedAt = now;
+
+      return {
+        request: structuredClone(request),
+        blocks: createdBlocks.map((b) => structuredClone(b)),
+        unusedUploads,
         newlyExpired: newlyExpired.map((r) => structuredClone(r)),
       };
     });

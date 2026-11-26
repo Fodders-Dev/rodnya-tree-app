@@ -43,10 +43,13 @@ function registerCoreHttpMiddleware(app, {config, normalizedRuntimeInfo = {}}) {
         return;
       }
 
+      const sanitizedPath = String(pathName)
+        .replace(/^\/story\/[^/]+(\/.*)?$/, "/story/:token$1")
+        .replace(/^\/v1\/browse\/[^/]+(\/.*)?$/, "/v1/browse/:token$1");
       const payload = JSON.stringify({
         requestId: req.requestId,
         method: req.method,
-        path: pathName,
+        path: sanitizedPath,
         statusCode: res.statusCode,
         durationMs,
         ip: req.ip,
@@ -71,7 +74,11 @@ function registerJsonBodyParser(app) {
   // с кривым заголовком (ревью бинарной загрузки, P1).
   const jsonBodyParser = express.json({limit: "50mb", strict: false});
   app.use((req, res, next) => {
-    if (req.path.replace(/\/+$/, "") === "/v1/media/object") {
+    const cleanPath = req.path.replace(/\/+$/, "");
+    if (
+      cleanPath === "/v1/media/object" ||
+      /^\/story\/[^/]+\/media$/.test(cleanPath)
+    ) {
       next();
       return;
     }

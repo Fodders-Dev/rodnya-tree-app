@@ -52,6 +52,18 @@ function registerRateLimitMiddleware(app, {config, rateLimitBackend}) {
       ) {
         return {bucket: "safety", limit: config.safetyRateLimitMax};
       }
+      if (/^\/story\/[^/]+$/.test(normalizedPathName)) {
+        return {
+          bucket: "public_story_read",
+          limit: config.publicStoryReadRateLimitMax || 30,
+        };
+      }
+      if (/^\/story\/[^/]+\/(media|answer)$/.test(normalizedPathName)) {
+        return {
+          bucket: "public_story_write",
+          limit: config.publicStoryWriteRateLimitMax || 12,
+        };
+      }
       if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
         return {bucket: "mutation", limit: config.mutationRateLimitMax};
       }

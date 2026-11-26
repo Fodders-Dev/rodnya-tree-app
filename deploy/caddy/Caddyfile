@@ -138,6 +138,11 @@ rodnya-tree.ru, www.rodnya-tree.ru {
 			rewrite * /oauth/callback/index.html
 			reverse_proxy 127.0.0.1:8098
 		}
+
+		@storyPublic path /story/*
+		handle @storyPublic {
+			reverse_proxy 127.0.0.1:8080
+		}
 		try_files {path} /index.html
 		reverse_proxy 127.0.0.1:8098
 	}

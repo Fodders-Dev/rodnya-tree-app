@@ -30,11 +30,13 @@ const {
   sanitizeUserProfilePreview,
   normalizePublicUrl,
 } = require("../profile-utils");
+const {buildPublicStoryUrl} = require("./public-story-routes");
 
 function registerStoryRequestRoutes(
   app,
   {
     store,
+    config,
     requireAuth,
     requireTreeAccess,
     requireGraphPersonEdit,
@@ -96,32 +98,63 @@ function registerStoryRequestRoutes(
   // person/requester/target summaries. Best-effort per field (a dangling
   // personId from a hard-deleted hero still returns the bare request
   // instead of failing the whole response).
-  async function attachViewerContext(request) {
+  async function attachViewerContext(request, req = null, viewerUserId = null) {
     const [person, requester, target] = await Promise.all([
       store.findPerson(request.treeId, request.personId).catch(() => null),
       store.findUserById(request.requesterUserId).catch(() => null),
-      store.findUserById(request.targetUserId).catch(() => null),
+      request.targetUserId
+        ? store.findUserById(request.targetUserId).catch(() => null)
+        : Promise.resolve(null),
     ]);
+    const copy = {...request};
+    const isRequester = viewerUserId && copy.requesterUserId === viewerUserId;
+    const shareUrl =
+      isRequester && copy.shareToken
+        ? buildPublicStoryUrl(req, config, copy.shareToken)
+        : null;
+    delete copy.shareToken;
+    delete copy.guestUploads;
     return {
-      ...request,
+      ...copy,
+      ...(shareUrl ? {shareUrl} : {}),
       person: mapPersonSummary(person),
       requester: requester ? sanitizeUserProfilePreview(requester) : null,
       target: target ? sanitizeUserProfilePreview(target) : null,
     };
   }
 
-  // POST /v1/story-requests — initiator creates a pending request.
+  function sanitizeRequestForRequester(request, req) {
+    const copy = {...request};
+    const shareUrl = copy.shareToken
+      ? buildPublicStoryUrl(req, config, copy.shareToken)
+      : null;
+    delete copy.shareToken;
+    delete copy.guestUploads;
+    return shareUrl ? {...copy, shareUrl} : copy;
+  }
+
+  // POST /v1/story-requests — initiator creates a pending request (in_app or public_link).
   app.post("/v1/story-requests", requireAuth, async (req, res) => {
     const treeId = String(req.body?.treeId || "").trim();
     const personId = String(req.body?.personId || "").trim();
+    const deliveryMode =
+      String(req.body?.deliveryMode || "in_app").trim() === "public_link"
+        ? "public_link"
+        : "in_app";
     const targetUserId = String(req.body?.targetUserId || "").trim();
+    const targetName = String(req.body?.targetName || "").trim() || null;
     const questionText = String(req.body?.question?.text || "").trim();
 
-    if (!treeId || !personId || !targetUserId) {
-      res.status(400).json({message: "Нужны treeId, personId и targetUserId"});
+    if (!treeId || !personId || (deliveryMode === "in_app" && !targetUserId)) {
+      res.status(400).json({
+        message:
+          deliveryMode === "public_link"
+            ? "Нужны treeId и personId"
+            : "Нужны treeId, personId и targetUserId",
+      });
       return;
     }
-    if (targetUserId === req.auth.user.id) {
+    if (deliveryMode === "in_app" && targetUserId === req.auth.user.id) {
       res.status(400).json({message: "Нельзя спросить историю у самого себя"});
       return;
     }
@@ -145,10 +178,11 @@ function registerStoryRequestRoutes(
       return;
     }
     const isTargetOwnerAboutSelf =
-      Boolean(person.userId) && person.userId === targetUserId;
+      deliveryMode === "in_app" &&
+      Boolean(person.userId) &&
+      person.userId === targetUserId;
     if (!isTargetOwnerAboutSelf) {
-      // Asking a third person about a claimed/anonymous hero still requires
-      // edit rights on that hero person so the eventual answer can land.
+      // Asking a third person or creating a guest share link requires edit rights on that person.
       const gate = await requireGraphPersonEdit(req, res, treeId, personId, "edit");
       if (!gate) return;
     }
@@ -157,7 +191,9 @@ function registerStoryRequestRoutes(
       treeId,
       personId,
       requesterUserId: req.auth.user.id,
-      targetUserId,
+      targetUserId: deliveryMode === "in_app" ? targetUserId : null,
+      targetName,
+      deliveryMode,
       question: {
         text: questionText,
         themeKey: req.body?.question?.themeKey,
@@ -197,20 +233,24 @@ function registerStoryRequestRoutes(
       return;
     }
 
-    const requesterName = actorDisplayName(req.auth.user);
-    await createAndDispatchNotification({
-      userId: targetUserId,
-      type: "story_request_received",
-      title: `${requesterName} хочет узнать историю`,
-      body: outcome.request.question.text,
-      data: {
-        requestId: outcome.request.id,
-        treeId: outcome.request.treeId,
-        personId: outcome.request.personId,
-      },
-    });
+    if (deliveryMode === "in_app") {
+      const requesterName = actorDisplayName(req.auth.user);
+      await createAndDispatchNotification({
+        userId: targetUserId,
+        type: "story_request_received",
+        title: `${requesterName} хочет узнать историю`,
+        body: outcome.request.question.text,
+        data: {
+          requestId: outcome.request.id,
+          treeId: outcome.request.treeId,
+          personId: outcome.request.personId,
+        },
+      });
+    }
 
-    res.status(201).json({request: outcome.request});
+    res.status(201).json({
+      request: sanitizeRequestForRequester(outcome.request, req),
+    });
   });
 
   // GET /v1/me/story-requests?role=received|issued&status= — lists with
@@ -230,7 +270,9 @@ function registerStoryRequestRoutes(
     });
     await notifyExpired(outcome.newlyExpired);
 
-    const requests = await Promise.all(outcome.requests.map(attachViewerContext));
+    const requests = await Promise.all(
+      outcome.requests.map((r) => attachViewerContext(r, req, req.auth.user.id)),
+    );
     res.json({requests});
   });
 
@@ -248,7 +290,9 @@ function registerStoryRequestRoutes(
       res.status(404).json({message: "Запрос не найден"});
       return;
     }
-    res.json({request: await attachViewerContext(outcome.request)});
+    res.json({
+      request: await attachViewerContext(outcome.request, req, req.auth.user.id),
+    });
   });
 
   // POST /v1/story-requests/:id/answer — target answers with audio, text
@@ -403,17 +447,19 @@ function registerStoryRequestRoutes(
       return;
     }
 
-    const requesterName = actorDisplayName(req.auth.user);
-    await createAndDispatchNotification({
-      userId: outcome.request.targetUserId,
-      type: "story_request_revoked",
-      // Настоящее время «отзывает» — без рода и без склонения имени.
-      title: `${requesterName} отзывает свой вопрос`,
-      body: outcome.request.question.text,
-      data: {requestId: outcome.request.id},
-    });
+    if (outcome.request.targetUserId) {
+      const requesterName = actorDisplayName(req.auth.user);
+      await createAndDispatchNotification({
+        userId: outcome.request.targetUserId,
+        type: "story_request_revoked",
+        // Настоящее время «отзывает» — без рода и без склонения имени.
+        title: `${requesterName} отзывает свой вопрос`,
+        body: outcome.request.question.text,
+        data: {requestId: outcome.request.id},
+      });
+    }
 
-    res.json({request: outcome.request});
+    res.json({request: sanitizeRequestForRequester(outcome.request, req)});
   });
 }
 

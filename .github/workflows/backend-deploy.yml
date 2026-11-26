@@ -48,7 +48,10 @@ jobs:
             backend/test/app-media-routes.test.js \
             backend/test/api.test.js \
             backend/test/postgres-store.test.js \
-            backend/test/chat-utils.test.js
+            backend/test/chat-utils.test.js \
+            backend/test/story-requests.test.js \
+            backend/test/public-story-requests.test.js \
+            backend/test/postgres-story-requests.test.js
 
       - name: Create backend release archive
         run: |

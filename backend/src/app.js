@@ -50,6 +50,7 @@ const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
 const {registerOnboardingRoutes} = require("./routes/onboarding-routes");
 const {registerKinshipChecksRoutes} = require("./routes/kinship-checks-routes");
 const {registerStoryRequestRoutes} = require("./routes/story-request-routes");
+const {registerPublicStoryRoutes} = require("./routes/public-story-routes");
 const {registerSemyaRoutes} = require("./routes/semya-routes");
 const {registerMembershipRoutes} = require("./routes/membership-routes");
 const {registerSemyaInvitationRoutes} = require("./routes/semya-invitation-routes");
@@ -375,9 +376,18 @@ function createApp({
   // person-edit rights before store.createStoryRequest ever runs.
   registerStoryRequestRoutes(app, {
     store,
+    config,
     requireAuth,
     requireTreeAccess,
     requireGraphPersonEdit,
+    createAndDispatchNotification,
+  });
+
+  // «Спросить историю» v2 — lightweight SSR HTML + token-gated guest answer/media.
+  registerPublicStoryRoutes(app, {
+    store,
+    config,
+    mediaStorage: resolvedMediaStorage,
     createAndDispatchNotification,
   });
 

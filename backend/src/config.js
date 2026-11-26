@@ -134,6 +134,19 @@ function createConfig() {
     "RODNYA_RATE_LIMIT_SAFETY_MAX",
     legacyEnvKey("RODNYA_RATE_LIMIT_SAFETY_MAX"),
   );
+  const publicStoryReadRateLimitMax = readEnvNumber(
+    30,
+    "RODNYA_RATE_LIMIT_PUBLIC_STORY_READ_MAX",
+  );
+  const publicStoryWriteRateLimitMax = readEnvNumber(
+    12,
+    "RODNYA_RATE_LIMIT_PUBLIC_STORY_WRITE_MAX",
+  );
+  const publicStoryBaseUrl =
+    readEnvAlias("RODNYA_PUBLIC_STORY_BASE_URL") || "";
+  const sttApiUrl = readEnvAlias("RODNYA_STT_API_URL") || "";
+  const sttApiKey = readEnvAlias("RODNYA_STT_API_KEY") || "";
+  const sttModel = readEnvAlias("RODNYA_STT_MODEL") || "whisper-1";
   const storageBackend = String(
     readEnvAlias("RODNYA_BACKEND_STORAGE") || "file",
   )
@@ -333,6 +346,11 @@ function createConfig() {
     publicApiUrl: readEnvAlias("RODNYA_PUBLIC_API_URL") || "",
     publicAppUrl:
       readEnvAlias("RODNYA_PUBLIC_APP_URL") || "https://rodnya-tree.ru",
+    publicStoryBaseUrl,
+    sttApiUrl,
+    sttApiKey,
+    sttModel,
+    sttEnabled: Boolean(sttApiUrl && sttApiKey),
     postgresUrl:
       readEnvAlias("RODNYA_POSTGRES_URL", "DATABASE_URL") ||
       process.env.DATABASE_URL ||
@@ -425,6 +443,8 @@ function createConfig() {
     mutationRateLimitMax,
     uploadRateLimitMax,
     safetyRateLimitMax,
+    publicStoryReadRateLimitMax,
+    publicStoryWriteRateLimitMax,
     storageBackend,
     hardDeleteEnabled,
     hardDeleteRetentionDays,
