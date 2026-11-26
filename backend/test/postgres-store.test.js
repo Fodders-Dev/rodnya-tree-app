@@ -1122,20 +1122,27 @@ test("PostgresStore communication hot paths avoid full state reads", async () =>
 // ── SPEED-8a: кэш чтения по версии строки ──────────────────────────────────
 
 test("каждый UPDATE строки состояния инкрементит version (статический сторож кэша)", async () => {
-  const source = await fs.readFile(
-    path.join(__dirname, "../src/postgres-store.js"),
-    "utf8",
-  );
-  const updates = [...source.matchAll(/UPDATE \$\{this\._qualifiedTableName\}/g)];
-  assert.ok(updates.length >= 5, `ожидали точечные UPDATE, нашли ${updates.length}`);
-  for (const match of updates) {
-    const window = source.slice(match.index, match.index + 900);
-    assert.match(
-      window,
-      /version = /,
-      `UPDATE без version @${source.slice(0, match.index).split("\n").length}: кэш чтения отдаст устаревшее`,
-    );
+  const postgresDir = path.join(__dirname, "../src/store/postgres");
+  const moduleFiles = (await fs.readdir(postgresDir))
+    .filter((name) => name.endsWith(".js"))
+    .sort()
+    .map((name) => path.join(postgresDir, name));
+  const files = [path.join(__dirname, "../src/postgres-store.js"), ...moduleFiles];
+  let totalUpdates = 0;
+  for (const filePath of files) {
+    const source = await fs.readFile(filePath, "utf8");
+    const updates = [...source.matchAll(/UPDATE \$\{this\._qualifiedTableName\}/g)];
+    totalUpdates += updates.length;
+    for (const match of updates) {
+      const window = source.slice(match.index, match.index + 900);
+      assert.match(
+        window,
+        /version = /,
+        `UPDATE без version в ${path.basename(filePath)} @${source.slice(0, match.index).split("\n").length}: кэш чтения отдаст устаревшее`,
+      );
+    }
   }
+  assert.ok(totalUpdates >= 5, `ожидали точечные UPDATE, нашли ${totalUpdates}`);
 });
 
 function buildVersionedPool(initialState) {
