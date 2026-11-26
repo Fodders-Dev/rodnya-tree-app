@@ -9809,9 +9809,7 @@ class _ChatBubble extends StatelessWidget {
                           boxShadow: bubbleShadow,
                         ),
                   child: Column(
-                    crossAxisAlignment: isMe
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (senderLabel != null && senderLabel!.isNotEmpty) ...[
                         _ChatSenderLabel(

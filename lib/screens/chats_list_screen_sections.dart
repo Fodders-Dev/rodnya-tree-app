@@ -8,6 +8,16 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
     required String? selectedTreeName,
     required bool showInitialLoading,
   }) {
+    if (!_isWideLayout(context)) {
+      return _buildMobileShell(
+        theme: theme,
+        currentUserId: currentUserId,
+        isFriendsTree: isFriendsTree,
+        selectedTreeName: selectedTreeName,
+        showInitialLoading: showInitialLoading,
+      );
+    }
+
     final listPanel = GlassPanel(
       padding: EdgeInsets.zero,
       borderRadius: BorderRadius.circular(22),
@@ -32,16 +42,6 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
         ],
       ),
     );
-
-    if (!_isWideLayout(context)) {
-      return _buildMobileShell(
-        theme: theme,
-        currentUserId: currentUserId,
-        isFriendsTree: isFriendsTree,
-        selectedTreeName: selectedTreeName,
-        showInitialLoading: showInitialLoading,
-      );
-    }
 
     // Desktop master-detail (Telegram-style): the chat list is a resizable
     // left column; opening a chat fills the right pane instead of pushing a
@@ -374,6 +374,9 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
         child: SizedBox(
           height: compact ? 40 : null,
           child: TextField(
+            key: compact
+                ? const ValueKey('chats-desktop-search-field')
+                : const ValueKey('chats-mobile-search-field'),
             controller: _searchController,
             focusNode: _searchFocusNode,
             textAlignVertical: TextAlignVertical.center,
@@ -402,6 +405,9 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
                 horizontal: 14,
               ),
               border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              disabledBorder: InputBorder.none,
             ),
           ),
         ),
@@ -606,15 +612,31 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    FilledButton(
-                      onPressed: onAction,
-                      child: Text(actionLabel),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: onAction,
+                        child: Text(
+                          actionLabel,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          softWrap: true,
+                        ),
+                      ),
                     ),
                     if (secondaryActionLabel != null &&
                         onSecondaryAction != null)
-                      FilledButton.tonal(
-                        onPressed: onSecondaryAction,
-                        child: Text(secondaryActionLabel),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.tonal(
+                          onPressed: onSecondaryAction,
+                          child: Text(
+                            secondaryActionLabel,
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            softWrap: true,
+                          ),
+                        ),
                       ),
                   ],
                 ),

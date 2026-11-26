@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, TargetPlatform;
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -1082,7 +1082,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     // Skip BackdropFilter on Android — see profile_screen for the
     // perf reasoning. The list scrolls a lot, so avoiding the blur
     // every frame matters.
-    final useBlur = defaultTargetPlatform != TargetPlatform.android;
+    final useBlur = !kIsWeb && defaultTargetPlatform != TargetPlatform.android;
     final body = Container(
       decoration: BoxDecoration(
         color: tokens.surface.withValues(

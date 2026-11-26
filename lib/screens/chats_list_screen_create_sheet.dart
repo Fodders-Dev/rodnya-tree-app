@@ -465,7 +465,11 @@ class _CreateChatSheetState extends State<_CreateChatSheet>
                             ? 'Найти человека'
                             : 'Найти родственника')
                         : 'Найти ветку',
+                    filled: false,
                     border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 6,
                       vertical: 14,
@@ -482,12 +486,14 @@ class _CreateChatSheetState extends State<_CreateChatSheet>
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
                       hintText: _mode == _ChatComposerMode.group
-                          ? (isFriendsTree
-                              ? 'Название группы'
-                              : 'Название семьи')
+                          ? 'Название группы'
                           : 'Название',
                       prefixIcon: const Icon(Icons.title, size: 20),
+                      filled: false,
                       border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 6,
                         vertical: 14,
@@ -614,6 +620,14 @@ class _CreateChatSheetState extends State<_CreateChatSheet>
                 many: 'участников',
               );
       case _ChatComposerMode.branch:
+        return _selectedBranchRootIds.isEmpty
+            ? 'Выберите ветку'
+            : _countLabel(
+                _selectedBranchRootIds.length,
+                one: 'ветка',
+                few: 'ветки',
+                many: 'веток',
+              );
       case _ChatComposerMode.branches:
         return _selectedBranchRootIds.isEmpty
             ? 'Выберите ветки'

@@ -1742,6 +1742,9 @@ class CustomApiChatService
     String readerUserId, {
     List<String> messageIds = const <String>[],
   }) {
+    if (state.messages.isEmpty) {
+      return;
+    }
     final targetMessageIds = messageIds.toSet();
     final nextMessages = state.messages.map((message) {
       if (message.senderId == readerUserId ||

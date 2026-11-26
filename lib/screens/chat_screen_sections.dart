@@ -45,7 +45,11 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
         textInputAction: TextInputAction.search,
         decoration: const InputDecoration(
           hintText: 'Поиск по сообщениям',
+          filled: false,
           border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
         ),
       );
     }
