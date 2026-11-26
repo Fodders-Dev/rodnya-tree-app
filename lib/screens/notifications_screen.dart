@@ -577,6 +577,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
 
     final groupedNotifications = _buildGroupedNotifications(_notifications);
+    final unreadEntries = <Object>[];
+    String? currentDateBucket;
+    final now = DateTime.now();
+    for (final group in groupedNotifications) {
+      final bucket = _dateBucketLabel(group.first.createdAt, now);
+      if (bucket != currentDateBucket) {
+        currentDateBucket = bucket;
+        unreadEntries.add(bucket);
+      }
+      unreadEntries.add(group);
+    }
+
     final typeSummary = _buildTypeSummary();
     final sortedTypeSummary = typeSummary.entries.toList()
       ..sort((left, right) => right.value.compareTo(left.value));
@@ -593,16 +605,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     // Overview-карта имеет смысл только при непрочитанных: после
     // «прочитать всё» экран открывается сразу историей.
     final headerCount = _notifications.isEmpty ? 0 : 1;
-    // Плотность (чанк 23): секция непрочитанных получает свой заголовок
-    // «Сегодня», как «Ранее» — унифицированный паттерн групп 28dp вместо
-    // одной большой сводной карточки, отвечающей за всё сразу.
-    final todayHeaderCount = groupedNotifications.isNotEmpty ? 1 : 0;
     final listView = ListView.separated(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      itemCount: groupedNotifications.length +
+      itemCount: unreadEntries.length +
           headerCount +
-          todayHeaderCount +
           historyBlockCount +
           (showHistoryLoader ? 1 : 0),
       // Плотность: строки разделяет волосяная линия внутри строки, а не
@@ -618,12 +625,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           );
         }
         final afterHeader = index - headerCount;
-        if (todayHeaderCount > 0 && afterHeader == 0) {
-          return _buildSectionHeader(context, 'Сегодня');
-        }
-        final groupIndex = afterHeader - todayHeaderCount;
-        if (groupIndex < groupedNotifications.length) {
-          final group = groupedNotifications[groupIndex];
+        if (afterHeader < unreadEntries.length) {
+          final entry = unreadEntries[afterHeader];
+          if (entry is String) {
+            return _buildSectionHeader(context, entry);
+          }
+          final group = entry as List<AppNotificationItem>;
           final item = group.first;
           return _NotificationCard(
             item: item,
@@ -631,7 +638,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             onTap: _isMutating ? null : () => _openNotification(item),
           );
         }
-        final historyIndex = groupIndex - groupedNotifications.length;
+        final historyIndex = afterHeader - unreadEntries.length;
         if (historyIndex == 0) {
           return _buildSectionHeader(context, 'Ранее');
         }
@@ -741,7 +748,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         ),
                         const SizedBox(height: 14),
                         Text(
-                          'Здесь собираются новые сообщения, приглашения в $graphLabel и $eventLabel. На desktop проще быстро просматривать очередь уведомлений и сразу переходить в нужный раздел.',
+                          'Здесь собираются новые сообщения, приглашения в $graphLabel и $eventLabel. На большом экране проще быстро просматривать очередь уведомлений и сразу переходить в нужный раздел.',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                             height: 1.4,
@@ -935,14 +942,49 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return grouped;
   }
 
+  static const List<String> _monthHeaderNames = <String>[
+    'Январь',
+    'Февраль',
+    'Март',
+    'Апрель',
+    'Май',
+    'Июнь',
+    'Июль',
+    'Август',
+    'Сентябрь',
+    'Октябрь',
+    'Ноябрь',
+    'Декабрь',
+  ];
+
+  String _dateBucketLabel(DateTime? timestamp, DateTime now) {
+    if (timestamp == null) {
+      return 'Сегодня';
+    }
+    final local = timestamp.toLocal();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(local.year, local.month, local.day);
+    final diffDays = today.difference(day).inDays;
+    if (diffDays <= 0) {
+      return 'Сегодня';
+    }
+    if (diffDays == 1) {
+      return 'Вчера';
+    }
+    final monthName = _monthHeaderNames[local.month - 1];
+    if (local.year == today.year) {
+      return monthName;
+    }
+    return '$monthName ${local.year}';
+  }
+
   bool _isSameDay(DateTime? left, DateTime? right) {
     if (left == null || right == null) {
       return false;
     }
-
-    return left.year == right.year &&
-        left.month == right.month &&
-        left.day == right.day;
+    final l = left.toLocal();
+    final r = right.toLocal();
+    return l.year == r.year && l.month == r.month && l.day == r.day;
   }
 }
 

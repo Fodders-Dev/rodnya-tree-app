@@ -46,16 +46,16 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
                     : 92,
                 child: _buildViewportControlDock(),
               ),
-              // Blank-card creator FAB on the LEFT (mirrors the
-              // viewport control dock on the right). Visible only
-              // when the host wired `onAddBlankPerson` — the public
-              // viewer doesn't, so the canvas there stays read-only.
+              // Blank-card creator FAB at bottom-left, clear of the
+              // desktop "Карта рода" sidebar and top floating toolbar.
               if (widget.onAddBlankPerson != null && !widget.isEditMode)
                 Positioned(
-                  left: 12,
-                  top: widget.viewportReservedTop > 96
-                      ? widget.viewportReservedTop + 8
-                      : 92,
+                  left: widget.viewportReservedLeft > 0
+                      ? widget.viewportReservedLeft + 12
+                      : 12,
+                  bottom: widget.viewportReservedBottom > 12
+                      ? widget.viewportReservedBottom + 8
+                      : 16,
                   child: _buildBlankCardCreatorFab(),
                 ),
               // Small unobtrusive zoom indicator at the BOTTOM of the

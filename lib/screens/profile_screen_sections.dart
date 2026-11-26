@@ -569,67 +569,77 @@ extension _ProfileScreenSections on _ProfileScreenState {
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-      decoration: BoxDecoration(
-        color: tokens.surfaceStrong,
+    return Material(
+      color: tokens.surfaceStrong,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: tokens.surfaceLine),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: tokens.accentSoft,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(Icons.shield_outlined, size: 20, color: tokens.accent),
+        onTap: () => context.push('/profile/settings'),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: tokens.surfaceLine),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  hasLinkedChannel ? 'Аккаунт защищён' : 'Настройки аккаунта',
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: tokens.accentSoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child:
+                    Icon(Icons.shield_outlined, size: 20, color: tokens.accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hasLinkedChannel
+                          ? 'Аккаунт защищён'
+                          : 'Настройки аккаунта',
+                      style: AppTheme.sans(
+                        color: tokens.ink,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    if (hasLinkedChannel)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          'Основной канал: ${status!.primaryTrustedChannel?.label}',
+                          style: AppTheme.sans(
+                            color: tokens.inkMuted,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: () => context.push('/profile/settings'),
+                child: Text(
+                  'Настройки',
                   style: AppTheme.sans(
-                    color: tokens.ink,
-                    fontSize: 13.5,
+                    color: tokens.accent,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
                 ),
-                if (hasLinkedChannel)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      'Основной канал: ${status!.primaryTrustedChannel?.label}',
-                      style: AppTheme.sans(
-                        color: tokens.inkMuted,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: () => context.push('/profile/settings'),
-            child: Text(
-              'Настройки',
-              style: AppTheme.sans(
-                color: tokens.accent,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -790,7 +800,8 @@ extension _ProfileScreenSections on _ProfileScreenState {
       if (_selectedTreePerson != null)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: _buildTreeCardRowContent(context, person: _selectedTreePerson!),
+          child:
+              _buildTreeCardRowContent(context, person: _selectedTreePerson!),
         ),
       if (_accountLinkingStatus != null) _buildAccountSettingsMenuRow(),
       _buildStoriesMenuRow(),

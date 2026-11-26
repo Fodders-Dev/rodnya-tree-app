@@ -1354,6 +1354,7 @@ class _AttachmentImage extends StatelessWidget {
       child: CachedNetworkImage(
         imageUrl: normalizedUrl!,
         fit: fit,
+        useOldImageOnUrlChange: true,
         placeholder: placeholder == null ? null : (_, __) => placeholder!,
         errorWidget: (_, __, ___) => fallback,
       ),

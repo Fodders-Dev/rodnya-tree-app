@@ -56,142 +56,9 @@ class AppShellRouteModule {
     return StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
         final currentUserId = GetIt.I<AuthServiceInterface>().currentUserId;
-        final unreadNotificationsStream =
-            GetIt.I.isRegistered<CustomApiNotificationService>()
-                ? GetIt.I<CustomApiNotificationService>()
-                    .unreadNotificationsCountStream
-                : Stream<int>.value(0);
-        final unreadChatsStream = currentUserId != null
-            ? GetIt.I<ChatServiceInterface>()
-                .getTotalUnreadCountStream(currentUserId)
-            : Stream<int>.value(0);
-        final pendingInvitationsCountStream = currentUserId != null
-            ? GetIt.I<FamilyTreeServiceInterface>()
-                .getPendingTreeInvitations()
-                .map((invitations) => invitations.length)
-            : Stream<int>.value(0);
-
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            // Earlier this was hard-coded to false — the design
-            // reference is mobile-first and we forced that layout on
-            // web. User feedback after live testing reversed course:
-            // the centered narrow column on a wide browser felt like
-            // "stretched phone with empty voids". Restore the proper
-            // tablet / desktop shell at 900+ — sidebar nav rail
-            // replaces the bottom dock, content centered at 1400 max.
-            final bool isDesktop = constraints.maxWidth >= 900;
-            // Канвас дерева (ветка 2) — единственный экран, которому тесно
-            // в 1400: схема семьи растёт вширь. Остальные вкладки, включая
-            // список «Родных», сами держат свою читаемую ширину.
-            final isTreeBranch = navigationShell.currentIndex == 2;
-
-            // Инсет статус-бара — ОДИН на весь шелл: SafeArea снаружи
-            // колонки, а экраны вкладок внутри видят padding.top = 0
-            // (SafeArea снимает его для потомков). Раньше каждая плашка
-            // (офлайн/обновление/уведомления) брала свой инсет через
-            // собственный SafeArea, а топбар вкладки — ещё раз свой: между
-            // плашкой и топбаром оставалась «дырка» в высоту статус-бара.
-            // Без плашек результат прежний; SafeArea внутри плашек
-            // остаются для их автономных мест (экран входа, чат) и здесь
-            // становятся no-op.
-            Widget bodyContent = SafeArea(
-              top: true,
-              bottom: false,
-              left: false,
-              right: false,
-              child: Column(
-                children: <Widget>[
-                  OfflineIndicator(),
-                  // U2: ненавязчивый баннер «Доступно обновление» (sideload
-                  // OTA). Молчит, если апдейтер не применим/выключен.
-                  const AppUpdateBanner(),
-                  // N2: CTA «Включить уведомления» (web и Android без
-                  // разрешения). Молчит, если permission уже решён/закрыт.
-                  const NotificationPermissionBanner(),
-                  Expanded(child: navigationShell),
-                ],
-              ),
-            );
-
-            if (isDesktop) {
-              bodyContent = Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: isTreeBranch ? double.infinity : 1400,
-                  ),
-                  child: bodyContent,
-                ),
-              );
-            }
-
-            if (isDesktop) {
-              return Scaffold(
-                backgroundColor: Colors.transparent,
-                body: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    const AppBackdrop(),
-                    Row(
-                      children: [
-                        AdaptiveNavigationRail(
-                          navigationShell: navigationShell,
-                          unreadNotificationsStream: unreadNotificationsStream,
-                          unreadChatsStream: unreadChatsStream,
-                          pendingInvitationsCountStream:
-                              pendingInvitationsCountStream,
-                        ),
-                        Expanded(
-                          child: Padding(
-                            // Чанк 26: правое поле 18 → 16 — держим боковые
-                            // поля шелла в заявленных ≤16dp с обеих сторон.
-                            padding: const EdgeInsets.fromLTRB(10, 16, 16, 16),
-                            child: bodyContent,
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Шаг 5 bulk-upload: фоновая публикация видна с любого
-                    // таба — composer отпускает человека сразу после
-                    // «Опубликовать», судьбу пачки показывает этот чип.
-                    const PostPublishStatusChip(),
-                  ],
-                ),
-              );
-            }
-
-            return Scaffold(
-              backgroundColor: Colors.transparent,
-              // Content and primary navigation must own separate layout
-              // regions. `extendBody: true` made every branch guess the
-              // floating bar height independently; tree nodes, list rows and
-              // FABs then ended up underneath the navigation pill on real
-              // phones. The backdrop remains visible through the transparent
-              // scaffold, while the body now stops above the nav bar.
-              extendBody: false,
-              body: Stack(
-                fit: StackFit.expand,
-                children: [
-                  const AppBackdrop(),
-                  bodyContent,
-                  // Шаг 5 bulk-upload: см. комментарий в desktop-ветке.
-                  const PostPublishStatusChip(),
-                ],
-              ),
-              bottomNavigationBar: MainNavigationBar(
-                currentIndex: navigationShell.currentIndex,
-                onTap: (index) {
-                  navigationShell.goBranch(
-                    index,
-                    initialLocation: index == navigationShell.currentIndex,
-                  );
-                },
-                unreadNotificationsStream: unreadNotificationsStream,
-                unreadChatsStream: unreadChatsStream,
-                pendingInvitationsCountStream: pendingInvitationsCountStream,
-              ),
-            );
-          },
+        return _AppShellHost(
+          navigationShell: navigationShell,
+          currentUserId: currentUserId,
         );
       },
       branches: _buildBranches(),
@@ -518,6 +385,14 @@ class AppShellRouteModule {
   List<RouteBase> buildLegacyFamilyRedirectRoutes() {
     return <RouteBase>[
       GoRoute(
+        path: '/settings',
+        redirect: (context, state) => '/profile/settings',
+      ),
+      GoRoute(
+        path: '/album',
+        redirect: (context, state) => '/post/album',
+      ),
+      GoRoute(
         path: '/relatives',
         // Bare /relatives → «Семья» Список. The sub-routes below keep
         // rendering their own pushed pages (gated in the redirect).
@@ -789,50 +664,71 @@ class AdaptiveNavigationRail extends StatelessWidget {
                   ),
                   child: Column(
                     children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          gradient: tokens.accentGradient,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: tokens.accent.withValues(alpha: 0.28),
-                              blurRadius: 18,
-                              spreadRadius: -6,
-                              offset: const Offset(0, 8),
+                      Tooltip(
+                        message: 'Дерево семьи',
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(21),
+                            onTap: () {
+                              navigationShell.goBranch(
+                                2,
+                                initialLocation:
+                                    navigationShell.currentIndex == 2,
+                              );
+                            },
+                            child: Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                gradient: tokens.accentGradient,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color:
+                                        tokens.accent.withValues(alpha: 0.28),
+                                    blurRadius: 18,
+                                    spreadRadius: -6,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                Icons.family_restroom,
+                                color: tokens.accentInk,
+                                size: 22,
+                              ),
                             ),
-                          ],
-                        ),
-                        child: Icon(
-                          Icons.family_restroom,
-                          color: tokens.accentInk,
-                          size: 22,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 18),
                       Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            for (var index = 0;
-                                index < destinations.length;
-                                index++) ...[
-                              _RailDestination(
-                                data: destinations[index],
-                                selected: navigationShell.currentIndex == index,
-                                onTap: () {
-                                  navigationShell.goBranch(
-                                    index,
-                                    initialLocation:
-                                        index == navigationShell.currentIndex,
-                                  );
-                                },
-                              ),
-                              if (index != destinations.length - 1)
-                                const SizedBox(height: 6),
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.start,
+                            children: [
+                              for (var index = 0;
+                                  index < destinations.length;
+                                  index++) ...[
+                                _RailDestination(
+                                  data: destinations[index],
+                                  selected:
+                                      navigationShell.currentIndex == index,
+                                  onTap: () {
+                                    navigationShell.goBranch(
+                                      index,
+                                      initialLocation:
+                                          index == navigationShell.currentIndex,
+                                    );
+                                  },
+                                ),
+                                if (index != destinations.length - 1)
+                                  const SizedBox(height: 6),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       ),
                     ],
@@ -854,6 +750,154 @@ class AdaptiveNavigationRail extends StatelessWidget {
               },
             );
           },
+        );
+      },
+    );
+  }
+}
+
+class _AppShellHost extends StatefulWidget {
+  const _AppShellHost({
+    required this.navigationShell,
+    required this.currentUserId,
+  });
+
+  final StatefulNavigationShell navigationShell;
+  final String? currentUserId;
+
+  @override
+  State<_AppShellHost> createState() => _AppShellHostState();
+}
+
+class _AppShellHostState extends State<_AppShellHost> {
+  final GlobalKey _bodyContentKey = GlobalKey();
+  late Stream<int> _unreadNotificationsStream;
+  late Stream<int> _unreadChatsStream;
+  late Stream<int> _pendingInvitationsCountStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStreams(widget.currentUserId);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AppShellHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentUserId != widget.currentUserId) {
+      _initStreams(widget.currentUserId);
+    }
+  }
+
+  void _initStreams(String? currentUserId) {
+    _unreadNotificationsStream = GetIt.I
+            .isRegistered<CustomApiNotificationService>()
+        ? GetIt.I<CustomApiNotificationService>().unreadNotificationsCountStream
+        : Stream<int>.value(0);
+    _unreadChatsStream = currentUserId != null
+        ? GetIt.I<ChatServiceInterface>()
+            .getTotalUnreadCountStream(currentUserId)
+        : Stream<int>.value(0);
+    // Стабильный broadcast-стрим на всё время жизни шелла (меняется только
+    // при смене пользователя), чтобы переключение вкладок не дёргало
+    // /v1/tree-invitations/pending заново на каждом клике.
+    _pendingInvitationsCountStream = currentUserId != null
+        ? GetIt.I<FamilyTreeServiceInterface>()
+            .getPendingTreeInvitations()
+            .map((invitations) => invitations.length)
+            .asBroadcastStream()
+        : Stream<int>.value(0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final navigationShell = widget.navigationShell;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool isDesktop = constraints.maxWidth >= 900;
+        final isTreeBranch = navigationShell.currentIndex == 2;
+
+        Widget bodyContent = SafeArea(
+          top: true,
+          bottom: false,
+          left: false,
+          right: false,
+          child: Column(
+            children: <Widget>[
+              OfflineIndicator(),
+              const AppUpdateBanner(),
+              const NotificationPermissionBanner(),
+              Expanded(
+                child: KeyedSubtree(
+                  key: _bodyContentKey,
+                  child: navigationShell,
+                ),
+              ),
+            ],
+          ),
+        );
+
+        if (isDesktop) {
+          bodyContent = Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: isTreeBranch ? double.infinity : 1400,
+              ),
+              child: bodyContent,
+            ),
+          );
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Stack(
+              fit: StackFit.expand,
+              children: [
+                const AppBackdrop(),
+                Row(
+                  children: [
+                    AdaptiveNavigationRail(
+                      navigationShell: navigationShell,
+                      unreadNotificationsStream: _unreadNotificationsStream,
+                      unreadChatsStream: _unreadChatsStream,
+                      pendingInvitationsCountStream:
+                          _pendingInvitationsCountStream,
+                    ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 16, 16, 16),
+                        child: bodyContent,
+                      ),
+                    ),
+                  ],
+                ),
+                const PostPublishStatusChip(),
+              ],
+            ),
+          );
+        }
+
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          extendBody: false,
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              const AppBackdrop(),
+              bodyContent,
+              const PostPublishStatusChip(),
+            ],
+          ),
+          bottomNavigationBar: MainNavigationBar(
+            currentIndex: navigationShell.currentIndex,
+            onTap: (index) {
+              navigationShell.goBranch(
+                index,
+                initialLocation: index == navigationShell.currentIndex,
+              );
+            },
+            unreadNotificationsStream: _unreadNotificationsStream,
+            unreadChatsStream: _unreadChatsStream,
+            pendingInvitationsCountStream: _pendingInvitationsCountStream,
+          ),
         );
       },
     );

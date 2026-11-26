@@ -2174,7 +2174,10 @@ class CustomApiFamilyTreeService
     try {
       _pendingInvitationsController.add(await _loadPendingTreeInvitations());
     } catch (error, stackTrace) {
-      _pendingInvitationsController.addError(error, stackTrace);
+      if (!_pendingInvitationsController.isClosed &&
+          _pendingInvitationsController.hasListener) {
+        _pendingInvitationsController.addError(error, stackTrace);
+      }
     }
   }
 

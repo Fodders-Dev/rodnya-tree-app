@@ -172,7 +172,8 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
       _showMessage('Сервис недоступен. Попробуйте позже.');
       return;
     }
-    final treeId = Provider.of<TreeProvider>(context, listen: false).selectedTreeId;
+    final treeId =
+        Provider.of<TreeProvider>(context, listen: false).selectedTreeId;
     if (treeId == null || treeId.isEmpty) {
       _showMessage('Сначала выберите дерево.');
       return;
@@ -639,6 +640,12 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
   ) {
     final sections = _groupByMonth(photos);
     final memories = _memoriesFor(photos);
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final columns = screenWidth >= 900
+        ? 5
+        : screenWidth >= 600
+            ? 4
+            : 3;
     // Full-screen route (pushed on the root navigator like post/search) →
     // no bottom nav, so we only clear the device safe-area inset.
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
@@ -671,8 +678,8 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(0, 2, 0, 8),
             sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
                 crossAxisSpacing: 2,
                 mainAxisSpacing: 2,
               ),
@@ -684,6 +691,7 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
                     tokens,
                     indexed.photo,
                     indexed.globalIndex,
+                    columns: columns,
                   );
                 },
                 childCount: section.items.length,
@@ -700,8 +708,9 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
     ThemeData theme,
     RodnyaDesignTokens tokens,
     _AlbumPhoto photo,
-    int globalIndex,
-  ) {
+    int globalIndex, {
+    required int columns,
+  }) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(tokens.radiusSm),
       child: Stack(
@@ -710,13 +719,23 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
           CachedNetworkImage(
             imageUrl: photo.url,
             fit: BoxFit.cover,
-            // M2: грид 3 колонки во всю ширину → тайл ≈ треть экрана.
+            useOldImageOnUrlChange: true,
             memCacheWidth: decodeCacheWidth(
               context,
-              MediaQuery.of(context).size.width / 3,
+              MediaQuery.sizeOf(context).width / columns,
             ),
-            placeholder: (_, __) => Container(
-              color: theme.colorScheme.surfaceContainerHighest,
+            placeholder: (_, __) => DecoratedBox(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.photo_outlined,
+                  size: 20,
+                  color:
+                      theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                ),
+              ),
             ),
             errorWidget: (_, __, ___) => Container(
               color: theme.colorScheme.surfaceContainerHighest,

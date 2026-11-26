@@ -16,6 +16,10 @@ class AppRouterGuards {
   final AuthServiceInterface _authService;
   final InvitationService _invitationService;
 
+  String? _completedProfileUserId;
+  DateTime? _completedProfileCheckedAt;
+  static const Duration _kCompletedProfileCacheTtl = Duration(minutes: 5);
+
   static const Set<String> authEntryPages = <String>{
     '/login',
     '/password_reset',
@@ -259,15 +263,34 @@ class AppRouterGuards {
   }
 
   Future<String?> _ensureCompletedProfile(GoRouterState state) async {
+    final activeUserId = _authService.currentUserId;
+    if (activeUserId == null || activeUserId.isEmpty) {
+      _completedProfileUserId = null;
+      _completedProfileCheckedAt = null;
+      return buildLoginRedirectTarget(state);
+    }
+    final checkedAt = _completedProfileCheckedAt;
+    if (_completedProfileUserId == activeUserId &&
+        checkedAt != null &&
+        DateTime.now().difference(checkedAt) < _kCompletedProfileCacheTtl) {
+      return null;
+    }
+
     try {
       final profileStatus = await _authService.checkProfileCompleteness();
       if (_authService.currentUserId == null) {
+        _completedProfileUserId = null;
+        _completedProfileCheckedAt = null;
         return buildLoginRedirectTarget(state);
       }
       final isComplete = profileStatus['isComplete'] == true;
       if (!isComplete) {
+        _completedProfileUserId = null;
+        _completedProfileCheckedAt = null;
         return '/complete_profile?requiredFields=${Uri.encodeComponent(profileStatus.toString())}';
       }
+      _completedProfileUserId = activeUserId;
+      _completedProfileCheckedAt = DateTime.now();
     } catch (error) {
       debugPrint('Error checking profile completeness during redirect: $error');
       final normalizedError = error.toString().toLowerCase();
@@ -278,6 +301,8 @@ class AppRouterGuards {
           normalizedError.contains('401') ||
           normalizedError.contains('403');
       if (looksLikeSessionIssue) {
+        _completedProfileUserId = null;
+        _completedProfileCheckedAt = null;
         return buildLoginRedirectTarget(state);
       }
     }

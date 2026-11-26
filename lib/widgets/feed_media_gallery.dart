@@ -119,6 +119,7 @@ class FeedMediaGallery extends StatelessWidget {
       child: CachedNetworkImage(
         imageUrl: url,
         fit: BoxFit.cover,
+        useOldImageOnUrlChange: true,
         // M2: декод под ширину экрана (слот фида не шире) — без этого
         // оригиналы 3-4К с телефонов декодятся целиком (jank/OOM на A50).
         memCacheWidth: decodeCacheWidthForScreen(context),
@@ -386,9 +387,10 @@ class _NaturalAspectRatioState extends State<_NaturalAspectRatio> {
   @override
   void didUpdateWidget(covariant _NaturalAspectRatio oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url ||
-        oldWidget.cacheWidth != widget.cacheWidth) {
+    if (oldWidget.url != widget.url) {
       _ratio = null;
+      _resolve();
+    } else if (oldWidget.cacheWidth != widget.cacheWidth) {
       _resolve();
     }
   }

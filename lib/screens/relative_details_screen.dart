@@ -2519,11 +2519,17 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   }
 
   String _historySubtitle(TreeChangeRecord record) {
-    final who = record.actorId == null || record.actorId!.isEmpty
-        ? 'Действие в дереве'
-        : record.actorId == _authService.currentUserId
-            ? 'Вы'
-            : 'Участник дерева';
+    final rawActorName = record.actorName?.trim();
+    final who = (record.actorId != null &&
+            _authService.currentUserId != null &&
+            _authService.currentUserId!.isNotEmpty &&
+            record.actorId == _authService.currentUserId)
+        ? 'Вы'
+        : (rawActorName != null && rawActorName.isNotEmpty)
+            ? rawActorName
+            : (record.actorId == null || record.actorId!.isEmpty)
+                ? 'Действие в дереве'
+                : 'Участник дерева';
     final when = DateFormat('d MMM, HH:mm', 'ru')
         .format(toLocalForDisplay(record.createdAt));
     return '$who · $when';

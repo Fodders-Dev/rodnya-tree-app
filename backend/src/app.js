@@ -1256,21 +1256,31 @@ function createApp({
     };
   }
 
-  function mapTreeChangeRecord(record) {
+  function mapTreeChangeRecord(record, context = {}) {
+    const details =
+      record.details && typeof record.details === "object"
+        ? record.details
+        : {};
+    const resolvedPersonName =
+      context.personName ||
+      record.personName ||
+      details?.after?.name ||
+      details?.before?.name ||
+      null;
+    const resolvedActorName = context.actorName || record.actorName || null;
     return {
       id: record.id,
       treeId: record.treeId,
       actorId: record.actorId || null,
+      actorName: resolvedActorName,
       type: record.type,
       personId: record.personId || null,
+      personName: resolvedPersonName,
       personIds: Array.isArray(record.personIds) ? record.personIds : [],
       relationId: record.relationId || null,
       mediaId: record.mediaId || null,
       createdAt: record.createdAt,
-      details:
-        record.details && typeof record.details === "object"
-          ? record.details
-          : {},
+      details,
     };
   }
 

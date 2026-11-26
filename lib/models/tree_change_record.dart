@@ -5,7 +5,9 @@ class TreeChangeRecord {
     required this.type,
     required this.createdAt,
     this.actorId,
+    this.actorName,
     this.personId,
+    this.personName,
     this.personIds = const <String>[],
     this.relationId,
     this.mediaId,
@@ -15,8 +17,10 @@ class TreeChangeRecord {
   final String id;
   final String treeId;
   final String? actorId;
+  final String? actorName;
   final String type;
   final String? personId;
+  final String? personName;
   final List<String> personIds;
   final String? relationId;
   final String? mediaId;
@@ -31,8 +35,10 @@ class TreeChangeRecord {
       id: json['id']?.toString() ?? '',
       treeId: json['treeId']?.toString() ?? '',
       actorId: json['actorId']?.toString(),
+      actorName: json['actorName']?.toString(),
       type: json['type']?.toString() ?? 'unknown',
       personId: json['personId']?.toString(),
+      personName: json['personName']?.toString(),
       personIds: (json['personIds'] as List<dynamic>? ?? const <dynamic>[])
           .map((value) => value.toString())
           .toList(),

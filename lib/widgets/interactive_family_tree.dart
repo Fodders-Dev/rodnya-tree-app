@@ -144,6 +144,11 @@ class InteractiveFamilyTree extends StatefulWidget {
   /// Vertical pixels reserved at the bottom for the bottom sheet / dock.
   final double viewportReservedBottom;
 
+  /// Horizontal pixels reserved at the left/right edges (e.g. desktop
+  /// "Карта рода" sidebar and right zoom dock). Defaults to 0.
+  final double viewportReservedLeft;
+  final double viewportReservedRight;
+
   /// When false, suppress the inline edit panel that floats next to the
   /// selected node in edit mode. Use this when the consumer is rendering
   /// edit actions inside its own bottom sheet to avoid two surfaces
@@ -221,6 +226,8 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.onResetLayout,
     this.viewportReservedTop = 64,
     this.viewportReservedBottom = 28,
+    this.viewportReservedLeft = 0,
+    this.viewportReservedRight = 0,
     this.showInlineEditPanel = true,
     this.selectionMode = false,
     this.selectedPersonIds = const <String>{},
@@ -285,11 +292,13 @@ class InteractiveFamilyTree extends StatefulWidget {
 }
 
 class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
-  // Space reserved at the top/bottom of the viewport when fitting/focusing
-  // the tree — keeps cards from appearing under floating chrome (toolbar,
-  // sidebar, bottom sheet).
+  // Space reserved inside the viewport when fitting/focusing the tree —
+  // keeps cards from appearing under floating chrome (toolbar, desktop
+  // "Карта рода" sidebar, bottom sheet).
   double get _viewportReservedTop => widget.viewportReservedTop;
   double get _viewportReservedBottom => widget.viewportReservedBottom;
+  double get _viewportReservedLeft => widget.viewportReservedLeft;
+  double get _viewportReservedRight => widget.viewportReservedRight;
 
   /// Единственная точка где render path branches на extended-network
   /// mode. Используется card constructor для tint + edge-color +
@@ -3002,10 +3011,19 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   /// либо обрезал дерево».
   double _rawFitScale(Size viewport) {
     final horizontalInset = viewport.width >= 1180 ? 18.0 : 28.0;
-    final horizontalScale = (viewport.width - horizontalInset) / treeSize.width;
-    final verticalScale =
-        (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
-            treeSize.height;
+    final usableWidth = max(
+      120.0,
+      viewport.width -
+          _viewportReservedLeft -
+          _viewportReservedRight -
+          horizontalInset,
+    );
+    final usableHeight = max(
+      120.0,
+      viewport.height - _viewportReservedTop - _viewportReservedBottom,
+    );
+    final horizontalScale = usableWidth / treeSize.width;
+    final verticalScale = usableHeight / treeSize.height;
     return min(horizontalScale, verticalScale * 1.14);
   }
 
@@ -3029,7 +3047,12 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final targetScale = _rawFitScale(viewport);
     final safeScale = targetScale.clamp(0.55, _maxViewportFitScale(viewport));
 
-    final translateX = (viewport.width - contentWidth * safeScale) / 2;
+    final availableWidth = max(
+      120.0,
+      viewport.width - _viewportReservedLeft - _viewportReservedRight,
+    );
+    final translateX =
+        _viewportReservedLeft + (availableWidth - contentWidth * safeScale) / 2;
     final availableHeight =
         viewport.height - _viewportReservedTop - _viewportReservedBottom;
     final translateY = _viewportReservedTop +
@@ -3053,7 +3076,12 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     }
 
     final focusScale = _focusScaleForViewport(viewport);
-    final translateX = viewport.width / 2 - targetPosition.dx * focusScale;
+    final availableWidth = max(
+      120.0,
+      viewport.width - _viewportReservedLeft - _viewportReservedRight,
+    );
+    final usableCenterX = _viewportReservedLeft + availableWidth / 2;
+    final translateX = usableCenterX - targetPosition.dx * focusScale;
     final usableCenterY = _viewportReservedTop +
         (viewport.height - _viewportReservedTop - _viewportReservedBottom) / 2;
     final translateY = usableCenterY - targetPosition.dy * focusScale;
@@ -3153,8 +3181,12 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final currentScale = currentMatrix.getMaxScaleOnAxis();
     final targetScale = (currentScale * multiplier).clamp(0.08, 3.5);
     final appliedMultiplier = targetScale / currentScale;
+    final availableWidth = max(
+      120.0,
+      viewport.width - _viewportReservedLeft - _viewportReservedRight,
+    );
     final viewportFocalPoint = Offset(
-      viewport.width / 2,
+      _viewportReservedLeft + availableWidth / 2,
       _viewportReservedTop +
           (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
               2,
