@@ -36,7 +36,7 @@ void main() {
       () async {
     final label = await loadAppVersionLabel();
     expect(label, kFallbackAppVersionLabel);
-    expect(label, contains('1.0.49'));
+    expect(label, matches(RegExp(r'^Версия \d+\.\d+\.\d+ \(сборка \d+\)$')));
   });
 
   test(

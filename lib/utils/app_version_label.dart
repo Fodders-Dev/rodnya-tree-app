@@ -8,7 +8,7 @@ const String _definedAppVersion =
 final String kFallbackAppVersionLabel = _formatVersionSpec(
   _definedAppVersion.trim().isNotEmpty
       ? _definedAppVersion.trim()
-      : '1.0.49+57',
+      : '1.0.50+58',
 );
 
 String _formatVersionSpec(String spec) {
@@ -16,7 +16,7 @@ String _formatVersionSpec(String spec) {
   final version = parts.first.trim();
   final build = parts.length > 1 ? parts[1].trim() : '';
   if (version.isEmpty) {
-    return 'Версия 1.0.49 (сборка 57)';
+    return 'Версия 1.0.50 (сборка 58)';
   }
   if (build.isEmpty) {
     return 'Версия $version';
