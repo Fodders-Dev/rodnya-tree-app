@@ -4,6 +4,22 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
+## Status update: 2026-11-26 (Waves 0–5: CI gate, package:web & декомпозиция монолитов)
+
+* **Wave 0 (`45875876751`)**: выпущен Android OTA `1.0.49+57` (сборка + загрузка APK проверены).
+* **Wave 1 (`9e5ff3a`)**: добавлен CI-гейт [`.github/workflows/flutter-ci.yml`](../../.github/workflows/flutter-ci.yml) (`flutter analyze` + `flutter test` + `backend npm test` на push/PR в `main`), динамическая передача `RODNYA_APP_VERSION` в web-деплое и `app_version_label.dart`, повышение минимального Dart SDK до `>=3.4.0 <4.0.0`, миграция 5 web-файлов с `dart:html`/`dart:js_util` на `package:web: ^1.1.0` + `dart:js_interop`, расширение авторизованного Playwright-смоука в [`tool/prod_route_smoke.mjs`](../../tool/prod_route_smoke.mjs).
+* **Wave 2 (`532e613b` — декомпозиция backend-монолитов)**:
+  * `backend/src/app.js`: **4 014 → 576 строк** (вынесены `backend/src/mappers/*`, `backend/src/middleware/*`, `backend/src/calls/call-coordinator.js`, `backend/src/routes/call-routes.js`, `backend/src/services/app-orchestrators.js`).
+  * `backend/src/store.js`: **23 528 → 630 строк** (вынесены `backend/src/store/constants.js`, `backend/src/store/helpers/*`, 15 доменов `backend/src/store/domains/*`).
+  * `backend/src/postgres-store.js`: **7 011 → 506 строк** (вынесены `backend/src/store/postgres/pool.js` и 8 `pg-*.js`-модулей; `super.` переведены в `FileStore.prototype.<method>.call(this, ...)`).
+* **Wave 3 (`22cf70d4` — декомпозиция звонков и чата)**:
+  * `lib/screens/call_screen.dart`: **2 992 → 1 316 строк** + 7 модулей `lib/screens/call/*`.
+  * `lib/screens/chat_screen.dart`: **10 716 → 505 строк** (удалены `chat_screen_supporting_widgets.dart` 4 045 строк, `chat_screen_sections.dart`, `chat_screen_state_models.dart`) + 17 модулей `lib/screens/chat/*`.
+* **Wave 4 (`6153539f` — декомпозиция сервиса/виджета/экрана дерева)**:
+  * `lib/services/custom_api_family_tree_service.dart`: **3 912 → 120 строк** + 9 модулей `lib/services/family_tree/*`.
+  * `lib/widgets/interactive_family_tree.dart`: **6 617 → 673 строки** (удалены 3 старых part-файла) + 11 модулей `lib/widgets/family_tree/*`, layout-движок и painter сохранены 1:1 с golden-тестами.
+  * `lib/screens/tree_view_screen.dart`: **3 653 → 818 строк** (удалён `tree_view_screen_sections.dart` 2 797 строк) + 11 модулей `lib/screens/tree/*`.
+
 ## Status update: 2026-11-26 (live QA · 1.0.49+57)
 
 * **Релиз `1.0.49+57` — исправление всех 13 замечаний живого QA (`fix/qa-live-13-items`)**:
