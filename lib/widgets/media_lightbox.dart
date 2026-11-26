@@ -100,8 +100,7 @@ class MediaLightbox extends StatefulWidget {
         barrierColor: Colors.black87,
         transitionDuration: const Duration(milliseconds: 220),
         reverseTransitionDuration: const Duration(milliseconds: 180),
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            FadeTransition(
+        pageBuilder: (context, animation, secondaryAnimation) => FadeTransition(
           opacity: animation,
           child: MediaLightbox(
             items: items,
@@ -447,37 +446,64 @@ class _LightboxTopBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.white, size: 24),
-            tooltip: 'Закрыть',
-            onPressed: onClose,
+          _buildActionPill(
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 22),
+              tooltip: 'Закрыть',
+              onPressed: onClose,
+            ),
           ),
-          if (total > 1)
-            Text(
-              '${currentIndex + 1} / $total',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+          if (total > 1) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0x88000000),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '${currentIndex + 1} / $total',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
+          ],
           const Spacer(),
-          if (onShare != null)
-            IconButton(
-              icon: const Icon(Icons.share_outlined,
-                  color: Colors.white, size: 22),
-              tooltip: 'Поделиться',
-              onPressed: onShare,
+          if (onShare != null) ...[
+            _buildActionPill(
+              child: IconButton(
+                icon: const Icon(Icons.share_outlined,
+                    color: Colors.white, size: 20),
+                tooltip: 'Поделиться',
+                onPressed: onShare,
+              ),
             ),
+            if (onDownload != null) const SizedBox(width: 8),
+          ],
           if (onDownload != null)
-            IconButton(
-              icon: const Icon(Icons.download_outlined,
-                  color: Colors.white, size: 22),
-              tooltip: 'Скачать',
-              onPressed: onDownload,
+            _buildActionPill(
+              child: IconButton(
+                icon: const Icon(Icons.download_outlined,
+                    color: Colors.white, size: 20),
+                tooltip: 'Скачать',
+                onPressed: onDownload,
+              ),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildActionPill({required Widget child}) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0x88000000),
+        shape: BoxShape.circle,
+      ),
+      child: child,
     );
   }
 }
@@ -526,8 +552,8 @@ class _LightboxPhotoPage extends StatelessWidget {
     final url = item.imageUrl ?? '';
     if (url.isEmpty) {
       return const Center(
-        child: Icon(Icons.broken_image_outlined,
-            color: Colors.white54, size: 48),
+        child:
+            Icon(Icons.broken_image_outlined, color: Colors.white54, size: 48),
       );
     }
 
@@ -536,9 +562,7 @@ class _LightboxPhotoPage extends StatelessWidget {
     // when the lightbox item carries no caption.
     final caption = item.caption?.trim();
     final image = Semantics(
-      label: caption != null && caption.isNotEmpty
-          ? caption
-          : 'Изображение',
+      label: caption != null && caption.isNotEmpty ? caption : 'Изображение',
       image: true,
       excludeSemantics: true,
       child: CachedNetworkImage(

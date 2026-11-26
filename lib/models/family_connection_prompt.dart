@@ -56,7 +56,7 @@ class FamilyConnectionPromptSelector {
     return FamilyConnectionPrompt(
       person: selected,
       title: 'Спросить, пока можно услышать',
-      message: 'Задайте $shortName один живой вопрос. Такие разговоры '
+      message: 'Задайте вопрос близкому человеку ($shortName). Такие разговоры '
           'часто откладывают, а потом их уже не вернуть.',
       ctaLabel: 'Спросить историю',
     );

@@ -327,13 +327,41 @@ class _TreeHistorySheetState extends State<TreeHistorySheet> {
     TreeChangeRecord record, {
     required String? currentUserId,
   }) {
-    final actorLabel = record.actorId == null || record.actorId!.isEmpty
-        ? 'Действие в дереве'
-        : record.actorId == currentUserId
-            ? 'Вы'
-            : 'Участник дерева';
+    final resolvedPersonName = _resolvePersonName(record);
+    final rawActorName = record.actorName?.trim();
+    final actorLabel = (record.actorId != null &&
+            currentUserId != null &&
+            currentUserId.isNotEmpty &&
+            record.actorId == currentUserId)
+        ? 'Вы'
+        : (rawActorName != null && rawActorName.isNotEmpty)
+            ? rawActorName
+            : (record.actorId == null || record.actorId!.isEmpty)
+                ? 'Действие в дереве'
+                : 'Участник дерева';
     final formattedDate = _formatDate(record.createdAt);
+    if (resolvedPersonName != null && resolvedPersonName.isNotEmpty) {
+      return '$resolvedPersonName · $actorLabel · $formattedDate';
+    }
     return '$actorLabel · $formattedDate';
+  }
+
+  String? _resolvePersonName(TreeChangeRecord record) {
+    final direct = record.personName?.trim();
+    if (direct != null && direct.isNotEmpty) {
+      return direct;
+    }
+    final after = record.details['after'];
+    if (after is Map) {
+      final name = after['name']?.toString().trim();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    final before = record.details['before'];
+    if (before is Map) {
+      final name = before['name']?.toString().trim();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    return null;
   }
 
   String _formatDate(DateTime date) {

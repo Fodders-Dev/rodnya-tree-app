@@ -114,7 +114,8 @@ class _TrashScreenState extends State<TrashScreen>
       await svc.restoreDeletedPerson(row.id);
       if (!mounted) return;
       setState(() {
-        _persons = _persons.where((p) => p.id != row.id).toList(growable: false);
+        _persons =
+            _persons.where((p) => p.id != row.id).toList(growable: false);
         _busyId = null;
       });
       _snack('${row.displayName} восстановлен${_isFemale(row) ? 'а' : ''}');
@@ -160,7 +161,8 @@ class _TrashScreenState extends State<TrashScreen>
       await svc.permanentlyDeletePerson(row.id);
       if (!mounted) return;
       setState(() {
-        _persons = _persons.where((p) => p.id != row.id).toList(growable: false);
+        _persons =
+            _persons.where((p) => p.id != row.id).toList(growable: false);
         _busyId = null;
       });
       _snack('Удалено навсегда');
@@ -198,8 +200,7 @@ class _TrashScreenState extends State<TrashScreen>
     }
   }
 
-  bool _isFemale(DeletedPerson row) =>
-      row.snapshot['gender'] == 'female';
+  bool _isFemale(DeletedPerson row) => row.snapshot['gender'] == 'female';
 
   String _describeError(Object error) {
     if (error is SemyaError) return error.message;
@@ -217,6 +218,7 @@ class _TrashScreenState extends State<TrashScreen>
         title: const Text('Корзина'),
         bottom: TabBar(
           controller: _tabs,
+          indicatorSize: TabBarIndicatorSize.tab,
           tabs: const [
             Tab(text: 'Родственники'),
             Tab(text: 'Посты'),
@@ -238,14 +240,26 @@ class _TrashScreenState extends State<TrashScreen>
       return const Center(child: CircularProgressIndicator());
     }
     if (_errorMessage != null) return _buildError();
-    if (_persons.isEmpty) return _buildEmpty();
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: _persons.length,
-        separatorBuilder: (_, __) => _rowDivider(context),
-        itemBuilder: (_, i) => _buildPersonRow(_persons[i]),
+    if (_persons.isEmpty) {
+      return _buildEmpty(
+        subtitle:
+            'Удалённые карточки родственников будут храниться здесь 30 дней '
+            'перед окончательным удалением.',
+      );
+    }
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: _persons.length,
+            separatorBuilder: (_, __) => _rowDivider(context),
+            itemBuilder: (_, i) => _buildPersonRow(_persons[i]),
+          ),
+        ),
       ),
     );
   }
@@ -255,14 +269,25 @@ class _TrashScreenState extends State<TrashScreen>
       return const Center(child: CircularProgressIndicator());
     }
     if (_errorMessage != null) return _buildError();
-    if (_posts.isEmpty) return _buildEmpty();
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: _posts.length,
-        separatorBuilder: (_, __) => _rowDivider(context),
-        itemBuilder: (_, i) => _buildPostRow(_posts[i]),
+    if (_posts.isEmpty) {
+      return _buildEmpty(
+        subtitle: 'Удалённые посты будут храниться здесь 30 дней '
+            'перед окончательным удалением.',
+      );
+    }
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: _posts.length,
+            separatorBuilder: (_, __) => _rowDivider(context),
+            itemBuilder: (_, i) => _buildPostRow(_posts[i]),
+          ),
+        ),
       ),
     );
   }
@@ -273,7 +298,8 @@ class _TrashScreenState extends State<TrashScreen>
         height: 1,
         thickness: 0.7,
         indent: 72,
-        color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
+        color:
+            Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
       );
 
   Widget _buildPersonRow(DeletedPerson row) {
@@ -287,9 +313,7 @@ class _TrashScreenState extends State<TrashScreen>
         backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.16),
         foregroundImage: image,
         child: Text(
-          row.displayName.isNotEmpty
-              ? row.displayName[0].toUpperCase()
-              : '?',
+          row.displayName.isNotEmpty ? row.displayName[0].toUpperCase() : '?',
           style: theme.textTheme.titleMedium?.copyWith(
             color: theme.colorScheme.primary,
             fontWeight: FontWeight.w800,
@@ -339,7 +363,11 @@ class _TrashScreenState extends State<TrashScreen>
     );
   }
 
-  Widget _buildEmpty() {
+  Widget _buildEmpty({
+    String title = 'Корзина пуста',
+    String subtitle = 'Удалённые элементы будут здесь 30 дней '
+        'перед окончательным удалением.',
+  }) {
     final theme = Theme.of(context);
     return Center(
       child: Padding(
@@ -354,13 +382,12 @@ class _TrashScreenState extends State<TrashScreen>
             ),
             const SizedBox(height: 12),
             Text(
-              'Корзина пуста',
+              title,
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
             Text(
-              'Удалённые элементы будут здесь 30 дней '
-              'перед окончательным удалением.',
+              subtitle,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,

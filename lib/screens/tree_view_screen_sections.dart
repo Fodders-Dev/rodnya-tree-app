@@ -1515,7 +1515,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               viewportReservedTop: MediaQuery.of(context).size.width >= 1180
                   ? 96
                   : (_compactChromeCollapsed ? 90 : 290),
-              viewportReservedBottom: 120,
+              viewportReservedBottom:
+                  MediaQuery.of(context).size.width >= 1180 ? 28 : 120,
+              viewportReservedLeft:
+                  MediaQuery.of(context).size.width >= 1180 ? 336 : 0,
+              viewportReservedRight:
+                  MediaQuery.of(context).size.width >= 1180 ? 64 : 0,
               // Edit actions live in the bottom sheet now — suppress
               // the floating inline panel so we don't have two action
               // surfaces over the same node.

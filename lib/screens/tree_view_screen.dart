@@ -1189,10 +1189,24 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                   ),
                   const SizedBox(width: 8),
                 ],
-                const Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: BranchSwitcherChip(),
+                Expanded(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Flexible(
+                        child: BranchSwitcherChip(),
+                      ),
+                      if (selectedTreeId != null &&
+                          _extendedNetworkController != null) ...[
+                        const SizedBox(width: 8),
+                        // Phase 4 chunk 2: mode toggle right beside the
+                        // active tree switcher so the viewer scope is obvious.
+                        ChangeNotifierProvider<ExtendedNetworkController>.value(
+                          value: _extendedNetworkController!,
+                          child: ExtendedNetworkToggle(compact: isPhone),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1270,18 +1284,6 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                               );
                             },
                           ),
-                        if (selectedTreeId != null &&
-                            _extendedNetworkController != null) ...[
-                          const SizedBox(width: 8),
-                          // Phase 4 chunk 2: mode toggle. Toggle вверху appbar'а —
-                          // постоянно видимый «эта функция есть». Скрывается если
-                          // backend service не implements capability mixin.
-                          ChangeNotifierProvider<
-                              ExtendedNetworkController>.value(
-                            value: _extendedNetworkController!,
-                            child: ExtendedNetworkToggle(compact: isPhone),
-                          ),
-                        ],
                         // UX-T1.2 FR-c: поиск/фильтры расширенной сети — вторичные,
                         // на телефоне живут в «•••» (см. _buildTreeToolbarMenuItems),
                         // отдельные пилюли показываем только на десктопе.

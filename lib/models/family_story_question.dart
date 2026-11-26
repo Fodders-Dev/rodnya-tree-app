@@ -73,7 +73,7 @@ String buildFamilyStoryShareMessage({
   final target = cleanRelation == null || cleanRelation.isEmpty
       ? cleanName
       : '$cleanName ($cleanRelation)';
-  return 'Привет! Я собираю семейные истории в Родне про $target.\n\n'
+  return 'Привет! Я собираю семейные истории в Родне · $target.\n\n'
       '${question.question}\n\n'
       'Ответь, пожалуйста, как удобно: текстом или голосом. '
       'Я сохраню ответ в семейной памяти, чтобы дети и внуки тоже знали.';

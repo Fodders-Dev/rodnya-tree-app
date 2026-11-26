@@ -87,13 +87,19 @@ class FamilyTreeNodeCard extends StatelessWidget {
     // isForeignNode=false для self-node).
     final Color surfaceColor;
     if (isForeignNode) {
-      // Cool grey-blue tint vs default warm. Same opacity as default
-      // surface чтобы не ломать shadow / border interplay.
-      surfaceColor = tokens.surfaceForeignTint.withValues(alpha: 0.92);
+      // Cool grey-blue tint vs default surface. Blended onto opaque surfaceStrong
+      // so edge connectors panning underneath stay hidden.
+      surfaceColor = Color.alphaBlend(
+        tokens.surfaceForeignTint.withValues(alpha: 0.92),
+        tokens.surfaceStrong.withValues(alpha: 1.0),
+      );
     } else if (isCurrentUserNode) {
-      surfaceColor = tokens.accentSoft.withValues(alpha: 0.65);
+      surfaceColor = Color.alphaBlend(
+        tokens.accentSoft.withValues(alpha: 0.72),
+        tokens.surfaceStrong.withValues(alpha: 1.0),
+      );
     } else {
-      surfaceColor = tokens.surfaceStrong.withValues(alpha: 0.92);
+      surfaceColor = tokens.surfaceStrong.withValues(alpha: 0.96);
     }
 
     // Reference `.tn-card.sel`: accent border + 2.5px ring + drop shadow.
@@ -118,12 +124,9 @@ class FamilyTreeNodeCard extends StatelessWidget {
     // and lname (Manrope smaller) per reference.
     final nameParts = displayName.trim().split(RegExp(r'\s+'));
     final fname = nameParts.isNotEmpty ? nameParts.first : displayName;
-    final lname =
-        nameParts.length > 1 ? nameParts.sublist(1).join(' ') : null;
+    final lname = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : null;
 
-    final accent = displayGender == Gender.male
-        ? tokens.accent
-        : tokens.warm;
+    final accent = displayGender == Gender.male ? tokens.accent : tokens.warm;
 
     final card = Container(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 9),
@@ -224,7 +227,7 @@ class FamilyTreeNodeCard extends StatelessWidget {
           0.50, 0.39, 0.11, 0, 0,
           0.18, 0.71, 0.11, 0, 0,
           0.18, 0.39, 0.43, 0, 0,
-          0,    0,    0,    1, 0,
+          0, 0, 0, 1, 0,
         ]),
         child: wrapped,
       );
@@ -305,9 +308,7 @@ class _NodeAvatar extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: Icon(
-        displayGender == Gender.male
-            ? Icons.person
-            : Icons.person_outline,
+        displayGender == Gender.male ? Icons.person : Icons.person_outline,
         size: 22,
         color: Colors.white.withValues(alpha: 0.94),
       ),

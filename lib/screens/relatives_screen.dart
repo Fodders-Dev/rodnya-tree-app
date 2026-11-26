@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
+import 'dart:collection' show Queue;
 import 'dart:ui';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
@@ -23,8 +24,10 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
+import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/semya.dart';
+import '../models/tree_graph_snapshot.dart';
 import '../services/app_status_service.dart';
 import '../utils/photo_url.dart';
 import '../utils/relative_details_route.dart';
@@ -124,6 +127,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
   Map<String, int> _conflictCounts = const <String, int>{};
   List<IdentityFieldConflict> _treeConflictsCache =
       const <IdentityFieldConflict>[];
+  Map<String, TreeGraphViewerDescriptor> _viewerDescriptorsByPersonId =
+      const <String, TreeGraphViewerDescriptor>{};
 
   @override
   void initState() {
@@ -198,6 +203,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
           _chatPreviews = [];
           _pendingRequestsCount = 0;
           _errorMessage = '';
+          _viewerDescriptorsByPersonId =
+              const <String, TreeGraphViewerDescriptor>{};
         });
       }
     }
@@ -220,11 +227,14 @@ class _RelativesScreenState extends State<RelativesScreen> {
       _isPendingRequestsLoading = true;
       _conflictCounts = const <String, int>{};
       _treeConflictsCache = const <IdentityFieldConflict>[];
+      _viewerDescriptorsByPersonId =
+          const <String, TreeGraphViewerDescriptor>{};
     });
 
     unawaited(_refreshSemyaRole(treeId));
     unawaited(_checkPendingRequests(treeId));
     unawaited(_refreshConflictCounts(treeId));
+    unawaited(_refreshViewerDescriptors(treeId));
     try {
       await _setupDataListeners(treeId, _currentUserId!);
     } catch (e) {
@@ -344,6 +354,21 @@ class _RelativesScreenState extends State<RelativesScreen> {
         await _refreshConflictCounts(treeId);
       },
     );
+  }
+
+  Future<void> _refreshViewerDescriptors(String treeId) async {
+    final service = _familyService;
+    if (service is! TreeGraphCapableFamilyTreeService) return;
+    final capable = service as TreeGraphCapableFamilyTreeService;
+    try {
+      final snapshot = await capable.getTreeGraphSnapshot(treeId);
+      if (!mounted || _currentTreeId != treeId) return;
+      setState(() {
+        _viewerDescriptorsByPersonId = snapshot.viewerDescriptorByPersonId;
+      });
+    } catch (_) {
+      // Best-effort enrichment for multi-hop kinship labels.
+    }
   }
 
   /// Открывает summary sheet'е со ВСЕМИ unresolved conflict'ами
@@ -573,10 +598,14 @@ class _RelativesScreenState extends State<RelativesScreen> {
             return name.contains(trimmedQuery) ||
                 relation.contains(trimmedQuery);
           }).toList();
-    final chatReadyCount =
-        visibleRelatives.where((person) => _canStartChat(person)).length;
-    final inviteReadyCount =
-        visibleRelatives.where((person) => _canInviteRelative(person)).length;
+    final totalChatReadyCount =
+        baseRelatives.where((person) => _canStartChat(person)).length;
+    final totalInviteReadyCount =
+        baseRelatives.where((person) => _canInviteRelative(person)).length;
+    final totalInAppCount = baseRelatives.where((p) {
+      final id = p.userId;
+      return id != null && id.isNotEmpty;
+    }).length;
     // -------------------------
 
     final theme = Theme.of(context);
@@ -620,7 +649,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                     _buildGraphContextBanner(
                                       treeName: selectedTreeName,
                                       isFriendsTree: isFriendsTree,
-                                      relativesCount: visibleRelatives.length,
+                                      relativesCount: baseRelatives.length,
+                                      inAppCount: totalInAppCount,
+                                      totalTreePeopleCount:
+                                          _allRelatives.length,
                                     ),
                                     _maybeConflictTreeBanner(),
                                     if (_showSecondaryLoadingStrip) ...[
@@ -653,10 +685,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                             width: 320,
                                             child: _buildRelativesSidePanel(
                                               relativesCount:
-                                                  visibleRelatives.length,
-                                              chatReadyCount: chatReadyCount,
+                                                  baseRelatives.length,
+                                              chatReadyCount:
+                                                  totalChatReadyCount,
                                               inviteReadyCount:
-                                                  inviteReadyCount,
+                                                  totalInviteReadyCount,
                                               treeName: selectedTreeName,
                                               isFriendsTree: isFriendsTree,
                                             ),
@@ -1093,6 +1126,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
             border: InputBorder.none,
             enabledBorder: InputBorder.none,
             focusedBorder: InputBorder.none,
+            disabledBorder: InputBorder.none,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
             hintText: 'Поиск среди родных',
@@ -1137,8 +1171,12 @@ class _RelativesScreenState extends State<RelativesScreen> {
               controller: _searchController,
               decoration: InputDecoration(
                 isDense: true,
+                filled: false,
                 contentPadding: EdgeInsets.zero,
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
                 hintText: 'Поиск среди родных',
                 // M3 (50+): было 14 — десктопная пилюля-поиск отстала от
                 // мобильной строки в топбаре (та уже на 16, см. ниже).
@@ -1193,26 +1231,17 @@ class _RelativesScreenState extends State<RelativesScreen> {
     required String treeName,
     required bool isFriendsTree,
     required int relativesCount,
+    required int inAppCount,
+    required int totalTreePeopleCount,
   }) {
     final theme = Theme.of(context);
     final tokens = theme.extension<RodnyaDesignTokens>() ??
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
-    final String currentUserId = _authService.currentUserId ?? '';
-    final String trimmedQuery = _searchQuery.trim().toLowerCase();
-    final inAppCount = _allRelatives.where((p) {
-      if (p.userId == currentUserId) return false;
-      if (trimmedQuery.isNotEmpty) {
-        final name = p.displayName.toLowerCase();
-        final relation = (p.relation ?? '').toLowerCase();
-        if (!name.contains(trimmedQuery) && !relation.contains(trimmedQuery)) {
-          return false;
-        }
-      }
-      final id = p.userId;
-      return id != null && id.isNotEmpty;
-    }).length;
+    final countSummary = totalTreePeopleCount > relativesCount
+        ? '$inAppCount из $relativesCount в приложении · всего в дереве $totalTreePeopleCount'
+        : '$inAppCount из $relativesCount в приложении';
 
     return Container(
       decoration: BoxDecoration(
@@ -1268,7 +1297,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '$inAppCount из $relativesCount в приложении',
+                  countSummary,
                   style: AppTheme.sans(
                     color: tokens.inkMuted,
                     fontSize: 12,
@@ -1399,15 +1428,19 @@ class _RelativesScreenState extends State<RelativesScreen> {
 
     final pendingPeople = <FamilyPerson>[];
     final joinedPeople = <FamilyPerson>[];
+    final deceasedPeople = <FamilyPerson>[];
     for (final relative in relativesForTab) {
       if (_canInviteRelative(relative)) {
         pendingPeople.add(relative);
+      } else if (_isDeceasedWithoutAccount(relative)) {
+        deceasedPeople.add(relative);
       } else {
         joinedPeople.add(relative);
       }
     }
     pendingPeople.sort(byName);
     joinedPeople.sort(byName);
+    deceasedPeople.sort(byName);
 
     // F3: живые пользователи — первыми («с ними взаимодействуют»),
     // «Нужно пригласить» — ниже и свёрнута по умолчанию. Поиск ищет по
@@ -1427,7 +1460,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
     if (!isOnlineTab && pendingPeople.isNotEmpty) {
       // Если зарегистрированных нет вовсе, сворачивать нечего — список
       // приглашений и есть весь экран.
-      final bool collapsible = joinedPeople.isNotEmpty;
+      final bool collapsible =
+          joinedPeople.isNotEmpty || deceasedPeople.isNotEmpty;
       final bool expanded = !collapsible || pendingExpanded;
       flatList.add(_RelativesSectionHeader(
         title: 'Нужно пригласить',
@@ -1446,7 +1480,17 @@ class _RelativesScreenState extends State<RelativesScreen> {
         flatList.addAll(pendingPeople);
       }
     }
-    if (!isOnlineTab && pendingPeople.isEmpty && joinedPeople.isEmpty) {
+    if (!isOnlineTab && deceasedPeople.isNotEmpty) {
+      flatList.add(_RelativesSectionHeader(
+        title: 'Ушедшие близкие',
+        count: deceasedPeople.length,
+      ));
+      flatList.addAll(deceasedPeople);
+    }
+    if (!isOnlineTab &&
+        pendingPeople.isEmpty &&
+        joinedPeople.isEmpty &&
+        deceasedPeople.isEmpty) {
       flatList.addAll(relativesForTab);
     }
 
@@ -1834,6 +1878,13 @@ class _RelativesScreenState extends State<RelativesScreen> {
     );
   }
 
+  bool _isDeceasedWithoutAccount(FamilyPerson relative) {
+    final userId = relative.userId;
+    final hasAccount = userId != null && userId.isNotEmpty;
+    if (hasAccount) return false;
+    return !relative.isAlive || relative.deathDate != null;
+  }
+
   String _getRelationDescription(FamilyPerson relative) {
     final currentUserPersonId = _currentUserPersonId;
     if (_currentUserId == null || currentUserPersonId == null) {
@@ -1879,11 +1930,157 @@ class _RelativesScreenState extends State<RelativesScreen> {
       }
     }
 
+    final descriptorLabel = _normalizeSnapshotRelationLabel(
+      _viewerDescriptorsByPersonId[relative.id]?.primaryRelationLabel,
+    );
+    if (descriptorLabel != null) {
+      return descriptorLabel;
+    }
+
+    final multiHopLabel = _resolveMultiHopRelationLabel(
+      fromPersonId: currentUserPersonId,
+      targetPerson: relative,
+    );
+    if (multiHopLabel != null) {
+      return multiHopLabel;
+    }
+
+    final storedRelation = _normalizeSnapshotRelationLabel(relative.relation);
+    if (storedRelation != null) {
+      return storedRelation;
+    }
+
     final treeProvider = _treeProviderInstance;
     if (treeProvider?.selectedTreeKind == TreeKind.friends) {
       return 'Связь';
     }
     return 'Родственник';
+  }
+
+  String? _normalizeSnapshotRelationLabel(String? raw) {
+    final trimmed = raw?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    final lower = trimmed.toLowerCase();
+    if (lower == 'это вы' ||
+        lower == 'родственник' ||
+        lower == 'не указано' ||
+        lower.contains('родитель ребёнка') ||
+        lower.contains('родитель ребенка') ||
+        lower.contains('ребёнок родителя') ||
+        lower.contains('ребенок родителя')) {
+      return null;
+    }
+    const friendly = <String, String>{
+      'тетя': 'Тётя',
+      'теща': 'Тёща',
+    };
+    final mapped = friendly[lower];
+    if (mapped != null) return mapped;
+    return trimmed[0].toUpperCase() + trimmed.substring(1);
+  }
+
+  String? _resolveMultiHopRelationLabel({
+    required String fromPersonId,
+    required FamilyPerson targetPerson,
+  }) {
+    final targetId = targetPerson.id;
+    if (fromPersonId.isEmpty || targetId.isEmpty || fromPersonId == targetId) {
+      return null;
+    }
+    final queue = Queue<_RelationPathStep>();
+    final visited = <String>{fromPersonId};
+    queue.add(_RelationPathStep(personId: fromPersonId, code: ''));
+
+    while (queue.isNotEmpty) {
+      final current = queue.removeFirst();
+      if (current.code.length >= 3) continue;
+
+      for (final rel in _relations) {
+        late final String nextId;
+        late final RelationType edgeType;
+        if (rel.person1Id == current.personId) {
+          nextId = rel.person2Id;
+          edgeType = rel.relation2to1;
+        } else if (rel.person2Id == current.personId) {
+          nextId = rel.person1Id;
+          edgeType = rel.relation1to2;
+        } else {
+          continue;
+        }
+        final hopChar = _hopCharForRelation(edgeType);
+        if (hopChar == null) continue;
+        final nextCode = '${current.code}$hopChar';
+        if (nextId == targetId) {
+          final label =
+              _labelForRelationPathCode(nextCode, targetPerson.gender);
+          if (label != null) return label;
+        }
+        if (visited.add(nextId)) {
+          queue.add(_RelationPathStep(personId: nextId, code: nextCode));
+        }
+      }
+    }
+    return null;
+  }
+
+  String? _hopCharForRelation(RelationType type) {
+    switch (type) {
+      case RelationType.parent:
+        return 'P';
+      case RelationType.child:
+        return 'C';
+      case RelationType.sibling:
+        return 'B';
+      case RelationType.spouse:
+      case RelationType.partner:
+        return 'S';
+      default:
+        return null;
+    }
+  }
+
+  String? _labelForRelationPathCode(String code, Gender gender) {
+    switch (code) {
+      case 'PP':
+        if (gender == Gender.female) return 'Бабушка';
+        if (gender == Gender.male) return 'Дедушка';
+        return 'Бабушка/Дедушка';
+      case 'PPP':
+        if (gender == Gender.female) return 'Прабабушка';
+        if (gender == Gender.male) return 'Прадедушка';
+        return 'Прабабушка/Прадедушка';
+      case 'CC':
+        if (gender == Gender.female) return 'Внучка';
+        if (gender == Gender.male) return 'Внук';
+        return 'Внук/Внучка';
+      case 'CCC':
+        if (gender == Gender.female) return 'Правнучка';
+        if (gender == Gender.male) return 'Правнук';
+        return 'Правнук/Правнучка';
+      case 'PB':
+        return gender == Gender.female ? 'Тётя' : 'Дядя';
+      case 'BC':
+        if (gender == Gender.female) return 'Племянница';
+        if (gender == Gender.male) return 'Племянник';
+        return 'Племянник/Племянница';
+      case 'PBC':
+        if (gender == Gender.female) return 'Двоюродная сестра';
+        if (gender == Gender.male) return 'Двоюродный брат';
+        return 'Двоюродный брат/сестра';
+      case 'SP':
+        if (gender == Gender.female) return 'Свекровь/Тёща';
+        if (gender == Gender.male) return 'Свёкор/Тесть';
+        return 'Родитель супруга';
+      case 'CS':
+        if (gender == Gender.female) return 'Невестка';
+        if (gender == Gender.male) return 'Зять';
+        return 'Супруг ребёнка';
+      case 'BS':
+      case 'SB':
+        return 'Родственник по браку';
+      default:
+        return null;
+    }
   }
 
   Widget _buildRelativeInfoChip(
@@ -2195,4 +2392,14 @@ class _RelativesSectionHeader {
   final bool collapsible;
   final bool expanded;
   final VoidCallback? onToggle;
+}
+
+class _RelationPathStep {
+  const _RelationPathStep({
+    required this.personId,
+    required this.code,
+  });
+
+  final String personId;
+  final String code;
 }

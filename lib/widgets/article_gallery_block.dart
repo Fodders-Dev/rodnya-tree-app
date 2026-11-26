@@ -110,8 +110,8 @@ class ArticleGalleryBlock extends StatelessWidget {
               child: Text(
                 'Удерживайте фото, чтобы поменять порядок',
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant
-                      .withValues(alpha: 0.7),
+                  color:
+                      theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
                 ),
               ),
             ),
@@ -395,6 +395,13 @@ class _GalleryViewerState extends State<_GalleryViewer> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
+        iconTheme: const IconThemeData(color: Colors.white),
+        actionsIconTheme: const IconThemeData(color: Colors.white),
+        titleTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+        ),
         elevation: 0,
         title: Text('${_index + 1} / ${widget.items.length}'),
       ),
