@@ -1,38 +1,38 @@
-// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
-
 import 'dart:async';
-import 'dart:html' as html;
-import 'dart:typed_data';
+import 'dart:js_interop';
+
+import 'package:web/web.dart' as web;
 
 import 'chat_clipboard_image_paste_base.dart';
 
 class ChatClipboardImagePasteService {
   ChatClipboardImagePasteService() {
-    _pasteSubscription = html.document.onPaste.listen(_handlePaste);
+    _pasteListener = _handlePaste.toJS;
+    web.document.addEventListener('paste', _pasteListener);
   }
 
   final StreamController<ChatClipboardImage> _imagesController =
       StreamController<ChatClipboardImage>.broadcast();
-  late final StreamSubscription<html.ClipboardEvent> _pasteSubscription;
+  late final web.EventListener _pasteListener;
 
   Stream<ChatClipboardImage> get images => _imagesController.stream;
 
-  void _handlePaste(html.ClipboardEvent event) {
-    final clipboardData = event.clipboardData;
+  void _handlePaste(web.Event event) {
+    if (!event.isA<web.ClipboardEvent>()) {
+      return;
+    }
+    final clipboardEvent = event as web.ClipboardEvent;
+    final clipboardData = clipboardEvent.clipboardData;
     if (clipboardData == null) {
       return;
     }
 
     final items = clipboardData.items;
-    if (items == null) {
-      return;
-    }
-
     var handledImage = false;
-    final itemCount = items.length ?? 0;
+    final itemCount = items.length;
     for (var index = 0; index < itemCount; index++) {
       final item = items[index];
-      final mimeType = item.type?.toLowerCase().trim() ?? '';
+      final mimeType = item.type.toLowerCase().trim();
       if (!mimeType.startsWith('image/')) {
         continue;
       }
@@ -47,29 +47,18 @@ class ChatClipboardImagePasteService {
     }
 
     if (handledImage) {
-      event.preventDefault();
+      clipboardEvent.preventDefault();
     }
   }
 
   Future<void> _emitFile(
-    html.File file, {
+    web.File file, {
     required String fallbackMimeType,
   }) async {
     try {
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoadEnd.first;
-
-      final result = reader.result;
-      Uint8List? bytes;
-      if (result is ByteBuffer) {
-        bytes = result.asUint8List();
-      } else if (result is Uint8List) {
-        bytes = result;
-      } else if (result is List<int>) {
-        bytes = Uint8List.fromList(result);
-      }
-      if (bytes == null || bytes.isEmpty || _imagesController.isClosed) {
+      final buffer = await file.arrayBuffer().toDart;
+      final bytes = buffer.toDart.asUint8List();
+      if (bytes.isEmpty || _imagesController.isClosed) {
         return;
       }
 
@@ -89,7 +78,7 @@ class ChatClipboardImagePasteService {
     }
   }
 
-  String _fileName(html.File file, String mimeType) {
+  String _fileName(web.File file, String mimeType) {
     final rawName = file.name.trim();
     if (rawName.isNotEmpty && rawName != 'image.png') {
       return rawName;
@@ -116,7 +105,7 @@ class ChatClipboardImagePasteService {
   }
 
   void dispose() {
-    unawaited(_pasteSubscription.cancel());
+    web.document.removeEventListener('paste', _pasteListener);
     unawaited(_imagesController.close());
   }
 }

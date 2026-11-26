@@ -2811,9 +2811,9 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    unawaited(_realtimeService!.connect());
+    unawaited(_realtimeService.connect());
     _realtimeIndicatorsSubscription =
-        _realtimeService!.events.listen(_handleRealtimeIndicatorEvent);
+        _realtimeService.events.listen(_handleRealtimeIndicatorEvent);
   }
 
   void _handleRealtimeIndicatorEvent(CustomApiRealtimeEvent event) {
@@ -3065,7 +3065,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _typingHeartbeatActive = isTyping;
     if (isTyping) {
       _typingHeartbeatTimer?.cancel();
-      await _realtimeService!.sendTypingState(chatId: chatId, isTyping: true);
+      await _realtimeService.sendTypingState(chatId: chatId, isTyping: true);
       _typingHeartbeatTimer = Timer.periodic(
         const Duration(seconds: 2),
         (_) {
@@ -3075,7 +3075,7 @@ class _ChatScreenState extends State<ChatScreen> {
             return;
           }
           unawaited(
-            _realtimeService!.sendTypingState(chatId: chatId, isTyping: true),
+            _realtimeService.sendTypingState(chatId: chatId, isTyping: true),
           );
         },
       );
@@ -3084,7 +3084,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _typingHeartbeatTimer?.cancel();
     _typingHeartbeatTimer = null;
-    await _realtimeService!.sendTypingState(chatId: chatId, isTyping: false);
+    await _realtimeService.sendTypingState(chatId: chatId, isTyping: false);
   }
 
   String _pinnedPreviewLabel(ChatPinnedMessageSnapshot snapshot) {

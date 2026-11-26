@@ -1,56 +1,54 @@
-// ignore_for_file: avoid_web_libraries_in_flutter, uri_does_not_exist, deprecated_member_use
 import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
-import 'dart:js_util' as js_util;
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
+
+import 'package:web/web.dart' as web;
 
 import 'browser_notification_bridge.dart';
 
 class _HtmlBrowserNotificationBridge implements BrowserNotificationBridge {
   @override
-  bool get isSupported => html.Notification.supported;
+  bool get isSupported => web.window.has('Notification');
 
   @override
   bool get isPushSupported =>
       isSupported &&
-      (html.window.isSecureContext ?? false) &&
-      js_util.hasProperty(html.window.navigator, 'serviceWorker');
+      web.window.isSecureContext &&
+      web.window.navigator.has('serviceWorker');
 
   @override
   bool get isIosWeb {
-    final ua = html.window.navigator.userAgent.toLowerCase();
-    if (ua.contains('iphone') ||
-        ua.contains('ipad') ||
-        ua.contains('ipod')) {
+    final ua = web.window.navigator.userAgent.toLowerCase();
+    if (ua.contains('iphone') || ua.contains('ipad') || ua.contains('ipod')) {
       return true;
     }
     // iPadOS 13+ маскируется под десктопный Mac — отличаем по тач-вводу.
     final isMac = ua.contains('macintosh');
-    final maxTouchPoints = html.window.navigator.maxTouchPoints ?? 0;
+    final maxTouchPoints = web.window.navigator.maxTouchPoints;
     return isMac && maxTouchPoints > 1;
   }
 
   @override
   bool get isStandalone {
     // navigator.standalone — legacy iOS Safari флаг установленного PWA.
-    final navStandalone =
-        js_util.getProperty<Object?>(html.window.navigator, 'standalone');
-    if (navStandalone == true) {
+    final navStandalone = (web.window.navigator as JSObject)
+        .getProperty<JSAny?>('standalone'.toJS);
+    if (navStandalone.isA<JSBoolean>() && (navStandalone as JSBoolean).toDart) {
       return true;
     }
     try {
-      return html.window
-          .matchMedia('(display-mode: standalone)')
-          .matches;
+      return web.window.matchMedia('(display-mode: standalone)').matches;
     } catch (_) {
       return false;
     }
   }
 
   @override
-  BrowserNotificationPermissionStatus get permissionStatus =>
-      _permissionFromRaw(html.Notification.permission ?? 'default');
+  BrowserNotificationPermissionStatus get permissionStatus => isSupported
+      ? _permissionFromRaw(web.Notification.permission)
+      : BrowserNotificationPermissionStatus.unsupported;
 
   @override
   Future<BrowserNotificationPermissionStatus> requestPermission({
@@ -63,7 +61,8 @@ class _HtmlBrowserNotificationBridge implements BrowserNotificationBridge {
       return permissionStatus;
     }
 
-    final rawPermission = await html.Notification.requestPermission();
+    final rawPermission =
+        (await web.Notification.requestPermission().toDart).toDart;
     return _permissionFromRaw(rawPermission);
   }
 
@@ -79,23 +78,19 @@ class _HtmlBrowserNotificationBridge implements BrowserNotificationBridge {
       return;
     }
 
-    final notification = html.Notification(
-      title,
-      body: body,
-      tag: tag,
-    );
+    final options = tag != null
+        ? web.NotificationOptions(body: body, tag: tag)
+        : web.NotificationOptions(body: body);
+    final notification = web.Notification(title, options);
 
-    StreamSubscription<html.Event>? clickSubscription;
-    clickSubscription = notification.onClick.listen((_) {
+    notification.onclick = ((web.Event _) {
       onClick?.call();
       notification.close();
-      unawaited(clickSubscription?.cancel());
-    });
+    }).toJS;
 
     unawaited(
       Future<void>.delayed(const Duration(seconds: 8), () {
         notification.close();
-        unawaited(clickSubscription?.cancel());
       }),
     );
   }
@@ -109,51 +104,25 @@ class _HtmlBrowserNotificationBridge implements BrowserNotificationBridge {
       return null;
     }
 
-    final serviceWorkerContainer =
-        js_util.getProperty(html.window.navigator, 'serviceWorker');
-    final registration = await js_util.promiseToFuture<dynamic>(
-      js_util.callMethod(
-        serviceWorkerContainer,
-        'register',
-        [
-          '/push/push-sw.js',
-          js_util.jsify(<String, dynamic>{'scope': '/push/'}),
-        ],
-      ),
-    );
+    final registration = await web.window.navigator.serviceWorker
+        .register(
+          '/push/push-sw.js'.toJS,
+          web.RegistrationOptions(scope: '/push/'),
+        )
+        .toDart;
 
-    final pushManager = js_util.getProperty(registration, 'pushManager');
-    var subscription = await js_util.promiseToFuture<dynamic>(
-      js_util.callMethod(pushManager, 'getSubscription', const []),
-    );
+    var subscription = await registration.pushManager.getSubscription().toDart;
+    subscription ??= await registration.pushManager
+        .subscribe(
+          web.PushSubscriptionOptionsInit(
+            userVisibleOnly: true,
+            applicationServerKey: _decodeBase64Url(publicKey).toJS,
+          ),
+        )
+        .toDart;
 
-    if (subscription == null) {
-      final subscriptionOptions = js_util.newObject();
-      js_util.setProperty(subscriptionOptions, 'userVisibleOnly', true);
-      js_util.setProperty(
-        subscriptionOptions,
-        'applicationServerKey',
-        _decodeBase64Url(publicKey),
-      );
-      subscription = await js_util.promiseToFuture<dynamic>(
-        js_util.callMethod(
-          pushManager,
-          'subscribe',
-          [subscriptionOptions],
-        ),
-      );
-    }
-
-    if (subscription == null) {
-      return null;
-    }
-
-    final serialized = js_util.callMethod<dynamic>(
-      subscription,
-      'toJSON',
-      const [],
-    );
-    final token = jsonEncode(js_util.dartify(serialized));
+    final serialized = subscription.toJSON().dartify();
+    final token = jsonEncode(serialized);
     return BrowserPushSubscription(token: token);
   }
 
@@ -163,30 +132,20 @@ class _HtmlBrowserNotificationBridge implements BrowserNotificationBridge {
       return;
     }
 
-    final serviceWorkerContainer =
-        js_util.getProperty(html.window.navigator, 'serviceWorker');
-    final registration = await js_util.promiseToFuture<dynamic>(
-      js_util.callMethod(
-        serviceWorkerContainer,
-        'getRegistration',
-        ['/push/'],
-      ),
-    );
+    final registration = await web.window.navigator.serviceWorker
+        .getRegistration('/push/')
+        .toDart;
     if (registration == null) {
       return;
     }
 
-    final pushManager = js_util.getProperty(registration, 'pushManager');
-    final subscription = await js_util.promiseToFuture<dynamic>(
-      js_util.callMethod(pushManager, 'getSubscription', const []),
-    );
+    final subscription =
+        await registration.pushManager.getSubscription().toDart;
     if (subscription == null) {
       return;
     }
 
-    await js_util.promiseToFuture<dynamic>(
-      js_util.callMethod(subscription, 'unsubscribe', const []),
-    );
+    await subscription.unsubscribe().toDart;
   }
 
   BrowserNotificationPermissionStatus _permissionFromRaw(String rawValue) {

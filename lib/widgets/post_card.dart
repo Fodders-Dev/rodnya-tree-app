@@ -77,7 +77,7 @@ class _PostCardState extends State<PostCard>
 
   void _syncLocalState() {
     _isLikedByCurrentUser =
-        _currentUserId != null && widget.post.likedBy.contains(_currentUserId!);
+        _currentUserId != null && widget.post.likedBy.contains(_currentUserId);
     _likeCount = widget.post.likeCount;
     _commentCount = widget.post.commentCount;
     _reactions = List<ReactionSummary>.from(widget.post.reactions);
@@ -177,7 +177,7 @@ class _PostCardState extends State<PostCard>
         return;
       }
       setState(() {
-        _isLikedByCurrentUser = updatedPost.likedBy.contains(_currentUserId!);
+        _isLikedByCurrentUser = updatedPost.likedBy.contains(_currentUserId);
         _likeCount = updatedPost.likeCount;
         _commentCount = updatedPost.commentCount;
       });
