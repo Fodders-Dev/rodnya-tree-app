@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/models/app_notification_item.dart';
+import 'package:rodnya/models/story_request.dart';
 import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/notifications_screen.dart';
@@ -328,6 +329,43 @@ void main() {
       expect(find.textContaining('Уведомление ·'), findsNothing);
     },
   );
+
+  testWidgets(
+    'v2 story inbox: pendingStoryRequestsLoader shows «Вопросы о родных» card even when unread list is empty',
+    (tester) async {
+      await tester.pumpWidget(
+        await _buildNotificationsApp(
+          NotificationsScreen(
+            notificationLoader: _emptyLoader,
+            pendingStoryRequestsLoader: () async => const [
+              StoryRequest(
+                id: 'sreq-inbox-1',
+                treeId: 't-1',
+                personId: 'p-1',
+                requesterUserId: 'u-artem',
+                targetUserId: 'u-me',
+                question: StoryRequestQuestion(text: 'Как познакомились?'),
+                status: StoryRequestStatus.pending,
+                createdAt: '2026-11-26T10:00:00Z',
+                expiresAt: '2026-12-26T10:00:00Z',
+                requester: StoryRequestPersonSummary(
+                    id: 'u-artem', displayName: 'Артём'),
+                person:
+                    StoryRequestPersonSummary(id: 'p-1', displayName: 'Лида'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(
+          find.byKey(const Key('notifications-story-inbox')), findsOneWidget);
+      expect(find.text('Вопросы о родных · 1'), findsOneWidget);
+      expect(find.text('Как познакомились?'), findsOneWidget);
+    },
+  );
 }
 
 Future<List<AppNotificationItem>> _emptyLoader() async =>
@@ -344,7 +382,6 @@ Future<Widget> _buildNotificationsApp(Widget child) async {
     value: treeProvider,
     child: MaterialApp(home: child),
   );
-
 }
 
 class _FakeLocalStorageService implements LocalStorageService {
@@ -380,5 +417,4 @@ class _FakeAuthService implements AuthServiceInterface {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-
 }

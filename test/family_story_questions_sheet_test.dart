@@ -6,6 +6,8 @@ import 'package:rodnya/widgets/family_story_questions_sheet.dart';
 
 class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
   String? lastTargetUserId;
+  String? lastDeliveryMode;
+  String? lastTargetName;
   String? lastPersonId;
   StoryRequestQuestion? lastQuestion;
   Object? throwOnCreate;
@@ -14,12 +16,16 @@ class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
   Future<StoryRequest?> createStoryRequest({
     required String treeId,
     required String personId,
-    required String targetUserId,
+    String? targetUserId,
+    String deliveryMode = 'in_app',
+    String? targetName,
     required StoryRequestQuestion question,
   }) async {
     if (throwOnCreate != null) throw throwOnCreate!;
     lastPersonId = personId;
     lastTargetUserId = targetUserId;
+    lastDeliveryMode = deliveryMode;
+    lastTargetName = targetName;
     lastQuestion = question;
     return StoryRequest(
       id: 'sreq-new',
@@ -27,6 +33,11 @@ class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
       personId: personId,
       requesterUserId: 'u-me',
       targetUserId: targetUserId,
+      targetName: targetName,
+      deliveryMode: StoryRequestDeliveryMode.fromServerValue(deliveryMode),
+      shareUrl: deliveryMode == 'public_link'
+          ? 'https://api.rodnya-tree.ru/story/${'a' * 48}'
+          : null,
       question: question,
       status: StoryRequestStatus.pending,
       createdAt: '2026-09-13T10:00:00Z',
@@ -35,7 +46,8 @@ class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
   }
 
   @override
-  Future<StoryRequest?> getStoryRequest({required String requestId}) async => null;
+  Future<StoryRequest?> getStoryRequest({required String requestId}) async =>
+      null;
 
   @override
   Future<StoryRequest?> answerStoryRequest({
@@ -45,10 +57,13 @@ class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
       null;
 
   @override
-  Future<StoryRequest?> declineStoryRequest({required String requestId}) async => null;
+  Future<StoryRequest?> declineStoryRequest(
+          {required String requestId}) async =>
+      null;
 
   @override
-  Future<StoryRequest?> revokeStoryRequest({required String requestId}) async => null;
+  Future<StoryRequest?> revokeStoryRequest({required String requestId}) async =>
+      null;
 
   @override
   Future<List<StoryRequest>> listStoryRequests({
@@ -214,7 +229,8 @@ void main() {
                         displayName: 'Лида',
                         isHero: true,
                       ),
-                      FamilyStoryAskTarget(userId: 'user-other', displayName: 'Артём'),
+                      FamilyStoryAskTarget(
+                          userId: 'user-other', displayName: 'Артём'),
                     ],
                   );
                 },
@@ -232,8 +248,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Кого спросить?'), findsOneWidget);
-      expect(find.byKey(const Key('family-story-target-user-hero')), findsOneWidget);
-      expect(find.byKey(const Key('family-story-target-user-other')), findsOneWidget);
+      expect(find.byKey(const Key('family-story-target-user-hero')),
+          findsOneWidget);
+      expect(find.byKey(const Key('family-story-target-user-other')),
+          findsOneWidget);
 
       await tester.tap(find.byKey(const Key('family-story-target-user-other')));
       await tester.pumpAndSettle();
@@ -269,7 +287,8 @@ void main() {
                   treeId: 'tree-1',
                   personId: 'person-1',
                   askTargets: const [
-                    FamilyStoryAskTarget(userId: 'user-other', displayName: 'Артём'),
+                    FamilyStoryAskTarget(
+                        userId: 'user-other', displayName: 'Артём'),
                   ],
                 ),
                 child: const Text('open'),
@@ -288,7 +307,73 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Такой вопрос уже ждёт ответа'), findsOneWidget);
-      expect(find.text('Кого спросить?'), findsOneWidget, reason: 'лист не закрылся');
+      expect(find.text('Кого спросить?'), findsOneWidget,
+          reason: 'лист не закрылся');
+    },
+  );
+
+  testWidgets(
+    'v2: custom question + empty askTargets creates public guest link with targetName',
+    (tester) async {
+      final service = _FakeStoryRequestService();
+      FamilyStoryQuestionAction? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showFamilyStoryQuestionsSheet(
+                    context,
+                    personName: 'Лида',
+                    storyRequestService: service,
+                    treeId: 'tree-1',
+                    personId: 'person-1',
+                    askTargets: const [],
+                    canCreateGuestLink: true,
+                  );
+                },
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('family-story-mode-custom')));
+      await tester.pumpAndSettle();
+
+      final guestBtnFinder =
+          find.byKey(const Key('family-story-create-guest-link'));
+      expect(tester.widget<FilledButton>(guestBtnFinder).onPressed, isNull);
+
+      await tester.enterText(
+        find.byKey(const Key('family-story-custom-question-field')),
+        'Какая любимая песня звучала дома?',
+      );
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(guestBtnFinder).onPressed, isNotNull);
+
+      await tester.tap(guestBtnFinder);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('family-story-guest-name-field')),
+        'Бабушка Лида',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('family-story-send-guest-link')));
+      await tester.pumpAndSettle();
+
+      expect(service.lastDeliveryMode, 'public_link');
+      expect(service.lastTargetUserId, isNull);
+      expect(service.lastTargetName, 'Бабушка Лида');
+      expect(service.lastQuestion?.text, 'Какая любимая песня звучала дома?');
+      expect(service.lastQuestion?.sourceQuestionId, isNull);
+      expect(result?.type, FamilyStoryQuestionActionType.guestLinkCreated);
+      expect(result?.request?.shareUrl, isNotEmpty);
     },
   );
 }

@@ -12,13 +12,30 @@
 
 import '../backend/models/user_facing_exception.dart';
 
+enum StoryRequestDeliveryMode {
+  inApp,
+  publicLink;
+
+  String get serverValue =>
+      this == StoryRequestDeliveryMode.publicLink ? 'public_link' : 'in_app';
+
+  static StoryRequestDeliveryMode fromServerValue(Object? raw) {
+    return raw?.toString() == 'public_link'
+        ? StoryRequestDeliveryMode.publicLink
+        : StoryRequestDeliveryMode.inApp;
+  }
+}
+
 class StoryRequest {
   const StoryRequest({
     required this.id,
     required this.treeId,
     required this.personId,
     required this.requesterUserId,
-    required this.targetUserId,
+    this.targetUserId,
+    this.targetName,
+    this.deliveryMode = StoryRequestDeliveryMode.inApp,
+    this.shareUrl,
     required this.question,
     required this.status,
     this.answer,
@@ -39,7 +56,10 @@ class StoryRequest {
   /// адресат дедушка — не совпадает).
   final String personId;
   final String requesterUserId;
-  final String targetUserId;
+  final String? targetUserId;
+  final String? targetName;
+  final StoryRequestDeliveryMode deliveryMode;
+  final String? shareUrl;
   final StoryRequestQuestion question;
   final StoryRequestStatus status;
 
@@ -63,6 +83,7 @@ class StoryRequest {
   final StoryRequestPersonSummary? target;
 
   bool get isPending => status == StoryRequestStatus.pending;
+  bool get isPublicLink => deliveryMode == StoryRequestDeliveryMode.publicLink;
 
   factory StoryRequest.fromJson(Map<String, dynamic> json) {
     final questionRaw = json['question'];
@@ -72,7 +93,11 @@ class StoryRequest {
       treeId: (json['treeId'] ?? '').toString(),
       personId: (json['personId'] ?? '').toString(),
       requesterUserId: (json['requesterUserId'] ?? '').toString(),
-      targetUserId: (json['targetUserId'] ?? '').toString(),
+      targetUserId: _nullableString(json['targetUserId']),
+      targetName: _nullableString(json['targetName']),
+      deliveryMode:
+          StoryRequestDeliveryMode.fromServerValue(json['deliveryMode']),
+      shareUrl: _nullableString(json['shareUrl']),
       question: questionRaw is Map
           ? StoryRequestQuestion.fromJson(
               Map<String, dynamic>.from(questionRaw),
@@ -215,12 +240,14 @@ class StoryRequestAnswer {
     required this.articleBlockId,
     required this.kind,
     this.answeredByUserId,
+    this.respondentName,
     required this.answeredAt,
   });
 
   final String articleBlockId;
   final StoryRequestAnswerKind kind;
   final String? answeredByUserId;
+  final String? respondentName;
   final String answeredAt;
 
   factory StoryRequestAnswer.fromJson(Map<String, dynamic> json) {
@@ -228,6 +255,7 @@ class StoryRequestAnswer {
       articleBlockId: (json['articleBlockId'] ?? '').toString(),
       kind: StoryRequestAnswerKind.fromServerValue(json['kind']),
       answeredByUserId: _nullableString(json['answeredByUserId']),
+      respondentName: _nullableString(json['respondentName']),
       answeredAt: (json['answeredAt'] ?? '').toString(),
     );
   }

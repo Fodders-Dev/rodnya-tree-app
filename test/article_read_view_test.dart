@@ -31,8 +31,11 @@ ArticleBlock _block(String id, String type, Map<String, dynamic> content,
 List<ArticleBlock> _allSevenTypes() => [
       _block('p1', 'paragraph', ArticleBlock.paragraphContent('Это абзац.')),
       _block('h1', 'header', ArticleBlock.headerContent('Детство')),
-      _block('q1', 'quote',
-          ArticleBlock.quoteContent(text: 'Будь собой.', attribution: 'Бабушка')),
+      _block(
+          'q1',
+          'quote',
+          ArticleBlock.quoteContent(
+              text: 'Будь собой.', attribution: 'Бабушка')),
       _block('d1', 'divider', ArticleBlock.dividerContent()),
       _block('ph1', 'photo',
           {'url': 'https://img/ph.jpg', 'caption': 'Подпись фото'}),
@@ -40,7 +43,10 @@ List<ArticleBlock> _allSevenTypes() => [
           'g1',
           'gallery',
           ArticleBlock.galleryContent(items: [
-            <String, dynamic>{'url': 'https://img/g0.jpg', 'caption': 'Свадьба'},
+            <String, dynamic>{
+              'url': 'https://img/g0.jpg',
+              'caption': 'Свадьба'
+            },
             <String, dynamic>{'url': 'https://img/g1.jpg'},
           ])),
       _block('au1', 'audio',
@@ -146,9 +152,11 @@ void main() {
     expect(find.textContaining('Соавторы:'), findsNothing);
   });
 
-  testWidgets('biography section: viewer reads, no edit button', (tester) async {
+  testWidgets('biography section: viewer reads, no edit button',
+      (tester) async {
     final svc = _StubArticleService([
-      _block('p1', 'paragraph', ArticleBlock.paragraphContent('История жизни.')),
+      _block(
+          'p1', 'paragraph', ArticleBlock.paragraphContent('История жизни.')),
     ]);
     await tester.pumpWidget(
       MaterialApp(
@@ -249,7 +257,8 @@ void main() {
       final block = ArticleBlock(
         id: 'au1',
         type: 'audio',
-        content: ArticleBlock.audioContent(url: 'https://a/v.m4a', durationSec: 12),
+        content:
+            ArticleBlock.audioContent(url: 'https://a/v.m4a', durationSec: 12),
         createdAt: 't',
         updatedAt: 't',
         source: const ArticleBlockSource(
@@ -272,7 +281,52 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
 
       expect(find.text('Ответ на вопрос: Артём, 13 сентября'), findsOneWidget);
+      expect(find.text('Вопрос: «Кто на фото?»'), findsOneWidget);
       expect(find.byKey(const Key('article-source-sreq-1')), findsOneWidget);
+    });
+
+    testWidgets(
+        'renders guest respondentName and audio transcript in v2 blocks',
+        (tester) async {
+      final block = ArticleBlock(
+        id: 'au-tr',
+        type: 'audio',
+        content: const {
+          'url': 'https://a/v.m4a',
+          'durationSec': 18,
+          'transcript': 'Мы приехали в деревню летом.',
+        },
+        createdAt: 't',
+        updatedAt: 't',
+        source: const ArticleBlockSource(
+          requestId: 'sreq-guest',
+          question: StoryRequestQuestion(text: 'Где прошла молодость?'),
+          askedByUserId: 'u-artem',
+          askedAt: '2026-11-26T10:00:00Z',
+          respondentName: 'Тётя Оля',
+          channel: 'public_link',
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ArticleReadView(
+              blocks: [block],
+              authorNames: const {'u-artem': 'Артём'},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+
+      expect(find.byKey(const Key('article-audio-transcript-au-tr')),
+          findsOneWidget);
+      expect(find.text('Мы приехали в деревню летом.'), findsOneWidget);
+      expect(find.text('Вопрос: «Где прошла молодость?»'), findsOneWidget);
+      expect(
+        find.text('Ответ на вопрос: Артём, 26 ноября · Ответил(а): Тётя Оля'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('falls back to «родного» when the asker name is unresolved',
@@ -302,7 +356,8 @@ void main() {
     });
 
     testWidgets('block без source не получает подпись', (tester) async {
-      final block = _block('p1', 'paragraph', ArticleBlock.paragraphContent('Без вопроса.'));
+      final block = _block(
+          'p1', 'paragraph', ArticleBlock.paragraphContent('Без вопроса.'));
       await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: ArticleReadView(blocks: [block]))),
       );
@@ -323,6 +378,5 @@ class _StubArticleService implements ProfileArticleServiceInterface {
       ProfileArticle(personId: personId, blocks: _blocks);
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

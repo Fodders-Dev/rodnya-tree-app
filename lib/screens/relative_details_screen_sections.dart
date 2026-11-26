@@ -274,7 +274,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                   fullName: fullName,
                   relation: directRelationLabel,
                   gender: person.gender.name,
-                  canEdit: _canDirectEditProfile(),
+                  canEdit: _canEditBiography(),
                   showEmptyCta: false,
                   authorNames: _authorNamesMap(),
                 ),
@@ -407,7 +407,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       isDeceased,
       deceasedYears,
     );
-    final canEditStory = _canDirectEditProfile();
+    final canEditStory = _canEditBiography();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
@@ -715,7 +715,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         (storyService == null || person == null || treeId == null)
             ? const <FamilyStoryAskTarget>[]
             : _buildStoryAskTargets(person: person, heroDisplayName: name);
-    final canSaveAnswer = _canDirectEditProfile();
+    final canSaveAnswer = _canEditBiography();
+    final canCreateGuestLink = _canEditBiography();
     final askTargets = _canEditOrDelete()
         ? allAskTargets
         : allAskTargets.where((t) => t.isHero).toList(growable: false);
@@ -729,6 +730,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       personId: person?.id,
       askTargets: askTargets,
       canSaveAnswer: canSaveAnswer,
+      canCreateGuestLink: canCreateGuestLink,
     );
     if (action == null || !mounted) return;
     switch (action.type) {
@@ -754,7 +756,53 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         // ответа …» shows up immediately instead of on next screen visit.
         _refreshStoryRequestStatus();
         break;
+      case FamilyStoryQuestionActionType.guestLinkCreated:
+        _refreshStoryRequestStatus();
+        final shareUrl = action.request?.shareUrl;
+        if (shareUrl != null && shareUrl.isNotEmpty) {
+          await _shareGuestStoryLink(
+            questionText: action.question.question,
+            personName: name,
+            shareUrl: shareUrl,
+          );
+        }
+        break;
     }
+  }
+
+  Future<void> _shareGuestStoryLink({
+    required String questionText,
+    required String personName,
+    required String shareUrl,
+  }) async {
+    final message = buildFamilyStoryGuestLinkShareMessage(
+      questionText: questionText,
+      personName: personName,
+      shareUrl: shareUrl,
+    );
+    try {
+      final box = context.findRenderObject() as RenderBox?;
+      await SharePlus.instance.share(
+        ShareParams(
+          text: message,
+          subject: 'Вопрос для семейной истории',
+          sharePositionOrigin:
+              box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+        ),
+      );
+    } catch (_) {}
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Ссылка для ответа создана'),
+        action: SnackBarAction(
+          label: 'Скопировать',
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: shareUrl));
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _shareFamilyStoryQuestion({
@@ -782,7 +830,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Вопрос готов к отправке.'),
-          action: _canDirectEditProfile()
+          action: _canEditBiography()
               ? SnackBarAction(
                   label: 'Сохранить ответ',
                   onPressed: () => _openBiographyEditor(

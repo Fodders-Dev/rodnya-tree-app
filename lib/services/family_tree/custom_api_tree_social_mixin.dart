@@ -67,17 +67,25 @@ mixin _CustomApiTreeSocialMixin on _CustomApiFamilyTreeHost {
   Future<StoryRequest?> createStoryRequest({
     required String treeId,
     required String personId,
-    required String targetUserId,
+    String? targetUserId,
+    String deliveryMode = 'in_app',
+    String? targetName,
     required StoryRequestQuestion question,
   }) async {
     try {
+      final cleanTarget = targetUserId?.trim();
+      final cleanTargetName = targetName?.trim();
       final response = await _requestJson(
         method: 'POST',
         path: '/v1/story-requests',
         body: {
           'treeId': treeId,
           'personId': personId,
-          'targetUserId': targetUserId,
+          if (deliveryMode != 'in_app') 'deliveryMode': deliveryMode,
+          if (cleanTarget != null && cleanTarget.isNotEmpty)
+            'targetUserId': cleanTarget,
+          if (cleanTargetName != null && cleanTargetName.isNotEmpty)
+            'targetName': cleanTargetName,
           'question': question.toJson(),
         },
       );

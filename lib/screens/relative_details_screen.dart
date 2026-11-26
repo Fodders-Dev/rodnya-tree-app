@@ -1,6 +1,7 @@
 // ignore_for_file: library_private_types_in_public_api
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -937,6 +938,11 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
             _person!.userId!.isEmpty ||
             !_person!.isAlive) &&
         _canEditOrDelete();
+  }
+
+  bool _canEditBiography() {
+    return _person != null &&
+        (_isViewerOwnPerson(_person!) || _canDirectEditProfile());
   }
 
   bool _canSuggestProfileEdits() {

@@ -144,6 +144,9 @@ class ArticleBlock {
     return null;
   }
 
+  /// Optional transcript saved with an audio block (v2 STT / guest answer).
+  String? get audioTranscript => _nullableString(content['transcript']);
+
   ArticleBlock copyWith({
     Map<String, dynamic>? content,
     String? authorUserId,
@@ -253,6 +256,8 @@ class ArticleBlockSource {
     required this.question,
     required this.askedByUserId,
     required this.askedAt,
+    this.respondentName,
+    this.channel,
   });
 
   final String requestId;
@@ -264,16 +269,21 @@ class ArticleBlockSource {
   final StoryRequestQuestion question;
   final String askedByUserId;
   final String askedAt;
+  final String? respondentName;
+  final String? channel;
 
   factory ArticleBlockSource.fromJson(Map<String, dynamic> json) {
     final questionRaw = json['question'];
     return ArticleBlockSource(
       requestId: (json['requestId'] ?? '').toString(),
       question: questionRaw is Map
-          ? StoryRequestQuestion.fromJson(Map<String, dynamic>.from(questionRaw))
+          ? StoryRequestQuestion.fromJson(
+              Map<String, dynamic>.from(questionRaw))
           : const StoryRequestQuestion(text: ''),
       askedByUserId: (json['askedByUserId'] ?? '').toString(),
       askedAt: (json['askedAt'] ?? '').toString(),
+      respondentName: _nullableString(json['respondentName']),
+      channel: _nullableString(json['channel']),
     );
   }
 }

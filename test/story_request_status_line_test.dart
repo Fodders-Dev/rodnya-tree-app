@@ -58,13 +58,16 @@ class _FakeService implements StoryRequestCapableFamilyTreeService {
   Future<StoryRequest?> createStoryRequest({
     required String treeId,
     required String personId,
-    required String targetUserId,
+    String? targetUserId,
+    String deliveryMode = 'in_app',
+    String? targetName,
     required StoryRequestQuestion question,
   }) async =>
       throw UnimplementedError();
 
   @override
-  Future<StoryRequest?> getStoryRequest({required String requestId}) async => null;
+  Future<StoryRequest?> getStoryRequest({required String requestId}) async =>
+      null;
 
   @override
   Future<StoryRequest?> answerStoryRequest({
@@ -74,7 +77,9 @@ class _FakeService implements StoryRequestCapableFamilyTreeService {
       null;
 
   @override
-  Future<StoryRequest?> declineStoryRequest({required String requestId}) async => null;
+  Future<StoryRequest?> declineStoryRequest(
+          {required String requestId}) async =>
+      null;
 }
 
 StoryRequest _pending({
@@ -98,7 +103,8 @@ StoryRequest _pending({
 }
 
 void main() {
-  testWidgets('shows «Ждём ответа: {имя}» for a pending issued request about this person',
+  testWidgets(
+      'shows «Ждём ответа: {имя}» for a pending issued request about this person',
       (tester) async {
     final service = _FakeService([_pending(id: 'sreq-1', personId: 'p-1')]);
     await tester.pumpWidget(
@@ -115,12 +121,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Ждём ответа: Артём'), findsOneWidget);
-    expect(find.byKey(const Key('story-request-revoke-sreq-1')), findsOneWidget);
+    expect(
+        find.byKey(const Key('story-request-revoke-sreq-1')), findsOneWidget);
   });
 
   testWidgets('hides when there is no pending issued request for this person',
       (tester) async {
-    final service = _FakeService([_pending(id: 'sreq-1', personId: 'other-person')]);
+    final service =
+        _FakeService([_pending(id: 'sreq-1', personId: 'other-person')]);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -158,5 +166,39 @@ void main() {
 
     expect(service.revokedId, 'sreq-1');
     expect(find.byKey(const Key('story-request-status-line')), findsNothing);
+  });
+
+  testWidgets('v2 public_link request renders share copy button',
+      (tester) async {
+    final linkRequest = StoryRequest(
+      id: 'sreq-pub',
+      treeId: 'tree-1',
+      personId: 'person-1',
+      requesterUserId: 'u-me',
+      deliveryMode: StoryRequestDeliveryMode.publicLink,
+      targetName: 'Бабушка Лида',
+      shareUrl: 'https://api.rodnya-tree.ru/story/token123',
+      question: const StoryRequestQuestion(text: 'Q'),
+      status: StoryRequestStatus.pending,
+      createdAt: 'c',
+      expiresAt: 'e',
+    );
+    final service = _FakeService([linkRequest]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StoryRequestStatusLine(
+            personId: 'person-1',
+            serviceOverride: service,
+            authServiceOverride: _FakeAuth('u-me'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ждём ответа по ссылке: Бабушка Лида'), findsOneWidget);
+    expect(
+        find.byKey(const Key('story-request-copy-sreq-pub')), findsOneWidget);
   });
 }

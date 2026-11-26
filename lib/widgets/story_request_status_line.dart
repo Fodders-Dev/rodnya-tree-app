@@ -10,6 +10,7 @@
 // small (a handful of open asks per person, ever) so this is cheap.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
@@ -157,12 +158,32 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'Ждём ответа: ${_targetName(request)}',
+                      request.isPublicLink
+                          ? _publicLinkStatusText(request)
+                          : 'Ждём ответа: ${_targetName(request)}',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ),
+                  if (request.isPublicLink &&
+                      (request.shareUrl ?? '').isNotEmpty &&
+                      !_revoking.contains(request.id))
+                    TextButton(
+                      key: Key('story-request-copy-${request.id}'),
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: request.shareUrl!),
+                        );
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Ссылка скопирована'),
+                          ),
+                        );
+                      },
+                      child: const Text('Скопировать'),
+                    ),
                   _revoking.contains(request.id)
                       ? const Padding(
                           padding: EdgeInsets.symmetric(horizontal: 12),
@@ -188,5 +209,13 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
   String _targetName(StoryRequest request) {
     final name = request.target?.displayName?.trim();
     return (name != null && name.isNotEmpty) ? name : 'родного';
+  }
+
+  String _publicLinkStatusText(StoryRequest request) {
+    final name = request.targetName?.trim();
+    if (name != null && name.isNotEmpty) {
+      return 'Ждём ответа по ссылке: $name';
+    }
+    return 'Ждём ответа по ссылке';
   }
 }

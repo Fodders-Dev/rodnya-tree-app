@@ -119,6 +119,9 @@ class AppLinksDynamicLinkService implements DynamicLinkServiceInterface {
     if (path.startsWith('/tree/view/')) {
       return '$path$query';
     }
+    if (path.startsWith('/story-requests/')) {
+      return '$path$query';
+    }
     return null;
   }
 

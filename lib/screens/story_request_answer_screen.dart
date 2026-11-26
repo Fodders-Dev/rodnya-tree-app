@@ -10,6 +10,8 @@
 // «press to talk» step here, matching Phase D's «no press-to-talk, too
 // fiddly for elders» note.
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -66,12 +68,16 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
   String? _loadError;
   bool _textMode = false;
   final TextEditingController _textController = TextEditingController();
+  final TextEditingController _photoCaptionController = TextEditingController();
   bool _submitting = false;
   String? _submitError;
   bool _notAddressee = false;
   String? _pendingUploadedUrl;
   String? _pendingKind;
   int? _pendingDurationSec;
+  String? _pendingPhotoCaption;
+  XFile? _pickedPhotoFile;
+  Uint8List? _pickedPhotoBytes;
 
   @override
   void initState() {
@@ -84,6 +90,7 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
   void dispose() {
     _textController.removeListener(_onTextChanged);
     _textController.dispose();
+    _photoCaptionController.dispose();
     super.dispose();
   }
 
@@ -204,6 +211,9 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
         _pendingUploadedUrl = null;
         _pendingKind = null;
         _pendingDurationSec = null;
+        _pendingPhotoCaption = null;
+        _pickedPhotoFile = null;
+        _pickedPhotoBytes = null;
         _state = _ScreenState.thankYou;
       });
     } on StoryRequestError catch (e) {
@@ -214,6 +224,9 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
           _pendingUploadedUrl = null;
           _pendingKind = null;
           _pendingDurationSec = null;
+          _pendingPhotoCaption = null;
+          _pickedPhotoFile = null;
+          _pickedPhotoBytes = null;
           _state = _ScreenState.terminal;
         });
         return;
@@ -246,14 +259,22 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       _pendingUploadedUrl = url;
       _pendingKind = 'photo';
       _pendingDurationSec = null;
-      await _submitAnswer(StoryRequestAnswerInput.photo(mediaUrl: url));
+      await _submitAnswer(
+        StoryRequestAnswerInput.photo(
+          mediaUrl: url,
+          caption: _pendingPhotoCaption,
+        ),
+      );
     }
   }
 
   Future<void> _recordAudio() async {
     final record = widget.audioRecordOverride ??
-        (BuildContext ctx) =>
-            showAudioRecordSheet(ctx, confirmLabel: 'Сохранить');
+        (BuildContext ctx) => showAudioRecordSheet(
+              ctx,
+              confirmLabel: 'Сохранить',
+              autoStart: true,
+            );
     final result = await record(context);
     if (result == null || !mounted) return;
     final storage = _storage();
@@ -268,9 +289,10 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
     String? url;
     try {
       final bytes = await result.file.readAsBytes();
+      final ts = DateTime.now().millisecondsSinceEpoch;
       url = await storage.uploadBytes(
         bucket: 'story-request-audio',
-        path: result.file.name,
+        path: '${widget.requestId}/${ts}_${result.file.name}',
         fileBytes: bytes,
         fileOptions: FileOptions(contentType: result.mimeType),
       );
@@ -337,13 +359,28 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
     final source = await _choosePhotoSource();
     if (source == null || !mounted) return;
     XFile? file;
+    Uint8List? bytes;
     try {
       file = await _pickImage(source);
+      if (file != null) {
+        bytes = await file.readAsBytes();
+      }
     } catch (_) {
       _snack('Не удалось открыть фото');
       return;
     }
-    if (file == null || !mounted) return;
+    if (file == null || bytes == null || !mounted) return;
+    setState(() {
+      _textMode = false;
+      _submitError = null;
+      _pickedPhotoFile = file;
+      _pickedPhotoBytes = bytes;
+    });
+  }
+
+  Future<void> _submitPickedPhoto() async {
+    final file = _pickedPhotoFile;
+    if (file == null) return;
     final storage = _storage();
     if (storage == null) {
       _snack('Загрузка фото недоступна');
@@ -367,10 +404,17 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       });
       return;
     }
+    final caption = _photoCaptionController.text.trim();
     _pendingUploadedUrl = url;
     _pendingKind = 'photo';
     _pendingDurationSec = null;
-    await _submitAnswer(StoryRequestAnswerInput.photo(mediaUrl: url));
+    _pendingPhotoCaption = caption.isEmpty ? null : caption;
+    await _submitAnswer(
+      StoryRequestAnswerInput.photo(
+        mediaUrl: url,
+        caption: _pendingPhotoCaption,
+      ),
+    );
   }
 
   Future<void> _confirmDecline() async {
@@ -637,7 +681,9 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
                 ),
               ),
               const SizedBox(height: 26),
-              if (!_textMode) ...[
+              if (_pickedPhotoBytes != null)
+                _buildPhotoPreviewForm(theme)
+              else if (!_textMode) ...[
                 Material(
                   color: tokens.accent,
                   shape: const CircleBorder(),
@@ -742,6 +788,64 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildPhotoPreviewForm(ThemeData theme) {
+    return Column(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Image.memory(
+            _pickedPhotoBytes!,
+            height: 220,
+            width: double.infinity,
+            fit: BoxFit.cover,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const Key('story-answer-photo-caption'),
+          controller: _photoCaptionController,
+          maxLength: 300,
+          decoration: const InputDecoration(
+            hintText: 'Подпись к фото (необязательно)…',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                key: const Key('story-answer-photo-cancel'),
+                onPressed: _submitting
+                    ? null
+                    : () => setState(() {
+                          _pickedPhotoFile = null;
+                          _pickedPhotoBytes = null;
+                          _photoCaptionController.clear();
+                        }),
+                child: const Text('Другое'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                key: const Key('story-answer-photo-submit'),
+                onPressed: _submitting ? null : _submitPickedPhoto,
+                child: _submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Сохранить'),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 

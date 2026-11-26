@@ -206,115 +206,150 @@ class _ArticleAudioBlockState extends State<ArticleAudioBlock> {
         ? '${_fmt(displayPos)} / ${_fmt(total)}'
         : (totalSec != null ? _fmt(Duration(seconds: totalSec)) : '');
 
+    final transcript = widget.block.audioTranscript?.trim();
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.primary.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-          ),
-        ),
-        child: Row(
-          children: [
-            IconButton(
-              key: Key('article-audio-play-${widget.block.id}'),
-              onPressed: widget.busy ? null : _toggle,
-              icon: widget.busy
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      isPlaying
-                          ? Icons.pause_circle_filled_rounded
-                          : Icons.play_circle_fill_rounded,
-                      size: 34,
-                      color: theme.colorScheme.primary,
-                    ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+              ),
             ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Запись голоса',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontFamily: 'Lora',
-                      fontWeight: FontWeight.w700,
-                    ),
+            child: Row(
+              children: [
+                IconButton(
+                  key: Key('article-audio-play-${widget.block.id}'),
+                  onPressed: widget.busy ? null : _toggle,
+                  icon: widget.busy
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          isPlaying
+                              ? Icons.pause_circle_filled_rounded
+                              : Icons.play_circle_fill_rounded,
+                          size: 34,
+                          color: theme.colorScheme.primary,
+                        ),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Запись голоса',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontFamily: 'Lora',
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 3,
+                          activeTrackColor: theme.colorScheme.primary,
+                          inactiveTrackColor:
+                              theme.colorScheme.primary.withValues(alpha: 0.12),
+                          thumbColor: theme.colorScheme.primary,
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 6,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(
+                            overlayRadius: 12,
+                          ),
+                          trackShape: const RoundedRectSliderTrackShape(),
+                        ),
+                        child: Slider(
+                          key: Key('article-audio-seek-${widget.block.id}'),
+                          value: sliderMs,
+                          max: hasDuration ? maxMs : 1.0,
+                          // Drag updates the thumb locally (visual); release
+                          // seeks. Disabled until we know the duration, or
+                          // while a replace/patch is in flight.
+                          onChanged: !hasDuration || widget.busy
+                              ? null
+                              : (v) => setState(() => _dragMs = v),
+                          onChangeEnd: !hasDuration || widget.busy
+                              ? null
+                              : (v) async {
+                                  // Hold the thumb at the released value while
+                                  // the async seek runs; _seekTo commits it to
+                                  // _position and clears the drag together, so
+                                  // there's no snap-back-to-0 frame.
+                                  setState(() => _dragMs = v);
+                                  await _seekTo(
+                                    Duration(milliseconds: v.round()),
+                                  );
+                                },
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        timeLabel,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 3,
-                      activeTrackColor: theme.colorScheme.primary,
-                      inactiveTrackColor:
-                          theme.colorScheme.primary.withValues(alpha: 0.12),
-                      thumbColor: theme.colorScheme.primary,
-                      thumbShape:
-                          const RoundSliderThumbShape(enabledThumbRadius: 6),
-                      overlayShape:
-                          const RoundSliderOverlayShape(overlayRadius: 12),
-                      trackShape: const RoundedRectSliderTrackShape(),
-                    ),
-                    child: Slider(
-                      key: Key('article-audio-seek-${widget.block.id}'),
-                      value: sliderMs,
-                      max: hasDuration ? maxMs : 1.0,
-                      // Drag updates the thumb locally (visual); release
-                      // seeks. Disabled until we know the duration, or
-                      // while a replace/patch is in flight.
-                      onChanged: !hasDuration || widget.busy
-                          ? null
-                          : (v) => setState(() => _dragMs = v),
-                      onChangeEnd: !hasDuration || widget.busy
-                          ? null
-                          : (v) async {
-                              // Hold the thumb at the released value while
-                              // the async seek runs; _seekTo commits it to
-                              // _position and clears the drag together, so
-                              // there's no snap-back-to-0 frame.
-                              setState(() => _dragMs = v);
-                              await _seekTo(Duration(milliseconds: v.round()));
-                            },
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    timeLabel,
-                    style: theme.textTheme.bodySmall?.copyWith(
+                ),
+                if (!widget.readOnly)
+                  PopupMenuButton<String>(
+                    key: Key('article-audio-menu-${widget.block.id}'),
+                    tooltip: 'Действия с записью',
+                    enabled: !widget.busy,
+                    icon: Icon(
+                      Icons.more_vert_rounded,
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
+                    onSelected: (value) {
+                      if (value == 'replace') widget.onReplace?.call();
+                      if (value == 'delete') widget.onDelete?.call();
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                          value: 'replace', child: Text('Перезаписать')),
+                      PopupMenuItem(value: 'delete', child: Text('Удалить')),
+                    ],
                   ),
-                ],
+              ],
+            ),
+          ),
+          if (transcript != null && transcript.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Container(
+              key: Key('article-audio-transcript-${widget.block.id}'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.35,
+                  ),
+                ),
+              ),
+              child: Text(
+                transcript,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  height: 1.45,
+                  color: theme.colorScheme.onSurface,
+                ),
               ),
             ),
-            if (!widget.readOnly)
-              PopupMenuButton<String>(
-                key: Key('article-audio-menu-${widget.block.id}'),
-                tooltip: 'Действия с записью',
-                enabled: !widget.busy,
-                icon: Icon(
-                  Icons.more_vert_rounded,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                onSelected: (value) {
-                  if (value == 'replace') widget.onReplace?.call();
-                  if (value == 'delete') widget.onDelete?.call();
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'replace', child: Text('Перезаписать')),
-                  PopupMenuItem(value: 'delete', child: Text('Удалить')),
-                ],
-              ),
           ],
-        ),
+        ],
       ),
     );
   }

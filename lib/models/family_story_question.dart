@@ -84,3 +84,16 @@ String buildFamilyStoryEditorHint(FamilyStoryQuestion question) {
       'Когда родственник ответит, вставьте сюда текст или нажмите '
       '«Голос» и надиктуйте историю.';
 }
+
+String buildFamilyStoryGuestLinkShareMessage({
+  required String questionText,
+  required String personName,
+  required String shareUrl,
+}) {
+  final cleanName = personName.trim();
+  final cleanQuestion = questionText.trim();
+  return 'Привет! Я собираю семейные истории в Родне про $cleanName.\n\n'
+      'Вопрос: «$cleanQuestion»\n\n'
+      'Можно надиктовать голосом, прикрепить фото или написать по этой ссылке '
+      '(регистрация не нужна):\n$shareUrl';
+}

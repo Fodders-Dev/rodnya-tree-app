@@ -91,7 +91,9 @@ class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
   Future<StoryRequest?> createStoryRequest({
     required String treeId,
     required String personId,
-    required String targetUserId,
+    String? targetUserId,
+    String deliveryMode = 'in_app',
+    String? targetName,
     required StoryRequestQuestion question,
   }) async {
     throw UnimplementedError('not used by the answer screen');
@@ -150,9 +152,12 @@ StoryRequest _pendingRequest({String question = 'Кто на фото?'}) {
     status: StoryRequestStatus.pending,
     createdAt: '2026-09-13T10:00:00Z',
     expiresAt: '2026-10-13T10:00:00Z',
-    person: const StoryRequestPersonSummary(id: 'person-1', displayName: 'Лида'),
-    requester: const StoryRequestPersonSummary(id: 'u-initiator', displayName: 'Артём'),
-    target: const StoryRequestPersonSummary(id: 'u-target', displayName: 'Лида'),
+    person:
+        const StoryRequestPersonSummary(id: 'person-1', displayName: 'Лида'),
+    requester: const StoryRequestPersonSummary(
+        id: 'u-initiator', displayName: 'Артём'),
+    target:
+        const StoryRequestPersonSummary(id: 'u-target', displayName: 'Лида'),
   );
 }
 
@@ -233,11 +238,13 @@ void main() {
     expect(service.calls.contains('answer:audio'), true);
     expect(service.lastAnswer?.mediaUrl, 'https://audio/story-answer.m4a');
     expect(service.lastAnswer?.durationSec, 12);
-    expect(find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
+    expect(
+        find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
     expect(find.textContaining('Артём'), findsWidgets);
   });
 
-  testWidgets('«Прислать фото» → pick → upload → answerStoryRequest(photo)',
+  testWidgets(
+      '«Прислать фото» → pick → preview+caption → upload → answerStoryRequest(photo)',
       (tester) async {
     final service = _FakeStoryRequestService(_pendingRequest());
     final storage = _FakeStorage();
@@ -246,9 +253,77 @@ void main() {
       service: service,
       storage: storage,
       pickImageOverride: (_) async => XFile.fromData(
-        Uint8List.fromList(const [1, 2, 3]),
-        name: 'photo.jpg',
-        mimeType: 'image/jpeg',
+        Uint8List.fromList(const [
+          0x89,
+          0x50,
+          0x4E,
+          0x47,
+          0x0D,
+          0x0A,
+          0x1A,
+          0x0A,
+          0x00,
+          0x00,
+          0x00,
+          0x0D,
+          0x49,
+          0x48,
+          0x44,
+          0x52,
+          0x00,
+          0x00,
+          0x00,
+          0x01,
+          0x00,
+          0x00,
+          0x00,
+          0x01,
+          0x08,
+          0x06,
+          0x00,
+          0x00,
+          0x00,
+          0x1F,
+          0x15,
+          0xC4,
+          0x89,
+          0x00,
+          0x00,
+          0x00,
+          0x0A,
+          0x49,
+          0x44,
+          0x41,
+          0x54,
+          0x78,
+          0x9C,
+          0x63,
+          0x00,
+          0x01,
+          0x00,
+          0x00,
+          0x05,
+          0x00,
+          0x01,
+          0x0D,
+          0x0A,
+          0x2D,
+          0xB4,
+          0x00,
+          0x00,
+          0x00,
+          0x00,
+          0x49,
+          0x45,
+          0x4E,
+          0x44,
+          0xAE,
+          0x42,
+          0x60,
+          0x82,
+        ]),
+        name: 'photo.png',
+        mimeType: 'image/png',
       ),
     );
 
@@ -257,13 +332,24 @@ void main() {
     await tester.tap(find.byKey(const Key('story-answer-photo-gallery')));
     await tester.pumpAndSettle();
 
+    expect(storage.uploadImageCalls, 0);
+    await tester.enterText(
+      find.byKey(const Key('story-answer-photo-caption')),
+      'Лето 1982 года',
+    );
+    await tester.tap(find.byKey(const Key('story-answer-photo-submit')));
+    await tester.pumpAndSettle();
+
     expect(storage.uploadImageCalls, 1);
     expect(service.calls.contains('answer:photo'), true);
     expect(service.lastAnswer?.mediaUrl, 'https://img/story-photo.jpg');
-    expect(find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
+    expect(service.lastAnswer?.caption, 'Лето 1982 года');
+    expect(
+        find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
   });
 
-  testWidgets('«Написать текстом» → type → «Сохранить» → answerStoryRequest(text)',
+  testWidgets(
+      '«Написать текстом» → type → «Сохранить» → answerStoryRequest(text)',
       (tester) async {
     final service = _FakeStoryRequestService(_pendingRequest());
     await _pumpScreen(tester, service: service);
@@ -286,7 +372,8 @@ void main() {
 
     expect(service.calls.contains('answer:text'), true);
     expect(service.lastAnswer?.text, 'Это моя история.');
-    expect(find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
+    expect(
+        find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
   });
 
   testWidgets('«Не хочу отвечать» → confirm → declineStoryRequest → terminal',
@@ -296,13 +383,15 @@ void main() {
 
     await tester.tap(find.byKey(const Key('story-answer-decline')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('story-answer-decline-confirm')), findsOneWidget);
+    expect(
+        find.byKey(const Key('story-answer-decline-confirm')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('story-answer-decline-confirm')));
     await tester.pumpAndSettle();
 
     expect(service.calls.contains('decline'), true);
-    expect(find.byKey(const Key('story-answer-terminal-message')), findsOneWidget);
+    expect(
+        find.byKey(const Key('story-answer-terminal-message')), findsOneWidget);
   });
 
   testWidgets(
@@ -312,7 +401,8 @@ void main() {
       tester.view.devicePixelRatio = 3;
       addTearDown(tester.view.reset);
 
-      final service = _FakeStoryRequestService(_pendingRequest(question: 'Кто на фото?'));
+      final service =
+          _FakeStoryRequestService(_pendingRequest(question: 'Кто на фото?'));
       await _pumpScreen(tester, service: service);
 
       final micSize = tester.getSize(find.byKey(const Key('story-answer-mic')));
@@ -331,7 +421,8 @@ void main() {
       );
       expect(textModeLabel.style?.fontSize, greaterThanOrEqualTo(16));
 
-      final skipRect = tester.getRect(find.byKey(const Key('story-answer-skip')));
+      final skipRect =
+          tester.getRect(find.byKey(const Key('story-answer-skip')));
       final declineRect =
           tester.getRect(find.byKey(const Key('story-answer-decline')));
       expect(

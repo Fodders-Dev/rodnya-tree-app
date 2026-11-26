@@ -8,6 +8,7 @@ enum FamilyStoryQuestionActionType {
   share,
   saveAnswer,
   requestSent,
+  guestLinkCreated,
 }
 
 class FamilyStoryQuestionAction {
@@ -49,17 +50,12 @@ Future<FamilyStoryQuestionAction?> showFamilyStoryQuestionsSheet(
   BuildContext context, {
   required String personName,
   String? relation,
-  // MVP-1 «Спросить историю» (STORY-REQUEST-MVP1-BRIEF.md §3.3): when the
-  // backend can create story-requests AND there is at least one addressee
-  // with an account, the sheet gains a «Кого спросить» step that sends an
-  // in-app request instead of only offering system share. Leaving these
-  // unset (or an empty askTargets) reproduces the pre-MVP-1 sheet byte
-  // for byte — just the two original buttons, no new step.
   StoryRequestCapableFamilyTreeService? storyRequestService,
   String? treeId,
   String? personId,
   List<FamilyStoryAskTarget> askTargets = const <FamilyStoryAskTarget>[],
   bool canSaveAnswer = true,
+  bool canCreateGuestLink = false,
 }) {
   return showModalBottomSheet<FamilyStoryQuestionAction>(
     context: context,
@@ -73,11 +69,12 @@ Future<FamilyStoryQuestionAction?> showFamilyStoryQuestionsSheet(
       personId: personId,
       askTargets: askTargets,
       canSaveAnswer: canSaveAnswer,
+      canCreateGuestLink: canCreateGuestLink,
     ),
   );
 }
 
-enum _Step { question, target }
+enum _Step { question, target, guestLink }
 
 class _FamilyStoryQuestionsSheet extends StatefulWidget {
   const _FamilyStoryQuestionsSheet({
@@ -88,6 +85,7 @@ class _FamilyStoryQuestionsSheet extends StatefulWidget {
     this.personId,
     this.askTargets = const <FamilyStoryAskTarget>[],
     this.canSaveAnswer = true,
+    this.canCreateGuestLink = false,
   });
 
   final String personName;
@@ -97,6 +95,7 @@ class _FamilyStoryQuestionsSheet extends StatefulWidget {
   final String? personId;
   final List<FamilyStoryAskTarget> askTargets;
   final bool canSaveAnswer;
+  final bool canCreateGuestLink;
 
   @override
   State<_FamilyStoryQuestionsSheet> createState() =>
@@ -107,9 +106,28 @@ class _FamilyStoryQuestionsSheetState
     extends State<_FamilyStoryQuestionsSheet> {
   FamilyStoryQuestion _selected = familyStoryQuestions.first;
   _Step _step = _Step.question;
+  bool _useCustomQuestion = false;
+  final TextEditingController _customQuestionController =
+      TextEditingController();
+  final TextEditingController _guestNameController = TextEditingController();
   String? _selectedTargetUserId;
   bool _sending = false;
   String? _sendError;
+
+  @override
+  void initState() {
+    super.initState();
+    _customQuestionController.addListener(() {
+      if (mounted && _useCustomQuestion) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _customQuestionController.dispose();
+    _guestNameController.dispose();
+    super.dispose();
+  }
 
   bool get _canRequest =>
       widget.storyRequestService != null &&
@@ -117,17 +135,45 @@ class _FamilyStoryQuestionsSheetState
       (widget.personId ?? '').isNotEmpty &&
       widget.askTargets.isNotEmpty;
 
+  bool get _canGuestLink =>
+      widget.storyRequestService != null &&
+      (widget.treeId ?? '').isNotEmpty &&
+      (widget.personId ?? '').isNotEmpty &&
+      widget.canCreateGuestLink;
+
+  bool get _isQuestionValid {
+    if (!_useCustomQuestion) return true;
+    final len = _customQuestionController.text.trim().length;
+    return len >= 3 && len <= 500;
+  }
+
+  FamilyStoryQuestion get _effectiveQuestion {
+    if (!_useCustomQuestion) return _selected;
+    return FamilyStoryQuestion(
+      id: 'custom',
+      title: 'Свой вопрос',
+      question: _customQuestionController.text.trim(),
+      context: '',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return _step == _Step.target
-        ? _buildTargetStep(context)
-        : _buildQuestionStep(context);
+    switch (_step) {
+      case _Step.target:
+        return _buildTargetStep(context);
+      case _Step.guestLink:
+        return _buildGuestLinkStep(context);
+      case _Step.question:
+        return _buildQuestionStep(context);
+    }
   }
 
   Widget _buildQuestionStep(BuildContext context) {
     final theme = Theme.of(context);
+    final effectiveQuestion = _effectiveQuestion;
     final message = buildFamilyStoryShareMessage(
-      question: _selected,
+      question: effectiveQuestion,
       personName: widget.personName,
       relation: widget.relation,
     );
@@ -148,65 +194,148 @@ class _FamilyStoryQuestionsSheetState
               ),
               const SizedBox(height: 6),
               Text(
-                'Выберите вопрос. Родня подготовит сообщение, а ответ '
-                'можно сохранить в карточке человека.',
+                'Выберите вопрос или напишите свой — ответ сохранится в карточке человека.',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                   height: 1.35,
                 ),
               ),
-              const SizedBox(height: 14),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: familyStoryQuestions.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final question = familyStoryQuestions[index];
-                    return _QuestionTile(
-                      question: question,
-                      selected: question.id == _selected.id,
-                      onTap: () => setState(() => _selected = question),
-                    );
-                  },
-                ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ChoiceChip(
+                    key: const Key('family-story-mode-presets'),
+                    label: const Text('Готовые темы'),
+                    selected: !_useCustomQuestion,
+                    onSelected: (_) =>
+                        setState(() => _useCustomQuestion = false),
+                  ),
+                  ChoiceChip(
+                    key: const Key('family-story-mode-custom'),
+                    label: const Text('Свой вопрос'),
+                    selected: _useCustomQuestion,
+                    onSelected: (_) =>
+                        setState(() => _useCustomQuestion = true),
+                  ),
+                ],
               ),
-              const SizedBox(height: 14),
-              _MessagePreview(message: message),
+              const SizedBox(height: 10),
+              Expanded(
+                child: _useCustomQuestion
+                    ? SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            TextField(
+                              key: const Key(
+                                  'family-story-custom-question-field'),
+                              controller: _customQuestionController,
+                              minLines: 3,
+                              maxLines: 6,
+                              maxLength: 500,
+                              decoration: InputDecoration(
+                                hintText:
+                                    'Например: Каким был первый дом семьи и что там запомнилось больше всего?',
+                                border: const OutlineInputBorder(),
+                                helperText: _isQuestionValid
+                                    ? null
+                                    : 'Минимум 3 символа',
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: familyStoryQuestions.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final question = familyStoryQuestions[index];
+                          return _QuestionTile(
+                            question: question,
+                            selected: question.id == _selected.id,
+                            onTap: () => setState(() => _selected = question),
+                          );
+                        },
+                      ),
+              ),
               const SizedBox(height: 12),
-              if (_canRequest) ...[
+              if (!_useCustomQuestion) ...[
+                _MessagePreview(message: message),
+                const SizedBox(height: 12),
+              ],
+              if (_canGuestLink) ...[
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    key: const Key('family-story-ask-in-app'),
-                    onPressed: () => setState(() => _step = _Step.target),
-                    icon: const Icon(Icons.forum_outlined, size: 18),
-                    label: const Text('Спросить в Родне'),
+                    key: const Key('family-story-create-guest-link'),
+                    onPressed: _isQuestionValid
+                        ? () => setState(() {
+                              _sendError = null;
+                              _step = _Step.guestLink;
+                            })
+                        : null,
+                    icon: const Icon(Icons.link_rounded, size: 18),
+                    label: const Text('Отправить ссылкой (без регистрации)'),
                   ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              if (_canRequest) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: _canGuestLink
+                      ? OutlinedButton.icon(
+                          key: const Key('family-story-ask-in-app'),
+                          onPressed: _isQuestionValid
+                              ? () => setState(() {
+                                    _sendError = null;
+                                    _step = _Step.target;
+                                  })
+                              : null,
+                          icon: const Icon(Icons.forum_outlined, size: 18),
+                          label: const Text('Спросить в Родне'),
+                        )
+                      : FilledButton.icon(
+                          key: const Key('family-story-ask-in-app'),
+                          onPressed: _isQuestionValid
+                              ? () => setState(() {
+                                    _sendError = null;
+                                    _step = _Step.target;
+                                  })
+                              : null,
+                          icon: const Icon(Icons.forum_outlined, size: 18),
+                          label: const Text('Спросить в Родне'),
+                        ),
                 ),
                 const SizedBox(height: 8),
               ],
               SizedBox(
                 width: double.infinity,
-                child: _canRequest
+                child: (_canRequest || _canGuestLink)
                     ? OutlinedButton.icon(
                         key: const Key('family-story-share-question'),
-                        onPressed: () => Navigator.of(context).pop(
-                          FamilyStoryQuestionAction(
-                            type: FamilyStoryQuestionActionType.share,
-                            question: _selected,
-                          ),
-                        ),
+                        onPressed: _isQuestionValid
+                            ? () => Navigator.of(context).pop(
+                                  FamilyStoryQuestionAction(
+                                    type: FamilyStoryQuestionActionType.share,
+                                    question: effectiveQuestion,
+                                  ),
+                                )
+                            : null,
                         icon: const Icon(Icons.ios_share_outlined, size: 18),
                         label: const Text('Поделиться текстом'),
                       )
                     : FilledButton.icon(
                         key: const Key('family-story-share-question'),
-                        onPressed: () => Navigator.of(context).pop(
-                          FamilyStoryQuestionAction(
-                            type: FamilyStoryQuestionActionType.share,
-                            question: _selected,
-                          ),
-                        ),
+                        onPressed: _isQuestionValid
+                            ? () => Navigator.of(context).pop(
+                                  FamilyStoryQuestionAction(
+                                    type: FamilyStoryQuestionActionType.share,
+                                    question: effectiveQuestion,
+                                  ),
+                                )
+                            : null,
                         icon: const Icon(Icons.ios_share_outlined, size: 18),
                         label: const Text('Отправить вопрос'),
                       ),
@@ -217,17 +346,113 @@ class _FamilyStoryQuestionsSheetState
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     key: const Key('family-story-save-answer'),
-                    onPressed: () => Navigator.of(context).pop(
-                      FamilyStoryQuestionAction(
-                        type: FamilyStoryQuestionActionType.saveAnswer,
-                        question: _selected,
-                      ),
-                    ),
+                    onPressed: _isQuestionValid
+                        ? () => Navigator.of(context).pop(
+                              FamilyStoryQuestionAction(
+                                type: FamilyStoryQuestionActionType.saveAnswer,
+                                question: effectiveQuestion,
+                              ),
+                            )
+                        : null,
                     icon: const Icon(Icons.auto_stories_outlined, size: 18),
                     label: const Text('Сохранить ответ'),
                   ),
                 ),
               ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGuestLinkStep(BuildContext context) {
+    final theme = Theme.of(context);
+    final q = _effectiveQuestion;
+    return SafeArea(
+      child: FractionallySizedBox(
+        heightFactor: 0.72,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    key: const Key('family-story-guest-back'),
+                    onPressed: _sending
+                        ? null
+                        : () => setState(() => _step = _Step.question),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'Ссылка для ответа',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontFamily: 'Lora',
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '«${q.question}»',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontStyle: FontStyle.italic,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                key: const Key('family-story-guest-name-field'),
+                controller: _guestNameController,
+                enabled: !_sending,
+                maxLength: 120,
+                decoration: const InputDecoration(
+                  labelText: 'Кому отправите ссылку? (необязательно)',
+                  hintText: 'Например: Бабушка Лида или дядя Саша',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Человек сможет надиктовать ответ голосом, приложить фото или написать текст прямо в браузере без регистрации.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  height: 1.35,
+                ),
+              ),
+              if (_sendError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _sendError!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  key: const Key('family-story-send-guest-link'),
+                  onPressed: _sending ? null : _createGuestLink,
+                  icon: _sending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.share_rounded, size: 18),
+                  label: Text(_sending ? 'Создаём ссылку…' : 'Создать ссылку'),
+                ),
+              ),
             ],
           ),
         ),
@@ -268,7 +493,7 @@ class _FamilyStoryQuestionsSheetState
               Padding(
                 padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
                 child: Text(
-                  '«${_selected.question}»',
+                  '«${_effectiveQuestion.question}»',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                     fontStyle: FontStyle.italic,
@@ -344,6 +569,7 @@ class _FamilyStoryQuestionsSheetState
       (t) => t.userId == targetUserId,
       orElse: () => widget.askTargets.first,
     );
+    final effectiveQuestion = _effectiveQuestion;
     setState(() {
       _sending = true;
       _sendError = null;
@@ -354,8 +580,9 @@ class _FamilyStoryQuestionsSheetState
         personId: personId,
         targetUserId: targetUserId,
         question: StoryRequestQuestion(
-          text: _selected.question,
-          sourceQuestionId: _selected.id,
+          text: effectiveQuestion.question,
+          sourceQuestionId:
+              effectiveQuestion.id == 'custom' ? null : effectiveQuestion.id,
         ),
       );
       if (!mounted) return;
@@ -372,7 +599,7 @@ class _FamilyStoryQuestionsSheetState
       Navigator.of(context).pop(
         FamilyStoryQuestionAction(
           type: FamilyStoryQuestionActionType.requestSent,
-          question: _selected,
+          question: effectiveQuestion,
           request: created,
         ),
       );
@@ -387,6 +614,59 @@ class _FamilyStoryQuestionsSheetState
       setState(() {
         _sending = false;
         _sendError = 'Не удалось отправить вопрос. Попробуйте ещё раз.';
+      });
+    }
+  }
+
+  Future<void> _createGuestLink() async {
+    final service = widget.storyRequestService;
+    final treeId = widget.treeId;
+    final personId = widget.personId;
+    if (service == null || treeId == null || personId == null) return;
+    final effectiveQuestion = _effectiveQuestion;
+    final targetName = _guestNameController.text.trim();
+    setState(() {
+      _sending = true;
+      _sendError = null;
+    });
+    try {
+      final created = await service.createStoryRequest(
+        treeId: treeId,
+        personId: personId,
+        deliveryMode: 'public_link',
+        targetName: targetName.isEmpty ? null : targetName,
+        question: StoryRequestQuestion(
+          text: effectiveQuestion.question,
+          sourceQuestionId:
+              effectiveQuestion.id == 'custom' ? null : effectiveQuestion.id,
+        ),
+      );
+      if (!mounted) return;
+      if (created == null || (created.shareUrl ?? '').isEmpty) {
+        setState(() {
+          _sending = false;
+          _sendError = 'Не удалось создать ссылку. Попробуйте ещё раз.';
+        });
+        return;
+      }
+      Navigator.of(context).pop(
+        FamilyStoryQuestionAction(
+          type: FamilyStoryQuestionActionType.guestLinkCreated,
+          question: effectiveQuestion,
+          request: created,
+        ),
+      );
+    } on StoryRequestError catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _sendError = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _sendError = 'Не удалось создать ссылку. Попробуйте ещё раз.';
       });
     }
   }

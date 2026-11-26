@@ -94,15 +94,34 @@ class ArticleReadView extends StatelessWidget {
     final dateSuffix = askedAt == null
         ? ''
         : ', ${DateFormat('d MMMM', 'ru').format(toLocalForDisplay(askedAt))}';
+    final respondent = source.respondentName?.trim();
+    final respondentSuffix = (respondent != null && respondent.isNotEmpty)
+        ? ' · Ответил(а): $respondent'
+        : '';
+    final questionText = source.question.text.trim();
     return Padding(
       key: Key('article-source-${source.requestId}'),
-      padding: const EdgeInsets.only(top: 2, bottom: 4),
-      child: Text(
-        'Ответ на вопрос$who$dateSuffix',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-          fontStyle: FontStyle.italic,
-        ),
+      padding: const EdgeInsets.only(top: 2, bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (questionText.length > 1) ...[
+            Text(
+              'Вопрос: «$questionText»',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 1),
+          ],
+          Text(
+            'Ответ на вопрос$who$dateSuffix$respondentSuffix',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
       ),
     );
   }

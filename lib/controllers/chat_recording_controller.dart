@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 import '../utils/voice_waveform.dart';
+import '../utils/web_audio_format.dart';
 
 enum ChatRecordingState {
   idle,
@@ -126,8 +127,9 @@ class ChatRecordingController extends ChangeNotifier {
 
     final recordingPath = await _buildRecordingPath();
     if (_disposed) return;
+    final webFormat = resolvePreferredWebAudioFormat();
     final resolvedPath = recordingPath ??
-        'voice_note_${DateTime.now().millisecondsSinceEpoch}.webm';
+        'voice_note_${DateTime.now().millisecondsSinceEpoch}.${webFormat.extension}';
     _preview = null;
     _amplitudeSamples.clear();
     _durationSeconds = 0;
@@ -137,7 +139,13 @@ class ChatRecordingController extends ChangeNotifier {
     // запись не шла). На ошибке — чистим частичный файл и в idle.
     try {
       await _recorder.start(
-        const RecordConfig(),
+        kIsWeb
+            ? RecordConfig(
+                encoder: webFormat.mimeType == 'audio/mp4'
+                    ? AudioEncoder.aacLc
+                    : AudioEncoder.opus,
+              )
+            : const RecordConfig(),
         path: resolvedPath,
       );
     } catch (error) {
@@ -248,14 +256,15 @@ class ChatRecordingController extends ChangeNotifier {
     }
     if (_disposed) return;
 
+    final webFormat = resolvePreferredWebAudioFormat();
     final fileName = kIsWeb
-        ? 'voice_note_${recordedDuration}s_${DateTime.now().millisecondsSinceEpoch}.webm'
+        ? 'voice_note_${recordedDuration}s_${DateTime.now().millisecondsSinceEpoch}.${webFormat.extension}'
         : 'voice_note_${recordedDuration}s_${DateTime.now().millisecondsSinceEpoch}'
             '${path.extension(recordedPath).trim().isNotEmpty ? path.extension(recordedPath).trim() : '.m4a'}';
     _preview = ChatRecordingPreview(
       path: recordedPath,
       fileName: fileName,
-      mimeType: kIsWeb ? 'audio/webm' : 'audio/m4a',
+      mimeType: kIsWeb ? webFormat.mimeType : 'audio/mp4',
       durationSeconds: recordedDuration,
       waveform: waveform,
     );

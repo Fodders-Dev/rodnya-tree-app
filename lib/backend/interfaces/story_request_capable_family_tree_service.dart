@@ -33,7 +33,9 @@ abstract class StoryRequestCapableFamilyTreeService {
   Future<StoryRequest?> createStoryRequest({
     required String treeId,
     required String personId,
-    required String targetUserId,
+    String? targetUserId,
+    String deliveryMode = 'in_app',
+    String? targetName,
     required StoryRequestQuestion question,
   });
 

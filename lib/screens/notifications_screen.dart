@@ -7,12 +7,16 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/story_request_capable_family_tree_service.dart';
 import '../models/app_notification_item.dart';
 import '../models/family_tree.dart';
+import '../models/story_request.dart';
 import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_notification_service.dart';
 import '../services/notifications_cache.dart';
+import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 
 IconData _notificationIconForType(String type) {
@@ -137,12 +141,14 @@ class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({
     super.key,
     this.notificationLoader,
+    this.pendingStoryRequestsLoader,
     this.onOpenNotification,
     this.onMarkNotificationRead,
     this.onMarkAllNotificationsRead,
   });
 
   final Future<List<AppNotificationItem>> Function()? notificationLoader;
+  final Future<List<StoryRequest>> Function()? pendingStoryRequestsLoader;
   final ValueChanged<AppNotificationItem>? onOpenNotification;
   final Future<void> Function(AppNotificationItem item)? onMarkNotificationRead;
   final Future<void> Function(List<AppNotificationItem> items)?
@@ -159,6 +165,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   bool _isMutating = false;
   Object? _loadError;
   List<AppNotificationItem> _notifications = const <AppNotificationItem>[];
+  List<StoryRequest> _pendingStoryRequests = const <StoryRequest>[];
 
   /// Секция «Ранее»: прочитанная история страницами (keyset-cursor
   /// бэкенда). После «Прочитать всё» уведомления не исчезают в пустоту —
@@ -222,6 +229,32 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return notificationService.fetchUnreadNotifications();
   }
 
+  Future<List<StoryRequest>> _loadPendingStoryRequests() async {
+    final customLoader = widget.pendingStoryRequestsLoader;
+    if (customLoader != null) {
+      return customLoader();
+    }
+    if (widget.notificationLoader != null) {
+      return const <StoryRequest>[];
+    }
+    if (!GetIt.I.isRegistered<FamilyTreeServiceInterface>()) {
+      return const <StoryRequest>[];
+    }
+    final svc = GetIt.I<FamilyTreeServiceInterface>();
+    if (svc is! StoryRequestCapableFamilyTreeService) {
+      return const <StoryRequest>[];
+    }
+    try {
+      return await (svc as StoryRequestCapableFamilyTreeService)
+          .listStoryRequests(
+        role: 'received',
+        status: StoryRequestStatus.pending,
+      );
+    } catch (_) {
+      return const <StoryRequest>[];
+    }
+  }
+
   Future<void> _refresh() async {
     setState(() {
       _isLoading = true;
@@ -229,7 +262,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     });
 
     try {
-      final notifications = await _loadNotifications();
+      final results = await Future.wait([
+        _loadNotifications(),
+        _loadPendingStoryRequests(),
+      ]);
+      final notifications = results[0] as List<AppNotificationItem>;
+      final pendingRequests = results[1] as List<StoryRequest>;
       if (!mounted) {
         return;
       }
@@ -238,6 +276,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       unawaited(_notificationsCache?.write(notifications));
       setState(() {
         _notifications = notifications;
+        _pendingStoryRequests = pendingRequests;
         _readHistory = const <AppNotificationItem>[];
         _readHistoryCursor = null;
         _readHistoryExhausted = false;
@@ -522,6 +561,67 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  Widget _buildPendingStoryRequestsCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = AppTheme.tokensOf(context);
+    return Container(
+      key: const Key('notifications-story-inbox'),
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: tokens.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.auto_stories_outlined,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Вопросы о родных · ${_pendingStoryRequests.length}',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final req in _pendingStoryRequests)
+            ListTile(
+              key: Key('notifications-story-request-${req.id}'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(
+                req.question.text,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                'От: ${req.requester?.displayName ?? 'Родной'} · О ком: ${req.person?.displayName ?? 'близкий'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () async {
+                await context.push('/story-requests/${req.id}/answer');
+                if (mounted) unawaited(_refresh());
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody({
     required bool isFriendsTree,
     required String graphLabel,
@@ -561,7 +661,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       );
     }
 
-    if (_notifications.isEmpty && _readHistory.isEmpty) {
+    if (_notifications.isEmpty &&
+        _readHistory.isEmpty &&
+        _pendingStoryRequests.isEmpty) {
       return _NotificationsMessageState(
         icon: Icons.notifications_none,
         title: 'Пока нет новых уведомлений',
@@ -604,18 +706,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _notificationService != null;
     // Overview-карта имеет смысл только при непрочитанных: после
     // «прочитать всё» экран открывается сразу историей.
+    final storyInboxCount = _pendingStoryRequests.isEmpty ? 0 : 1;
     final headerCount = _notifications.isEmpty ? 0 : 1;
     final listView = ListView.separated(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      itemCount: unreadEntries.length +
+      itemCount: storyInboxCount +
+          unreadEntries.length +
           headerCount +
           historyBlockCount +
           (showHistoryLoader ? 1 : 0),
       // Плотность: строки разделяет волосяная линия внутри строки, а не
       // 12dp воздуха между «плитками».
       separatorBuilder: (_, __) => const SizedBox.shrink(),
-      itemBuilder: (context, index) {
+      itemBuilder: (context, rawIndex) {
+        if (storyInboxCount > 0 && rawIndex == 0) {
+          return _buildPendingStoryRequestsCard(context);
+        }
+        final index = rawIndex - storyInboxCount;
         if (headerCount > 0 && index == 0) {
           return _NotificationsOverviewCard(
             totalCount: _notifications.length,

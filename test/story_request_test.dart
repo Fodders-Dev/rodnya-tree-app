@@ -8,31 +8,44 @@ import 'package:rodnya/models/story_request.dart';
 void main() {
   group('StoryRequestStatus.fromServerValue', () {
     test('maps known values', () {
-      expect(StoryRequestStatus.fromServerValue('pending'), StoryRequestStatus.pending);
-      expect(StoryRequestStatus.fromServerValue('answered'), StoryRequestStatus.answered);
-      expect(StoryRequestStatus.fromServerValue('declined'), StoryRequestStatus.declined);
-      expect(StoryRequestStatus.fromServerValue('expired'), StoryRequestStatus.expired);
-      expect(StoryRequestStatus.fromServerValue('revoked'), StoryRequestStatus.revoked);
+      expect(StoryRequestStatus.fromServerValue('pending'),
+          StoryRequestStatus.pending);
+      expect(StoryRequestStatus.fromServerValue('answered'),
+          StoryRequestStatus.answered);
+      expect(StoryRequestStatus.fromServerValue('declined'),
+          StoryRequestStatus.declined);
+      expect(StoryRequestStatus.fromServerValue('expired'),
+          StoryRequestStatus.expired);
+      expect(StoryRequestStatus.fromServerValue('revoked'),
+          StoryRequestStatus.revoked);
     });
 
     test('round-trips serverValue', () {
       for (final s in StoryRequestStatus.values) {
-        expect(StoryRequestStatus.fromServerValue(s.serverValue), s, reason: s.name);
+        expect(StoryRequestStatus.fromServerValue(s.serverValue), s,
+            reason: s.name);
       }
     });
 
     test('defaults к unknown для незнакомых значений', () {
-      expect(StoryRequestStatus.fromServerValue('weird'), StoryRequestStatus.unknown);
-      expect(StoryRequestStatus.fromServerValue(null), StoryRequestStatus.unknown);
+      expect(StoryRequestStatus.fromServerValue('weird'),
+          StoryRequestStatus.unknown);
+      expect(
+          StoryRequestStatus.fromServerValue(null), StoryRequestStatus.unknown);
     });
   });
 
   group('StoryRequestAnswerKind.fromServerValue', () {
-    test('maps audio|text|photo, video falls back to unknown (§0.4 — MVP-2)', () {
-      expect(StoryRequestAnswerKind.fromServerValue('audio'), StoryRequestAnswerKind.audio);
-      expect(StoryRequestAnswerKind.fromServerValue('text'), StoryRequestAnswerKind.text);
-      expect(StoryRequestAnswerKind.fromServerValue('photo'), StoryRequestAnswerKind.photo);
-      expect(StoryRequestAnswerKind.fromServerValue('video'), StoryRequestAnswerKind.unknown);
+    test('maps audio|text|photo, video falls back to unknown (§0.4 — MVP-2)',
+        () {
+      expect(StoryRequestAnswerKind.fromServerValue('audio'),
+          StoryRequestAnswerKind.audio);
+      expect(StoryRequestAnswerKind.fromServerValue('text'),
+          StoryRequestAnswerKind.text);
+      expect(StoryRequestAnswerKind.fromServerValue('photo'),
+          StoryRequestAnswerKind.photo);
+      expect(StoryRequestAnswerKind.fromServerValue('video'),
+          StoryRequestAnswerKind.unknown);
     });
   });
 
@@ -80,7 +93,9 @@ void main() {
       expect(r.question.sourceQuestionId, 'grandparents_met');
     });
 
-    test('parses answered request с answer + person/requester/target attachments', () {
+    test(
+        'parses answered request с answer + person/requester/target attachments',
+        () {
       final r = StoryRequest.fromJson({
         'id': 'sreq-3',
         'treeId': 't',
@@ -99,7 +114,11 @@ void main() {
         'updatedAt': 'u',
         'expiresAt': 'e',
         'respondedAt': '2026-09-13T11:00:00Z',
-        'person': {'id': 'p-1', 'name': 'Лида', 'photoUrl': 'https://x/lida.jpg'},
+        'person': {
+          'id': 'p-1',
+          'name': 'Лида',
+          'photoUrl': 'https://x/lida.jpg'
+        },
         'requester': {'id': 'u-a', 'displayName': 'Артём'},
         'target': {'id': 'u-b', 'displayName': 'Лида'},
       });
@@ -115,7 +134,8 @@ void main() {
       expect(r.target?.displayName, 'Лида');
     });
 
-    test('person summary reads `name` key, requester/target read `displayName`', () {
+    test('person summary reads `name` key, requester/target read `displayName`',
+        () {
       final r = StoryRequest.fromJson({
         'id': 'sreq-4',
         'treeId': 't',
@@ -136,8 +156,11 @@ void main() {
 
   group('StoryRequestAnswerInput.toJson', () {
     test('audio payload', () {
-      final json = StoryRequestAnswerInput.audio(mediaUrl: 'https://a', durationSec: 30).toJson();
-      expect(json, {'kind': 'audio', 'mediaUrl': 'https://a', 'durationSec': 30});
+      final json =
+          StoryRequestAnswerInput.audio(mediaUrl: 'https://a', durationSec: 30)
+              .toJson();
+      expect(
+          json, {'kind': 'audio', 'mediaUrl': 'https://a', 'durationSec': 30});
     });
 
     test('text payload', () {
@@ -146,11 +169,14 @@ void main() {
     });
 
     test('photo payload — caption omitted when blank', () {
-      final withCaption =
-          StoryRequestAnswerInput.photo(mediaUrl: 'https://p', caption: '  Подпись  ').toJson();
-      expect(withCaption, {'kind': 'photo', 'mediaUrl': 'https://p', 'caption': 'Подпись'});
+      final withCaption = StoryRequestAnswerInput.photo(
+              mediaUrl: 'https://p', caption: '  Подпись  ')
+          .toJson();
+      expect(withCaption,
+          {'kind': 'photo', 'mediaUrl': 'https://p', 'caption': 'Подпись'});
 
-      final withoutCaption = StoryRequestAnswerInput.photo(mediaUrl: 'https://p').toJson();
+      final withoutCaption =
+          StoryRequestAnswerInput.photo(mediaUrl: 'https://p').toJson();
       expect(withoutCaption, {'kind': 'photo', 'mediaUrl': 'https://p'});
     });
   });
@@ -162,13 +188,16 @@ void main() {
         {'text': 'Q'},
       );
       expect(
-        const StoryRequestQuestion(text: 'Q', themeKey: 'k', sourceQuestionId: 's').toJson(),
+        const StoryRequestQuestion(
+                text: 'Q', themeKey: 'k', sourceQuestionId: 's')
+            .toJson(),
         {'text': 'Q', 'themeKey': 'k', 'sourceQuestionId': 's'},
       );
     });
   });
 
-  test('StoryRequestError carries code/message/statusCode для humanizeError', () {
+  test('StoryRequestError carries code/message/statusCode для humanizeError',
+      () {
     const error = StoryRequestError(
       code: 'DUPLICATE_PENDING',
       message: 'Такой вопрос уже ждёт ответа',
@@ -178,5 +207,37 @@ void main() {
     expect(error.message, 'Такой вопрос уже ждёт ответа');
     expect(error.statusCode, 409);
     expect(error.toString(), contains('DUPLICATE_PENDING'));
+  });
+
+  test(
+      'parses public_link story request with targetName, shareUrl and guest answer',
+      () {
+    final r = StoryRequest.fromJson({
+      'id': 'sreq-pub',
+      'treeId': 't',
+      'personId': 'p',
+      'requesterUserId': 'u-a',
+      'targetUserId': null,
+      'targetName': 'Бабушка Лида',
+      'deliveryMode': 'public_link',
+      'shareUrl': 'https://api.rodnya-tree.ru/story/abc123',
+      'question': {'text': 'Как познакомились?'},
+      'status': 'answered',
+      'answer': {
+        'articleBlockId': 'block-2',
+        'kind': 'audio',
+        'answeredByUserId': null,
+        'respondentName': 'Лидия Петровна',
+        'answeredAt': '2026-11-26T12:00:00Z',
+      },
+      'createdAt': 'c',
+      'expiresAt': 'e',
+    });
+    expect(r.isPublicLink, isTrue);
+    expect(r.targetUserId, isNull);
+    expect(r.targetName, 'Бабушка Лида');
+    expect(r.shareUrl, 'https://api.rodnya-tree.ru/story/abc123');
+    expect(r.answer?.answeredByUserId, isNull);
+    expect(r.answer?.respondentName, 'Лидия Петровна');
   });
 }

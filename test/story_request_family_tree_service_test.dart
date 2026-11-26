@@ -50,13 +50,15 @@ Future<StoryRequestCapableFamilyTreeService> _buildService(
   final authService = await CustomApiAuthService.create(
     httpClient: client,
     preferences: prefs,
-    runtimeConfig: const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
+    runtimeConfig:
+        const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
     invitationService: InvitationService(),
   );
 
   final service = CustomApiFamilyTreeService(
     authService: authService,
-    runtimeConfig: const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
+    runtimeConfig:
+        const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
     httpClient: client,
   );
   return service as StoryRequestCapableFamilyTreeService;
@@ -67,10 +69,12 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  test('createStoryRequest POSTs the contract §1 body and parses the request', () async {
+  test('createStoryRequest POSTs the contract §1 body and parses the request',
+      () async {
     Map<String, dynamic>? sentBody;
     final client = MockClient((request) async {
-      if (request.url.path == '/v1/story-requests' && request.method == 'POST') {
+      if (request.url.path == '/v1/story-requests' &&
+          request.method == 'POST') {
         sentBody = jsonDecode(request.body) as Map<String, dynamic>;
         expect(request.headers['authorization'], 'Bearer access-token');
         return http.Response(
@@ -87,7 +91,8 @@ void main() {
       treeId: 'tree-1',
       personId: 'person-1',
       targetUserId: 'user-2',
-      question: const StoryRequestQuestion(text: 'Кто на фото?', sourceQuestionId: 'old_photos'),
+      question: const StoryRequestQuestion(
+          text: 'Кто на фото?', sourceQuestionId: 'old_photos'),
     );
 
     expect(sentBody, {
@@ -100,7 +105,9 @@ void main() {
     expect(result?.status, StoryRequestStatus.pending);
   });
 
-  test('createStoryRequest 409 → StoryRequestError DUPLICATE_PENDING with server message', () async {
+  test(
+      'createStoryRequest 409 → StoryRequestError DUPLICATE_PENDING with server message',
+      () async {
     final client = MockClient((request) async {
       return http.Response(
         jsonEncode({'message': 'Такой вопрос уже ждёт ответа'}),
@@ -126,7 +133,9 @@ void main() {
     );
   });
 
-  test('createStoryRequest generic backend message falls back to friendly RU text', () async {
+  test(
+      'createStoryRequest generic backend message falls back to friendly RU text',
+      () async {
     final client = MockClient((request) async {
       // No JSON body at all → _requestJson's own "Ошибка backend (429)"
       // default message, which _mapStoryRequestException treats as
@@ -154,7 +163,8 @@ void main() {
     );
   });
 
-  test('listStoryRequests GETs role/status query and parses the list', () async {
+  test('listStoryRequests GETs role/status query and parses the list',
+      () async {
     Uri? seenUri;
     final client = MockClient((request) async {
       if (request.url.path == '/v1/me/story-requests') {
@@ -206,7 +216,9 @@ void main() {
     expect(result?.id, 'sreq-1');
   });
 
-  test('answerStoryRequest POSTs the answer payload and returns the updated request', () async {
+  test(
+      'answerStoryRequest POSTs the answer payload and returns the updated request',
+      () async {
     Map<String, dynamic>? sentBody;
     final client = MockClient((request) async {
       if (request.url.path == '/v1/story-requests/sreq-1/answer') {
@@ -242,7 +254,8 @@ void main() {
         requestId: 'sreq-1',
         answer: StoryRequestAnswerInput.text('x'),
       ),
-      throwsA(isA<StoryRequestError>().having((e) => e.code, 'code', 'NOT_PENDING')),
+      throwsA(isA<StoryRequestError>()
+          .having((e) => e.code, 'code', 'NOT_PENDING')),
     );
   });
 
@@ -297,7 +310,60 @@ void main() {
     final service = await _buildService(client);
     await expectLater(
       () => service.revokeStoryRequest(requestId: 'sreq-1'),
-      throwsA(isA<StoryRequestError>().having((e) => e.code, 'code', 'NOT_INITIATOR')),
+      throwsA(isA<StoryRequestError>()
+          .having((e) => e.code, 'code', 'NOT_INITIATOR')),
     );
+  });
+
+  test(
+      'createStoryRequest public_link omits targetUserId and sends deliveryMode/targetName',
+      () async {
+    Map<String, dynamic>? sentBody;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/story-requests' &&
+          request.method == 'POST') {
+        sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'request': {
+              'id': 'sreq-pub',
+              'treeId': 'tree-1',
+              'personId': 'person-1',
+              'requesterUserId': 'user-1',
+              'targetUserId': null,
+              'targetName': 'Бабушка Лида',
+              'deliveryMode': 'public_link',
+              'shareUrl': 'https://api.rodnya-tree.ru/story/abc123',
+              'question': {'text': 'Как познакомились?'},
+              'status': 'pending',
+              'createdAt': '2026-11-26T10:00:00Z',
+              'expiresAt': '2026-12-26T10:00:00Z',
+            },
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final service = await _buildService(client);
+    final result = await service.createStoryRequest(
+      treeId: 'tree-1',
+      personId: 'person-1',
+      deliveryMode: 'public_link',
+      targetName: 'Бабушка Лида',
+      question: const StoryRequestQuestion(text: 'Как познакомились?'),
+    );
+
+    expect(sentBody, {
+      'treeId': 'tree-1',
+      'personId': 'person-1',
+      'deliveryMode': 'public_link',
+      'targetName': 'Бабушка Лида',
+      'question': {'text': 'Как познакомились?'},
+    });
+    expect(result?.isPublicLink, isTrue);
+    expect(result?.shareUrl, 'https://api.rodnya-tree.ru/story/abc123');
   });
 }
