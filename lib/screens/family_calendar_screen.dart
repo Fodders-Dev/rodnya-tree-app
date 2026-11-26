@@ -29,6 +29,7 @@ class FamilyCalendarScreen extends StatefulWidget {
     this.serviceOverride,
     this.treeId,
     this.initialMonth,
+    this.nowProvider,
   });
 
   /// Test seams — production builds an EventService and reads the tree
@@ -36,6 +37,7 @@ class FamilyCalendarScreen extends StatefulWidget {
   final EventService? serviceOverride;
   final String? treeId;
   final DateTime? initialMonth;
+  final DateTime Function()? nowProvider;
 
   @override
   State<FamilyCalendarScreen> createState() => _FamilyCalendarScreenState();
@@ -67,8 +69,9 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   String? _treeId;
   bool _loading = true;
   bool _loadFailed = false;
-  late DateTime _focusedDay = widget.initialMonth ?? DateTime.now();
-  late DateTime _selectedDay = widget.initialMonth ?? DateTime.now();
+  DateTime _now() => (widget.nowProvider ?? DateTime.now)();
+  late DateTime _focusedDay = widget.initialMonth ?? _now();
+  late DateTime _selectedDay = widget.initialMonth ?? _now();
   Map<DateTime, List<AppEvent>> _eventsByDay = const {};
   TreeProvider? _treeProvider;
 
@@ -204,7 +207,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       });
     }
     try {
-      final now = DateTime.now();
+      final now = _now();
       final today = DateTime(now.year, now.month, now.day);
       final horizon = today.add(const Duration(days: 90));
       final monthFutures = <Future<List<AppEvent>>>[];
@@ -253,12 +256,12 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
     if (_viewMode == _CalendarViewMode.list) {
       return _agendaScrolledAway;
     }
-    final now = DateTime.now();
+    final now = _now();
     return _focusedDay.year != now.year || _focusedDay.month != now.month;
   }
 
   void _jumpToToday() {
-    final now = DateTime.now();
+    final now = _now();
     if (_viewMode == _CalendarViewMode.list) {
       if (_agendaController.hasClients) {
         _agendaController.animateTo(
@@ -556,7 +559,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
     RodnyaDesignTokens tokens,
     DateTime day,
   ) {
-    final now = DateTime.now();
+    final now = _now();
     final today = DateTime(now.year, now.month, now.day);
     final diff = day.difference(today).inDays;
     final dateLabel = DateFormat('EEEE, d MMMM', 'ru').format(day);
@@ -592,7 +595,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
     // status дальше недели — просто дата («21 сен»): она уже в бейдже и в
     // заголовке дня, не дублируем; ближе — «Сегодня/Завтра/Через N дней»,
     // это полезно и остаётся.
-    final now = DateTime.now();
+    final now = _now();
     final daysUntil =
         DateTime(event.date.year, event.date.month, event.date.day)
             .difference(DateTime(now.year, now.month, now.day))

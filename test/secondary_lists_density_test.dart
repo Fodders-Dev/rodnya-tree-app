@@ -42,7 +42,8 @@ void main() {
   });
 
   Future<void> setPhoneViewport(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(_viewportWidth * 3, _viewportHeight * 3);
+    tester.view.physicalSize =
+        const Size(_viewportWidth * 3, _viewportHeight * 3);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
   }
@@ -72,7 +73,8 @@ void main() {
       GetIt.instance
           .registerSingleton<LocalStorageService>(_ProbeLocalStorageService());
       GetIt.instance.registerSingleton<AppStatusService>(AppStatusService());
-      GetIt.instance.registerSingleton<AuthServiceInterface>(_ProbeAuthService());
+      GetIt.instance
+          .registerSingleton<AuthServiceInterface>(_ProbeAuthService());
     });
 
     tearDown(() async {
@@ -136,7 +138,10 @@ void main() {
         (tester) async {
       await setPhoneViewport(tester);
 
-      final now = DateTime.now();
+      // Фиксируем середину сентября без встроенных праздников (1 сен — День
+      // знаний, конец ноября — День матери), чтобы зонд детерминированно
+      // мерил строки дней рождения в любой день года.
+      final now = DateTime(2026, 9, 6);
       final relatives = [
         for (var i = 0; i < 12; i++)
           FamilyPerson(
@@ -156,6 +161,7 @@ void main() {
       ];
       final service = EventService(
         familyTreeService: _ProbeFamilyTreeService(relatives: relatives),
+        nowProvider: () => now,
       );
 
       await tester.pumpWidget(
@@ -164,6 +170,7 @@ void main() {
             serviceOverride: service,
             treeId: 'tree-1',
             initialMonth: now,
+            nowProvider: () => now,
           ),
         ),
       );
