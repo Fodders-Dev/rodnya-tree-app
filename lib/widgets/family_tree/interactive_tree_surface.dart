@@ -1,4 +1,4 @@
-part of 'interactive_family_tree.dart';
+part of '../interactive_family_tree.dart';
 
 extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
   Widget _buildInteractiveTreeSurface({
