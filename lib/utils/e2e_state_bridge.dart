@@ -1,6 +1,6 @@
 import '../backend/backend_runtime_config.dart';
 import 'e2e_state_bridge_stub.dart'
-    if (dart.library.html) 'e2e_state_bridge_web.dart' as e2e_platform;
+    if (dart.library.js_interop) 'e2e_state_bridge_web.dart' as e2e_platform;
 
 typedef E2ELoginHandler = Future<Map<String, dynamic>> Function(
   String email,

@@ -1,5 +1,5 @@
 import 'web_wheel_listener_impl_stub.dart'
-    if (dart.library.html) 'web_wheel_listener_impl_web.dart' as impl;
+    if (dart.library.js_interop) 'web_wheel_listener_impl_web.dart' as impl;
 
 typedef WebWheelHandler = bool Function(
   double deltaX,

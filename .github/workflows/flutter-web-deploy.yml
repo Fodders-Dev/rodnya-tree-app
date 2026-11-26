@@ -51,7 +51,13 @@ jobs:
           npm ci --ignore-scripts
 
       - name: Build web
-        run: flutter build web --release --dart-define=RODNYA_RUNTIME_PRESET=prod_custom_api --dart-define=RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false --dart-define=RODNYA_GOOGLE_WEB_CLIENT_ID=676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com
+        run: |
+          APP_VERSION=$(sed -nE 's/^version:[[:space:]]*([^[:space:]#]+).*/\1/p' pubspec.yaml | head -n 1)
+          flutter build web --release \
+            --dart-define=RODNYA_RUNTIME_PRESET=prod_custom_api \
+            --dart-define=RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false \
+            --dart-define=RODNYA_GOOGLE_WEB_CLIENT_ID=676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com \
+            --dart-define=RODNYA_APP_VERSION="${APP_VERSION}"
 
       - name: Sync web shell assets
         run: node tool/sync_web_shell_assets.js

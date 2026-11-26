@@ -1340,6 +1340,61 @@ async function main() {
           },
         },
         {
+          name: "legacy-settings-redirect",
+          path: "/settings",
+          verify: async () => {
+            await page.waitForFunction(
+              () => window.location.hash.startsWith("#/profile/settings"),
+              undefined,
+              {timeout: 15_000},
+            );
+          },
+        },
+        {
+          name: "album",
+          path: "/post/album",
+          verify: async () => {
+            await page.waitForFunction(
+              () => window.location.hash.startsWith("#/post/album"),
+              undefined,
+              {timeout: 15_000},
+            );
+          },
+        },
+        {
+          name: "legacy-album-redirect",
+          path: "/album",
+          verify: async () => {
+            await page.waitForFunction(
+              () => window.location.hash.startsWith("#/post/album"),
+              undefined,
+              {timeout: 15_000},
+            );
+          },
+        },
+        {
+          name: "trash",
+          path: "/profile/trash",
+          verify: async () => {
+            await page.waitForFunction(
+              () => window.location.hash.startsWith("#/profile/trash"),
+              undefined,
+              {timeout: 15_000},
+            );
+          },
+        },
+        {
+          name: "about",
+          path: "/profile/about",
+          verify: async () => {
+            await page.waitForFunction(
+              () => window.location.hash.startsWith("#/profile/about"),
+              undefined,
+              {timeout: 15_000},
+            );
+          },
+        },
+        {
           name: "notifications",
           path: "/notifications",
           verify: async () => {

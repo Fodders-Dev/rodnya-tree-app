@@ -1,84 +1,63 @@
-// ignore_for_file: avoid_web_libraries_in_flutter, uri_does_not_exist, deprecated_member_use
 import 'dart:convert';
-import 'dart:html' as html;
-import 'dart:js_util' as js_util;
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
+
+import 'package:web/web.dart' as web;
 
 const String _pendingCommandStorageKey = '__rodnyaE2E_pending_command';
 
-Map<String, dynamic> _existingBridgePayload() {
-  final existingPayload =
-      js_util.getProperty<Object?>(html.window, '__rodnyaE2E');
-  final dartPayload =
-      existingPayload == null ? null : js_util.dartify(existingPayload);
-  if (dartPayload is Map) {
+Map<String, dynamic> _asStringMap(Object? raw) {
+  if (raw is Map) {
     return Map<String, dynamic>.from(
-      dartPayload.map(
-        (key, value) => MapEntry(key.toString(), value),
-      ),
+      raw.map((key, value) => MapEntry(key.toString(), value)),
     );
   }
   return <String, dynamic>{};
 }
 
+Map<String, dynamic> _existingBridgePayload() {
+  final existingPayload = web.window.getProperty<JSAny?>('__rodnyaE2E'.toJS);
+  final dartPayload = existingPayload?.dartify();
+  return _asStringMap(dartPayload);
+}
+
 Map<String, dynamic> _existingScreens() {
   final bridge = _existingBridgePayload();
-  final currentScreens = bridge['screens'];
-  if (currentScreens is! Map) {
-    return <String, dynamic>{};
-  }
-
-  return Map<String, dynamic>.from(
-    currentScreens.map(
-      (key, value) => MapEntry(key.toString(), value),
-    ),
-  );
+  return _asStringMap(bridge['screens']);
 }
 
 Map<String, dynamic> _existingCommands() {
   final bridge = _existingBridgePayload();
-  final commands = bridge['commands'];
-  if (commands is! Map) {
-    return <String, dynamic>{};
-  }
-
-  return Map<String, dynamic>.from(
-    commands.map(
-      (key, value) => MapEntry(key.toString(), value),
-    ),
-  );
+  return _asStringMap(bridge['commands']);
 }
 
 Map<String, dynamic>? _consumePendingCommand() {
   try {
-    final rawPayload = html.window.sessionStorage[_pendingCommandStorageKey];
+    final rawPayload =
+        web.window.sessionStorage.getItem(_pendingCommandStorageKey);
     if (rawPayload == null || rawPayload.isEmpty) {
       return null;
     }
-    html.window.sessionStorage.remove(_pendingCommandStorageKey);
+    web.window.sessionStorage.removeItem(_pendingCommandStorageKey);
     final decoded = jsonDecode(rawPayload);
     if (decoded is Map) {
-      return Map<String, dynamic>.from(
-        decoded.map(
-          (key, value) => MapEntry(key.toString(), value),
-        ),
-      );
+      return _asStringMap(decoded);
     }
   } catch (_) {
-    html.window.sessionStorage.remove(_pendingCommandStorageKey);
+    web.window.sessionStorage.removeItem(_pendingCommandStorageKey);
   }
   return null;
 }
 
 void _storePendingCommand(Map<String, dynamic> payload) {
-  html.window.sessionStorage[_pendingCommandStorageKey] = jsonEncode(payload);
+  web.window.sessionStorage.setItem(
+    _pendingCommandStorageKey,
+    jsonEncode(payload),
+  );
 }
 
 void _setBridgePayload(Map<String, dynamic> payload) {
-  js_util.setProperty(
-    html.window,
-    '__rodnyaE2E',
-    js_util.jsify(payload),
-  );
+  web.window.setProperty('__rodnyaE2E'.toJS, payload.jsify());
 }
 
 Map<String, dynamic> _commandAck(
@@ -173,32 +152,32 @@ void initializeBridge({
   final commands = _existingCommands();
   final pendingCommand = _consumePendingCommand();
 
-  commands['login'] = js_util.allowInterop(
-    (String email, String password, [String? targetPath]) {
-      onLogin(email, password, targetPath)
-          .then(
-            (result) => _publishCommandResult(
-              name: 'login',
-              result: result,
-            ),
-          )
-          .catchError(
-            (Object error) => _publishCommandResult(
-              name: 'login',
-              error: error,
-            ),
-          );
-      return js_util.jsify(
-        _commandAck(
-          'login',
-          <String, dynamic>{
-            'targetPath': targetPath,
-          },
-        ),
-      );
-    },
-  );
-  commands['logout'] = js_util.allowInterop(([String? targetPath]) {
+  commands['login'] = ((
+    String email,
+    String password, [
+    String? targetPath,
+  ]) {
+    onLogin(email, password, targetPath)
+        .then(
+          (result) => _publishCommandResult(
+            name: 'login',
+            result: result,
+          ),
+        )
+        .catchError(
+          (Object error) => _publishCommandResult(
+            name: 'login',
+            error: error,
+          ),
+        );
+    return _commandAck(
+      'login',
+      <String, dynamic>{
+        'targetPath': targetPath,
+      },
+    ).jsify();
+  }).toJS;
+  commands['logout'] = (([String? targetPath]) {
     onLogout(targetPath)
         .then(
           (result) => _publishCommandResult(
@@ -212,30 +191,20 @@ void initializeBridge({
             error: error,
           ),
         );
-    return js_util.jsify(
-      _commandAck(
-        'logout',
-        <String, dynamic>{
-          'targetPath': targetPath,
-        },
-      ),
-    );
-  });
-  commands['status'] = js_util.allowInterop(() {
+    return _commandAck(
+      'logout',
+      <String, dynamic>{
+        'targetPath': targetPath,
+      },
+    ).jsify();
+  }).toJS;
+  commands['status'] = (() {
     final bridgePayload = _existingBridgePayload();
     final screens = bridgePayload['screens'];
     final appState = screens is Map ? screens['app'] : null;
-    return js_util.jsify(
-      appState is Map
-          ? Map<String, dynamic>.from(
-              appState.map(
-                (key, value) => MapEntry(key.toString(), value),
-              ),
-            )
-          : <String, dynamic>{},
-    );
-  });
-  commands['go'] = js_util.allowInterop((String path) {
+    return _asStringMap(appState).jsify();
+  }).toJS;
+  commands['go'] = ((String path) {
     onNavigate(path)
         .then(
           (result) => _publishCommandResult(
@@ -249,41 +218,39 @@ void initializeBridge({
             error: error,
           ),
         );
-    return js_util.jsify(
-      _commandAck(
-        'go',
-        <String, dynamic>{'path': path},
-      ),
-    );
-  });
-  commands['openTree'] = js_util.allowInterop(
-    (String treeId, [String? treeName, String? targetPath]) {
-      onOpenTree(treeId, treeName, targetPath)
-          .then(
-            (result) => _publishCommandResult(
-              name: 'openTree',
-              result: result,
-            ),
-          )
-          .catchError(
-            (Object error) => _publishCommandResult(
-              name: 'openTree',
-              error: error,
-            ),
-          );
-      return js_util.jsify(
-        _commandAck(
-          'openTree',
-          <String, dynamic>{
-            'treeId': treeId,
-            'treeName': treeName,
-            'targetPath': targetPath,
-          },
-        ),
-      );
-    },
-  );
-  commands['openRelative'] = js_util.allowInterop((String personId) {
+    return _commandAck(
+      'go',
+      <String, dynamic>{'path': path},
+    ).jsify();
+  }).toJS;
+  commands['openTree'] = ((
+    String treeId, [
+    String? treeName,
+    String? targetPath,
+  ]) {
+    onOpenTree(treeId, treeName, targetPath)
+        .then(
+          (result) => _publishCommandResult(
+            name: 'openTree',
+            result: result,
+          ),
+        )
+        .catchError(
+          (Object error) => _publishCommandResult(
+            name: 'openTree',
+            error: error,
+          ),
+        );
+    return _commandAck(
+      'openTree',
+      <String, dynamic>{
+        'treeId': treeId,
+        'treeName': treeName,
+        'targetPath': targetPath,
+      },
+    ).jsify();
+  }).toJS;
+  commands['openRelative'] = ((String personId) {
     onNavigate('/relative/details/$personId')
         .then(
           (result) => _publishCommandResult(
@@ -297,32 +264,26 @@ void initializeBridge({
             error: error,
           ),
         );
-    return js_util.jsify(
-      _commandAck(
-        'openRelative',
-        <String, dynamic>{'personId': personId},
-      ),
-    );
-  });
-  commands['openAddRelative'] = js_util.allowInterop((Object? rawConfig) {
-    final dartConfig = rawConfig == null ? null : js_util.dartify(rawConfig);
+    return _commandAck(
+      'openRelative',
+      <String, dynamic>{'personId': personId},
+    ).jsify();
+  }).toJS;
+  commands['openAddRelative'] = ((JSAny? rawConfig) {
+    final dartConfig = rawConfig?.dartify();
     if (dartConfig is! Map) {
-      return js_util.jsify(
-        _commandFailure(
-          'openAddRelative',
-          'Expected openAddRelative config map',
-        ),
-      );
+      return _commandFailure(
+        'openAddRelative',
+        'Expected openAddRelative config map',
+      ).jsify();
     }
 
     final treeId = dartConfig['treeId']?.toString() ?? '';
     if (treeId.isEmpty) {
-      return js_util.jsify(
-        _commandFailure(
-          'openAddRelative',
-          'treeId is required',
-        ),
-      );
+      return _commandFailure(
+        'openAddRelative',
+        'treeId is required',
+      ).jsify();
     }
 
     onOpenAddRelative(
@@ -343,27 +304,23 @@ void initializeBridge({
             error: error,
           ),
         );
-    return js_util.jsify(
-      _commandAck(
-        'openAddRelative',
-        <String, dynamic>{
-          'treeId': treeId,
-          'contextPersonId': dartConfig['contextPersonId']?.toString(),
-          'relationType': dartConfig['relationType']?.toString(),
-          'quickAddMode': dartConfig['quickAddMode'] == true,
-        },
-      ),
-    );
-  });
-  commands['openStoryViewer'] = js_util.allowInterop((Object? rawConfig) {
-    final dartConfig = rawConfig == null ? null : js_util.dartify(rawConfig);
+    return _commandAck(
+      'openAddRelative',
+      <String, dynamic>{
+        'treeId': treeId,
+        'contextPersonId': dartConfig['contextPersonId']?.toString(),
+        'relationType': dartConfig['relationType']?.toString(),
+        'quickAddMode': dartConfig['quickAddMode'] == true,
+      },
+    ).jsify();
+  }).toJS;
+  commands['openStoryViewer'] = ((JSAny? rawConfig) {
+    final dartConfig = rawConfig?.dartify();
     if (dartConfig != null && dartConfig is! Map) {
-      return js_util.jsify(
-        _commandFailure(
-          'openStoryViewer',
-          'Expected openStoryViewer config map',
-        ),
-      );
+      return _commandFailure(
+        'openStoryViewer',
+        'Expected openStoryViewer config map',
+      ).jsify();
     }
 
     final config = dartConfig is Map ? dartConfig : const <Object?, Object?>{};
@@ -381,8 +338,8 @@ void initializeBridge({
           },
         );
         final normalizedRoute = route.startsWith('/') ? route : '/$route';
-        html.window.location.hash = normalizedRoute;
-        html.window.location.reload();
+        web.window.location.hash = normalizedRoute;
+        web.window.location.reload();
         return;
       }
       _publishCommandResult(
@@ -396,16 +353,14 @@ void initializeBridge({
       );
       return null;
     });
-    return js_util.jsify(
-      _commandAck(
-        'openStoryViewer',
-        <String, dynamic>{
-          'treeId': config['treeId']?.toString(),
-          'authorId': config['authorId']?.toString(),
-        },
-      ),
-    );
-  });
+    return _commandAck(
+      'openStoryViewer',
+      <String, dynamic>{
+        'treeId': config['treeId']?.toString(),
+        'authorId': config['authorId']?.toString(),
+      },
+    ).jsify();
+  }).toJS;
 
   _setBridgePayload(
     <String, dynamic>{
@@ -416,9 +371,9 @@ void initializeBridge({
       'commands': commands,
       'lastCommand': pendingCommand ?? bridge['lastCommand'],
       'runtime': <String, dynamic>{
-        'href': html.window.location.href,
-        'hash': html.window.location.hash,
-        'userAgent': html.window.navigator.userAgent,
+        'href': web.window.location.href,
+        'hash': web.window.location.hash,
+        'userAgent': web.window.navigator.userAgent,
       },
     },
   );

@@ -341,7 +341,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     _ensureRemotePushTokenListener();
 
     if (_realtimeService != null) {
-      await _realtimeService!.connect();
+      await _realtimeService.connect();
       if (generation != _syncGeneration) {
         return;
       }
@@ -349,7 +349,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       if (generation != _syncGeneration) {
         return;
       }
-      _realtimeSubscription = _realtimeService!.events
+      _realtimeSubscription = _realtimeService.events
           .where((event) => event.isNotificationEvent)
           .listen((event) {
         // Bulk-read события — сервер сообщает что N уведомлений
@@ -1034,7 +1034,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     await initialize();
 
     if (_onChatNotification != null) {
-      await _onChatNotification!(
+      await _onChatNotification(
         chatId: chatId,
         senderId: senderId,
         senderName: senderName,
@@ -1722,7 +1722,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
   Future<String?> _resolveRemotePushToken() async {
     if (_remotePushTokenProvider != null) {
-      return _remotePushTokenProvider!();
+      return _remotePushTokenProvider();
     }
 
     final rustoreService = _rustoreService;
@@ -1755,7 +1755,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     await initialize();
 
     if (_onGenericNotification != null) {
-      await _onGenericNotification!(
+      await _onGenericNotification(
         title: title,
         body: body,
         notificationId: notificationId,

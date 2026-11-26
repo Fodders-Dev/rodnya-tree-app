@@ -843,9 +843,9 @@ class CustomApiChatService
     unawaited(_bootstrapChatPreviewsWithOverrides());
 
     if (_realtimeService != null) {
-      unawaited(_realtimeService!.connect());
+      unawaited(_realtimeService.connect());
       _chatPreviewsRealtimeSubscription =
-          _realtimeService!.events.listen((event) {
+          _realtimeService.events.listen((event) {
         if (event.type == 'connection.ready') {
           _stopChatPreviewsFallbackPolling();
           _scheduleChatPreviewsRefresh(immediate: true);
@@ -1184,9 +1184,9 @@ class CustomApiChatService
     unawaited(_emitTotalUnread());
 
     if (_realtimeService != null) {
-      unawaited(_realtimeService!.connect());
+      unawaited(_realtimeService.connect());
       _totalUnreadRealtimeSubscription =
-          _realtimeService!.events.listen((event) {
+          _realtimeService.events.listen((event) {
         if (event.type == 'connection.ready') {
           _stopTotalUnreadFallbackPolling();
           _scheduleTotalUnreadRefresh(immediate: true);
@@ -1369,8 +1369,8 @@ class CustomApiChatService
     unawaited(_hydrateMessageState(state));
 
     if (_realtimeService != null) {
-      unawaited(_realtimeService!.connect());
-      state.realtimeSubscription = _realtimeService!.events.listen((event) {
+      unawaited(_realtimeService.connect());
+      state.realtimeSubscription = _realtimeService.events.listen((event) {
         if (event.type == 'connection.ready') {
           _scheduleMessageRefresh(state, immediate: true);
           return;
@@ -1495,7 +1495,7 @@ class CustomApiChatService
 
     var cachedMessages = const <ChatMessage>[];
     try {
-      cachedMessages = await _messageCache!.read(state.chatId);
+      cachedMessages = await _messageCache.read(state.chatId);
     } catch (_) {
       cachedMessages = const <ChatMessage>[];
     }

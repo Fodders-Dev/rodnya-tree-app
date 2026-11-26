@@ -1,5 +1,5 @@
 @TestOn('browser')
-library custom_api_notification_service_web_test;
+library;
 
 import 'dart:convert';
 

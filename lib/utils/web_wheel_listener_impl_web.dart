@@ -1,25 +1,28 @@
-// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
+import 'dart:js_interop';
 
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
 
 import 'web_wheel_listener.dart';
 
 CancelWebWheelListener? registerWebWheelListener(WebWheelHandler handler) {
-  void onWheel(html.Event event) {
-    if (event is html.WheelEvent) {
+  void onWheel(web.Event event) {
+    if (event.isA<web.WheelEvent>()) {
+      final wheel = event as web.WheelEvent;
       handler(
-        event.deltaX.toDouble(),
-        event.deltaY.toDouble(),
-        event.client.x.toDouble(),
-        event.client.y.toDouble(),
+        wheel.deltaX,
+        wheel.deltaY,
+        wheel.clientX.toDouble(),
+        wheel.clientY.toDouble(),
       );
     }
   }
 
-  html.document.addEventListener('wheel', onWheel, true);
-  html.window.addEventListener('wheel', onWheel, true);
+  final listener = onWheel.toJS;
+  final capture = true.toJS;
+  web.document.addEventListener('wheel', listener, capture);
+  web.window.addEventListener('wheel', listener, capture);
   return () {
-    html.document.removeEventListener('wheel', onWheel, true);
-    html.window.removeEventListener('wheel', onWheel, true);
+    web.document.removeEventListener('wheel', listener, capture);
+    web.window.removeEventListener('wheel', listener, capture);
   };
 }
