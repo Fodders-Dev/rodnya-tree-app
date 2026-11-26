@@ -18,6 +18,7 @@ import 'invitation_service.dart';
 import 'secure_session_storage.dart';
 import '../utils/client_instance_id.dart';
 import '../utils/device_descriptor.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/url_utils.dart';
 
 class CustomApiException implements UserFacingApiException {
@@ -253,6 +254,7 @@ class CustomApiAuthService implements AuthServiceInterface {
   CustomApiSession? _session;
   bool _isRefreshing = false;
   Future<void>? _refreshTask;
+  int _sessionGeneration = 0;
 
   /// 7.x replaced the `GoogleSignIn(...)` constructor with a singleton
   /// + a single `initialize(...)` call. We cache the init future so
@@ -446,23 +448,36 @@ class CustomApiAuthService implements AuthServiceInterface {
   }
 
   Future<void> _performRefresh(String refreshToken) async {
+    final generation = _sessionGeneration;
     try {
       final refreshPayload = await _withDeviceInfo({
         'refreshToken': refreshToken,
       });
+      if (generation != _sessionGeneration) {
+        return;
+      }
       final response = await _httpClient.post(
         _buildUri('/v1/auth/refresh'),
         headers: _jsonHeaders(authenticated: false),
         body: jsonEncode(refreshPayload),
       );
+      if (generation != _sessionGeneration) {
+        return;
+      }
 
-      if (response.statusCode == 401 || response.statusCode == 403) {
+      if (response.statusCode == 401) {
         await _clearSession(sessionExpired: true);
-        throw const CustomApiException('Сессия истекла. Войдите заново.');
+        throw const CustomApiException(
+          'Сессия истекла. Войдите заново.',
+          statusCode: 401,
+        );
       }
 
       final body = _decodeResponse(response);
       final newSession = _sessionFromResponse(body);
+      if (generation != _sessionGeneration) {
+        return;
+      }
       await _saveSession(newSession);
     } catch (e) {
       rethrow;
@@ -727,7 +742,8 @@ class CustomApiAuthService implements AuthServiceInterface {
   /// awaits the same future. Must be called before any other
   /// GoogleSignIn.instance method per the 7.x contract.
   Future<void> _ensureGoogleInitialized() {
-    return _googleInitFuture ??= GoogleSignIn.instance.initialize(
+    return _googleInitFuture ??= GoogleSignIn.instance
+        .initialize(
       // clientId: web-side client that the GIS library authenticates
       // with. serverClientId is not supported by google_sign_in_web,
       // so web obtains the idToken only through GIS authentication
@@ -735,7 +751,11 @@ class CustomApiAuthService implements AuthServiceInterface {
       // backend's expected audience for the id-token verification.
       clientId: kIsWeb ? _runtimeConfig.googleWebClientId : null,
       serverClientId: kIsWeb ? null : _runtimeConfig.googleWebClientId,
-    );
+    )
+        .catchError((Object error) {
+      _googleInitFuture = null;
+      throw error;
+    });
   }
 
   void _ensureGoogleWebAuthenticationListener() {
@@ -1229,6 +1249,7 @@ class CustomApiAuthService implements AuthServiceInterface {
     if (session == null) {
       return _signedOutProfileStatus();
     }
+    final generation = _sessionGeneration;
 
     try {
       final response = await _requestJson(
@@ -1236,11 +1257,14 @@ class CustomApiAuthService implements AuthServiceInterface {
         path: '/v1/auth/session',
         authenticated: true,
       );
+      if (generation != _sessionGeneration || _session == null) {
+        return _signedOutProfileStatus();
+      }
       final refreshedSession = _sessionFromResponse(response);
       await _saveSession(refreshedSession);
       return _profileStatusMap(refreshedSession);
     } on CustomApiException catch (error) {
-      if (error.statusCode == 401 || error.statusCode == 403) {
+      if (error.statusCode == 401) {
         await _clearSession(sessionExpired: true);
         return _signedOutProfileStatus();
       }
@@ -1453,37 +1477,27 @@ class CustomApiAuthService implements AuthServiceInterface {
     try {
       return await _executeRequest(method, uri, authenticated, body);
     } on CustomApiException catch (e) {
-      if (authenticated && (e.statusCode == 401 || e.statusCode == 403)) {
+      if (authenticated && e.statusCode == 401) {
         if (_session?.refreshToken != null) {
           try {
             await refreshSession();
-            return await _executeRequest(method, uri, authenticated, body);
-          } on CustomApiException {
-            // Refresh hop reached the backend and got an HTTP error
-            // back (any status). The original behavior here was to
-            // unconditionally clear the session, and the existing
-            // test fleet relies on that — preserve it.
-            //
-            // _performRefresh already calls _clearSession on its
-            // 401/403 path; calling again here is a no-op for those
-            // and a defensible "kick out on persistent backend
-            // failure" for everything else (404 / 500 / 503 etc).
-            await _clearSession(sessionExpired: true);
+          } on CustomApiException catch (refreshErr) {
+            if (refreshErr.statusCode == 401 ||
+                refreshErr.statusCode == 404 ||
+                refreshErr.statusCode == null) {
+              await _clearSession(sessionExpired: true);
+            }
             rethrow;
           } catch (refreshError) {
-            // Genuine network failure (SocketException / TimeoutException /
-            // any non-CustomApi exception): refresh never reached the
-            // backend, so we have NO signal that the session is
-            // actually invalid. Keep the local session so the user
-            // doesn't get bounced to the login screen the moment
-            // their connection drops. The next online retry will
-            // re-attempt refresh.
             debugPrint(
               'Token refresh failed without backend response — '
               'keeping session: $refreshError',
             );
             rethrow;
           }
+          // Retry outside the refresh catch so business errors (400/403/404/409/5xx)
+          // never wipe a freshly refreshed session.
+          return await _executeRequest(method, uri, authenticated, body);
         } else {
           await _clearSession(sessionExpired: true);
         }
@@ -1540,6 +1554,7 @@ class CustomApiAuthService implements AuthServiceInterface {
   }
 
   Future<void> _clearSession({bool sessionExpired = false}) async {
+    _sessionGeneration++;
     _session = null;
     await _sessionStorage.delete();
     _authStateController.add(null);
@@ -1585,10 +1600,13 @@ class CustomApiAuthService implements AuthServiceInterface {
       );
     }
 
-    final dynamic decodedBody = jsonDecode(response.body);
-    final bodyMap = decodedBody is Map<String, dynamic>
-        ? decodedBody
-        : <String, dynamic>{'data': decodedBody};
+    final bodyMap = tryDecodeJsonMap(response.body);
+    if (bodyMap == null) {
+      throw CustomApiException(
+        'Сервер вернул некорректный ответ (${response.statusCode})',
+        statusCode: response.statusCode,
+      );
+    }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return bodyMap;

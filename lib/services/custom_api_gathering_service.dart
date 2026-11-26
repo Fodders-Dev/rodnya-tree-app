@@ -9,6 +9,7 @@ import '../backend/interfaces/gathering_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../models/gathering.dart';
 import '../models/post.dart' show TreeContentScopeType;
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import 'custom_api_auth_service.dart';
 
@@ -227,7 +228,7 @@ class CustomApiGatheringService implements GatheringServiceInterface {
   }
 
   Future<bool> _shouldRefreshAndRetry(CustomApiGatheringException error) async {
-    if (error.statusCode != 401 && error.statusCode != 403) {
+    if (error.statusCode != 401) {
       return false;
     }
     await _authService.refreshSession();
@@ -237,10 +238,18 @@ class CustomApiGatheringService implements GatheringServiceInterface {
   dynamic _handleResponse(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       if (response.body.isEmpty) return <String, dynamic>{};
-      return jsonDecode(response.body);
+      final decoded = tryDecodeJsonValue(response.body);
+      if (decoded == null) {
+        throw CustomApiGatheringException(
+          'Gathering Service Error: некорректный ответ сервера (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
+      }
+      return decoded;
     }
 
-    final errorData = response.body.isNotEmpty ? jsonDecode(response.body) : {};
+    final errorData =
+        tryDecodeJsonMap(response.body) ?? const <String, dynamic>{};
     throw CustomApiGatheringException(
       errorData['message']?.toString() ??
           'Gathering Service Error: ${response.statusCode}',

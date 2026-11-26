@@ -12,10 +12,10 @@ import 'package:http/http.dart' as http;
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/profile_article_service_interface.dart';
 import '../backend/models/profile_article.dart';
+import '../utils/safe_json_decode.dart';
 import 'custom_api_auth_service.dart';
 
-class CustomApiProfileArticleService
-    implements ProfileArticleServiceInterface {
+class CustomApiProfileArticleService implements ProfileArticleServiceInterface {
   CustomApiProfileArticleService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -115,8 +115,8 @@ class CustomApiProfileArticleService
     if (raw is List) {
       return raw
           .whereType<Map>()
-          .map((e) =>
-              ArticleHistoryEntry.fromJson(Map<String, dynamic>.from(e)))
+          .map(
+              (e) => ArticleHistoryEntry.fromJson(Map<String, dynamic>.from(e)))
           .toList(growable: false);
     }
     return const <ArticleHistoryEntry>[];
@@ -163,10 +163,13 @@ class CustomApiProfileArticleService
       );
     }
 
-    final dynamic decoded = jsonDecode(response.body);
-    final payload = decoded is Map<String, dynamic>
-        ? decoded
-        : <String, dynamic>{'data': decoded};
+    final payload = tryDecodeJsonMap(response.body);
+    if (payload == null) {
+      throw ProfileArticleException(
+        'Ошибка биографии (${response.statusCode})',
+        statusCode: response.statusCode,
+      );
+    }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return payload;

@@ -62,6 +62,7 @@ class ChatRecordingController extends ChangeNotifier {
   int _durationSeconds = 0;
   String? _errorText;
   ChatRecordingPreview? _preview;
+  bool _disposed = false;
   // C1: путь идущей записи — чтобы отмена/ошибка могли удалить temp-файл
   // (record.cancel() не везде надёжно подчищает, плюс старт может упасть
   // уже после создания пути).
@@ -116,6 +117,7 @@ class ChatRecordingController extends ChangeNotifier {
     _errorText = null;
     _setState(ChatRecordingState.requestingPermission);
     final granted = await _requestMicrophonePermission();
+    if (_disposed) return;
     if (!granted) {
       _errorText = 'Доступ к микрофону отклонен.';
       _setState(ChatRecordingState.denied);
@@ -123,6 +125,7 @@ class ChatRecordingController extends ChangeNotifier {
     }
 
     final recordingPath = await _buildRecordingPath();
+    if (_disposed) return;
     final resolvedPath = recordingPath ??
         'voice_note_${DateTime.now().millisecondsSinceEpoch}.webm';
     _preview = null;
@@ -146,6 +149,12 @@ class ChatRecordingController extends ChangeNotifier {
       _setState(ChatRecordingState.idle);
       return;
     }
+    if (_disposed) {
+      await _safeCancelRecorder();
+      await _deleteRecordingFile(_activeRecordingPath);
+      _activeRecordingPath = null;
+      return;
+    }
     // Anchor wall-clock right after the recorder actually starts so a
     // sub-second press still measures a non-zero elapsed on stop.
     _recordingStartedAt = DateTime.now();
@@ -153,6 +162,7 @@ class ChatRecordingController extends ChangeNotifier {
     _amplitudeSub = _recorder
         .onAmplitudeChanged(const Duration(milliseconds: 120))
         .listen((amplitude) {
+      if (_disposed) return;
       _amplitudeSamples.add(_normalizeAmplitude(amplitude.current));
       if (_amplitudeSamples.length > 600) {
         _amplitudeSamples.removeRange(0, _amplitudeSamples.length - 600);
@@ -165,6 +175,7 @@ class ChatRecordingController extends ChangeNotifier {
 
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_disposed) return;
       _durationSeconds += 1;
       notifyListeners();
     });
@@ -190,6 +201,11 @@ class ChatRecordingController extends ChangeNotifier {
     final startedAt = _recordingStartedAt;
     _recordingStartedAt = null;
     final recordedPath = await _recorder.stop();
+    if (_disposed) {
+      await _deleteRecordingFile(recordedPath ?? _activeRecordingPath);
+      _activeRecordingPath = null;
+      return;
+    }
     // Measure by wall-clock: the per-second ticker reads 0 for any sub-second
     // press, which silently deleted real short recordings. Fall back to the
     // ticker only if the anchor is somehow missing.
@@ -230,6 +246,7 @@ class ChatRecordingController extends ChangeNotifier {
         waveform = const <double>[];
       }
     }
+    if (_disposed) return;
 
     final fileName = kIsWeb
         ? 'voice_note_${recordedDuration}s_${DateTime.now().millisecondsSinceEpoch}.webm'
@@ -358,6 +375,7 @@ class ChatRecordingController extends ChangeNotifier {
   }
 
   void _setState(ChatRecordingState nextState) {
+    if (_disposed) return;
     _state = nextState;
     notifyListeners();
   }
@@ -371,6 +389,7 @@ class ChatRecordingController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _ticker?.cancel();
     unawaited(_amplitudeSub?.cancel());
     unawaited(_recorder.dispose());

@@ -259,19 +259,49 @@ class ChatSendQueue extends PendingSendQueue<ChatPendingMessage> {
   ChatSendQueue({
     required ChatServiceInterface chatService,
     super.appStatusService,
+    String? Function()? currentUserId,
     String boxName = 'chat_send_queue_v1',
   })  : _chatService = chatService,
+        _currentUserId = currentUserId,
         super(boxName: boxName);
 
   ChatSendQueue.memory({
     required ChatServiceInterface chatService,
     super.appStatusService,
+    String? Function()? currentUserId,
   })  : _chatService = chatService,
+        _currentUserId = currentUserId,
         super(boxName: null);
 
   final ChatServiceInterface _chatService;
+  final String? Function()? _currentUserId;
 
-  List<ChatPendingMessage> messagesFor(String chatId) => itemsFor(chatId);
+  String? get _normalizedCurrentUserId {
+    final provider = _currentUserId;
+    if (provider == null) return null;
+    return (provider() ?? '').trim();
+  }
+
+  @override
+  bool shouldSendItem(ChatPendingMessage item) {
+    final ownUserId = _normalizedCurrentUserId;
+    if (ownUserId == null) return true;
+    return ownUserId.isNotEmpty && item.senderId == ownUserId;
+  }
+
+  List<ChatPendingMessage> messagesFor(String chatId) {
+    final all = itemsFor(chatId);
+    final ownUserId = _normalizedCurrentUserId;
+    if (ownUserId == null) return all;
+    if (ownUserId.isEmpty) return const <ChatPendingMessage>[];
+    return all
+        .where((message) => message.senderId == ownUserId)
+        .toList(growable: false);
+  }
+
+  void resetForSignOut() {
+    clearInMemoryQueue();
+  }
 
   Future<void> restoreChat(String chatId) => restoreKey(chatId);
 

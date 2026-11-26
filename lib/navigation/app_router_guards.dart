@@ -45,8 +45,10 @@ class AppRouterGuards {
       return null;
     }
 
-    final restored = Uri.decodeComponent(from);
-    if (restored.isEmpty || restored == '/login') {
+    final restored = from.trim();
+    if (!restored.startsWith('/') ||
+        restored.startsWith('//') ||
+        restored.startsWith('/login')) {
       return null;
     }
     return restored;
@@ -69,8 +71,14 @@ class AppRouterGuards {
       uri.queryParameters.containsKey('vkAuthCode') ||
       uri.queryParameters.containsKey('vkAuthError');
 
+  static bool hasMaxAuthPayload(Uri uri) =>
+      uri.queryParameters.containsKey('maxAuthCode') ||
+      uri.queryParameters.containsKey('maxAuthError');
+
   static bool hasSocialAuthPayload(Uri uri) =>
-      hasTelegramAuthPayload(uri) || hasVkAuthPayload(uri);
+      hasTelegramAuthPayload(uri) ||
+      hasVkAuthPayload(uri) ||
+      hasMaxAuthPayload(uri);
 
   /// Дерево — ядро продукта и снова отдельная вкладка (по центру бара),
   /// «Родные» — соседняя вкладка со списком людей. У каждой свой адрес:
@@ -131,6 +139,7 @@ class AppRouterGuards {
   }
 
   Future<String?> redirect(BuildContext context, GoRouterState state) async {
+    await SemyaInvitationDeepLinkService().ready;
     final isLoggedIn = _authService.currentUserId != null;
     final isAuthEntryRoute = isAuthEntryPage(state.matchedLocation);
     final completingProfile = state.matchedLocation == '/complete_profile';
@@ -185,11 +194,18 @@ class AppRouterGuards {
       if (hasSocialAuthPayload(state.uri)) {
         return null;
       }
+      final pendingInviteToken = SemyaInvitationDeepLinkService().pendingToken;
+      if (pendingInviteToken != null && pendingInviteToken.isNotEmpty) {
+        return '/invite/${Uri.encodeComponent(pendingInviteToken)}';
+      }
       final deferredTarget = restoreDeferredLoginTarget(state);
       return deferredTarget ?? '/';
     }
 
     if (isLoggedIn && !completingProfile && !setupWizard) {
+      if (_authService.currentRequiresOnboarding) {
+        return '/setup';
+      }
       final profileRedirect = await _ensureCompletedProfile(state);
       if (profileRedirect != null) {
         return profileRedirect;

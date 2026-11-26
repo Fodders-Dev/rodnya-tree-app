@@ -18,6 +18,7 @@ import '../models/family_person.dart' as rodnya_models;
 import '../navigation/app_router_shared.dart';
 import '../providers/tree_provider.dart';
 import '../utils/relative_details_route.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import 'active_chat_tracker.dart';
 import 'android_incoming_call_service.dart';
@@ -193,6 +194,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   bool _androidNotificationPermissionsChecked = false;
   bool _androidNotificationsPermissionDenied = false;
   int _unreadNotificationsCount = 0;
+  int _syncGeneration = 0;
   String? _pendingNavigationPayload;
   Timer? _pollingTimer;
   StreamSubscription<CustomApiRealtimeEvent>? _realtimeSubscription;
@@ -324,20 +326,29 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   }
 
   Future<void> startForegroundSync() async {
+    final generation = _syncGeneration;
     await initialize();
-    if (_authService == null || _runtimeConfig == null) {
+    if (generation != _syncGeneration ||
+        _authService == null ||
+        _runtimeConfig == null) {
       return;
     }
 
     final hasActiveSession = await _registerPushDevicesSafely();
-    if (!hasActiveSession) {
+    if (generation != _syncGeneration || !hasActiveSession) {
       return;
     }
     _ensureRemotePushTokenListener();
 
     if (_realtimeService != null) {
       await _realtimeService!.connect();
+      if (generation != _syncGeneration) {
+        return;
+      }
       await _realtimeSubscription?.cancel();
+      if (generation != _syncGeneration) {
+        return;
+      }
       _realtimeSubscription = _realtimeService!.events
           .where((event) => event.isNotificationEvent)
           .listen((event) {
@@ -359,7 +370,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
     _pollingTimer?.cancel();
     await refreshUnreadNotificationsCount();
+    if (generation != _syncGeneration) {
+      return;
+    }
     await _syncPendingNotificationsSafely();
+    if (generation != _syncGeneration) {
+      return;
+    }
     _pollingTimer = Timer.periodic(_pollInterval, (_) {
       unawaited(_syncPendingNotificationsSafely());
       unawaited(refreshUnreadNotificationsCount());
@@ -379,12 +396,20 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   }
 
   Future<void> stopForegroundSync() async {
+    _syncGeneration++;
     _pollingTimer?.cancel();
     _pollingTimer = null;
     await _remotePushTokenSubscription?.cancel();
     _remotePushTokenSubscription = null;
     await _realtimeSubscription?.cancel();
     _realtimeSubscription = null;
+  }
+
+  Future<void> resetForSignOut() async {
+    await stopForegroundSync();
+    _deliveredNotificationIds.clear();
+    _pendingNavigationPayload = null;
+    _updateUnreadNotificationsCount(0);
   }
 
   Future<void> _ensureAndroidNotificationSurfacePermissions({
@@ -480,7 +505,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
 
     try {
-      StartupTrace.logRequest('GET', '/v1/notifications?status=unread&limit=20');
+      StartupTrace.logRequest(
+          'GET', '/v1/notifications?status=unread&limit=20');
       final response = await _httpClient.get(
         _buildUri(runtimeConfig, '/v1/notifications?status=unread&limit=20'),
         headers: _headers(token),
@@ -489,10 +515,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       final payload = _decodeResponse(response);
       final rawNotifications = payload['notifications'];
       if (rawNotifications is! List<dynamic>) {
-        _updateUnreadNotificationsCount(0);
         return;
       }
-      _updateUnreadNotificationsCount(rawNotifications.length);
 
       final now = DateTime.now();
       final cutoff = now.subtract(_maxReplayAge);
@@ -1622,7 +1646,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     final deviceId =
         _preferences.getString(_registeredBrowserPushDeviceIdStorageKey);
     if (deviceId != null && deviceId.isNotEmpty) {
-      await _deletePushDevice(deviceId);
+      try {
+        await _deletePushDevice(deviceId);
+      } catch (error) {
+        debugPrint(
+          'Failed to delete browser push device on signOut: $error',
+        );
+      }
     }
 
     await _browserNotificationBridge.unsubscribeFromPush();
@@ -1822,6 +1852,12 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   }
 
   void _schedulePayloadNavigation(String payload, {int attempt = 0}) {
+    final authService = _authService;
+    if (authService != null && (authService.currentUserId ?? '').isEmpty) {
+      _pendingNavigationPayload = payload;
+      return;
+    }
+
     final navigatorContext = rootNavigatorKey.currentContext;
     if (navigatorContext == null) {
       _pendingNavigationPayload = payload;
@@ -1940,6 +1976,31 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
     if (type == 'tree_invitation') {
       _navigateOverHome(router, '/trees?tab=invitations');
+      return;
+    }
+
+    if (type == 'semya_invitation_received') {
+      final token =
+          (rootPayload['token']?.toString() ?? data['token']?.toString() ?? '')
+              .trim();
+      if (token.isNotEmpty) {
+        _navigateOverHome(router, '/invite/${Uri.encodeComponent(token)}');
+      } else {
+        _navigateOverHome(router, '/trees?tab=invitations');
+      }
+      return;
+    }
+
+    if (type == 'semya_invitation_accepted') {
+      final treeId = (rootPayload['treeId']?.toString() ??
+              data['treeId']?.toString() ??
+              '')
+          .trim();
+      if (treeId.isNotEmpty) {
+        _navigateOverHome(router, '/tree/view/$treeId');
+      } else {
+        _navigateOverHome(router, '/trees');
+      }
       return;
     }
 
@@ -2086,7 +2147,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     // Сбрасываем стек до '/' через replace, потом кладём target
     // поверх в следующем кадре чтобы GoRouter успел обработать
     // первый переход.
-    router.pushReplacement('/');
+    router.go('/');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       router.push(location);
     });
@@ -2205,10 +2266,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       throw const CustomApiException('Пустой ответ от backend');
     }
 
-    final dynamic decoded = jsonDecode(response.body);
-    final payload = decoded is Map<String, dynamic>
-        ? decoded
-        : <String, dynamic>{'data': decoded};
+    final payload = tryDecodeJsonMap(response.body);
+    if (payload == null) {
+      throw CustomApiException(
+        'Сервер вернул некорректный ответ (${response.statusCode})',
+        statusCode: response.statusCode,
+      );
+    }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return payload;
@@ -2273,12 +2337,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   }
 
   Future<bool> _handleUnauthorizedError(CustomApiException error) async {
-    final normalizedMessage = error.message.toLowerCase();
-    final isUnauthorized = error.statusCode == 401 ||
-        error.statusCode == 403 ||
-        normalizedMessage.contains('сесс') ||
-        normalizedMessage.contains('unauthorized');
-    if (!isUnauthorized) {
+    if (error.statusCode != 401) {
       return false;
     }
 

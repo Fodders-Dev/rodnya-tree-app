@@ -15,6 +15,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/interfaces/story_request_capable_family_tree_service.dart';
@@ -67,6 +68,10 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
   final TextEditingController _textController = TextEditingController();
   bool _submitting = false;
   String? _submitError;
+  bool _notAddressee = false;
+  String? _pendingUploadedUrl;
+  String? _pendingKind;
+  int? _pendingDurationSec;
 
   @override
   void initState() {
@@ -141,12 +146,20 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
         });
         return;
       }
+      final currentUserId = GetIt.I.isRegistered<AuthServiceInterface>()
+          ? GetIt.I<AuthServiceInterface>().currentUserId
+          : null;
+      final isNotTarget =
+          currentUserId != null && request.targetUserId != currentUserId;
       setState(() {
         _request = request;
         _cachedRequesterName =
             request.requester?.displayName ?? _cachedRequesterName;
         _cachedPersonName = request.person?.displayName ?? _cachedPersonName;
-        _state = request.isPending ? _ScreenState.main : _ScreenState.terminal;
+        _notAddressee = isNotTarget;
+        _state = (!isNotTarget && request.isPending)
+            ? _ScreenState.main
+            : _ScreenState.terminal;
       });
     } catch (e) {
       if (!mounted) return;
@@ -188,10 +201,23 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       setState(() {
         _request = updated;
         _submitting = false;
+        _pendingUploadedUrl = null;
+        _pendingKind = null;
+        _pendingDurationSec = null;
         _state = _ScreenState.thankYou;
       });
     } on StoryRequestError catch (e) {
       if (!mounted) return;
+      if (e.statusCode == 409 || e.code == 'NOT_PENDING') {
+        setState(() {
+          _submitting = false;
+          _pendingUploadedUrl = null;
+          _pendingKind = null;
+          _pendingDurationSec = null;
+          _state = _ScreenState.terminal;
+        });
+        return;
+      }
       setState(() {
         _submitting = false;
         _submitError = e.message;
@@ -202,6 +228,25 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
         _submitting = false;
         _submitError = 'Не удалось отправить ответ. Попробуйте ещё раз.';
       });
+    }
+  }
+
+  Future<void> _retryPendingUploadSubmit() async {
+    final url = _pendingUploadedUrl;
+    final kind = _pendingKind;
+    if (url == null || kind == null) return;
+    if (kind == 'audio') {
+      await _submitAnswer(
+        StoryRequestAnswerInput.audio(
+          mediaUrl: url,
+          durationSec: _pendingDurationSec ?? 1,
+        ),
+      );
+    } else if (kind == 'photo') {
+      _pendingUploadedUrl = url;
+      _pendingKind = 'photo';
+      _pendingDurationSec = null;
+      await _submitAnswer(StoryRequestAnswerInput.photo(mediaUrl: url));
     }
   }
 
@@ -240,6 +285,9 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       });
       return;
     }
+    _pendingUploadedUrl = url;
+    _pendingKind = 'audio';
+    _pendingDurationSec = result.durationSec;
     await _submitAnswer(
       StoryRequestAnswerInput.audio(
         mediaUrl: url,
@@ -319,6 +367,9 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       });
       return;
     }
+    _pendingUploadedUrl = url;
+    _pendingKind = 'photo';
+    _pendingDurationSec = null;
     await _submitAnswer(StoryRequestAnswerInput.photo(mediaUrl: url));
   }
 
@@ -356,10 +407,30 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
         requestId: widget.requestId,
       );
       if (!mounted) return;
+      if (updated == null) {
+        setState(() {
+          _submitting = false;
+          _submitError = 'Не получилось отклонить вопрос. Попробуйте ещё раз.';
+        });
+        return;
+      }
       setState(() {
         _submitting = false;
-        _request = updated ?? _request;
+        _request = updated;
         _state = _ScreenState.terminal;
+      });
+    } on StoryRequestError catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 409 || e.code == 'NOT_PENDING') {
+        setState(() {
+          _submitting = false;
+          _state = _ScreenState.terminal;
+        });
+        return;
+      }
+      setState(() {
+        _submitting = false;
+        _submitError = e.message;
       });
     } catch (_) {
       if (!mounted) return;
@@ -431,21 +502,26 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
   Widget _buildTerminal(BuildContext context) {
     final theme = Theme.of(context);
     String message;
-    switch (_request?.status) {
-      case StoryRequestStatus.declined:
-        message = 'Хорошо — вопрос закрыт, отвечать не нужно.';
-        break;
-      case StoryRequestStatus.answered:
-        message = 'Вы уже ответили на этот вопрос — спасибо!';
-        break;
-      case StoryRequestStatus.expired:
-        message = 'Срок ответа на этот вопрос истёк.';
-        break;
-      case StoryRequestStatus.revoked:
-        message = '$_requesterName отозвал(а) этот вопрос — отвечать не нужно.';
-        break;
-      default:
-        message = 'Этот вопрос уже закрыт.';
+    if (_notAddressee) {
+      message = 'Ответить на этот вопрос может только адресат.';
+    } else {
+      switch (_request?.status) {
+        case StoryRequestStatus.declined:
+          message = 'Хорошо — вопрос закрыт, отвечать не нужно.';
+          break;
+        case StoryRequestStatus.answered:
+          message = 'Вы уже ответили на этот вопрос — спасибо!';
+          break;
+        case StoryRequestStatus.expired:
+          message = 'Срок ответа на этот вопрос истёк.';
+          break;
+        case StoryRequestStatus.revoked:
+          message =
+              '$_requesterName отозвал(а) этот вопрос — отвечать не нужно.';
+          break;
+        default:
+          message = 'Этот вопрос уже закрыт.';
+      }
     }
     return Scaffold(
       appBar: AppBar(),
@@ -494,13 +570,15 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.favorite_rounded, size: 44, color: Colors.pink),
+                const Icon(Icons.favorite_rounded,
+                    size: 44, color: Colors.pink),
                 const SizedBox(height: 16),
                 Text(
                   'Спасибо! $_requesterName получит вашу историю',
                   key: const Key('story-answer-thankyou-message'),
                   textAlign: TextAlign.center,
-                  style: AppTheme.serif(fontSize: 22, fontWeight: FontWeight.w800),
+                  style:
+                      AppTheme.serif(fontSize: 22, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 24),
                 if (personId != null && personId.isNotEmpty)
@@ -610,14 +688,37 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
               ] else
                 _buildTextForm(theme),
               const SizedBox(height: 12),
+              if (_submitting && !_textMode) ...[
+                const LinearProgressIndicator(),
+                const SizedBox(height: 8),
+                Text(
+                  'Сохраняем ответ…',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               if (_submitError != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    _submitError!,
-                    key: const Key('story-answer-submit-error'),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: theme.colorScheme.error),
+                  child: Column(
+                    children: [
+                      Text(
+                        _submitError!,
+                        key: const Key('story-answer-submit-error'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                      if (_pendingUploadedUrl != null && !_submitting) ...[
+                        const SizedBox(height: 8),
+                        FilledButton.tonal(
+                          key: const Key('story-answer-retry-submit'),
+                          onPressed: _retryPendingUploadSubmit,
+                          child: const Text('Повторить отправку'),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               TextButton(
@@ -633,7 +734,8 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
                 onPressed: _submitting ? null : _confirmDecline,
                 child: Text(
                   'Не хочу отвечать',
-                  style: TextStyle(fontSize: 16, color: theme.colorScheme.error),
+                  style:
+                      TextStyle(fontSize: 16, color: theme.colorScheme.error),
                 ),
               ),
             ],

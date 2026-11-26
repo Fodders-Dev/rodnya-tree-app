@@ -245,6 +245,24 @@
                 <data android:pathPrefix="/invite/"/>
             </intent-filter>
 
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"/>
+                <data android:host="rodnya-tree.ru"/>
+                <data android:pathPrefix="/browse/"/>
+            </intent-filter>
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"/>
+                <data android:host="rodnya-tree.ru"/>
+                <data android:path="/reset-password"/>
+            </intent-filter>
+
             <!-- Legacy tree/person invite links are hash-routed:
                  https://rodnya-tree.ru/#/invite?treeId=...&personId=...
                  Android App Links do not match fragments, so the

@@ -243,6 +243,7 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceSingleton<ChatSendQueue>(
       ChatSendQueue(
         chatService: customApiChatService,
+        currentUserId: () => customApiAuthService.currentUserId,
         // Listen to AppStatusService so the queue auto-retries
         // failed messages the moment connectivity is restored,
         // instead of leaving the user to tap "Повторить" on each
@@ -507,10 +508,13 @@ class AppStartupService implements AppStartupServiceInterface {
     // Hive box so a different account signing in next doesn't see
     // any leftover messages, profile chrome, posts or tree graph.
     // Best-effort: failures are logged and do not block sign-out.
-    String? lastUserId;
+    String? lastUserId = customApiAuthService.currentUserId;
     customApiAuthService.authStateChanges.listen((nextUserId) async {
       try {
-        if (lastUserId != null && nextUserId != lastUserId) {
+        final signedOut = nextUserId == null || nextUserId.isEmpty;
+        final switchedAccount = lastUserId != null && nextUserId != lastUserId;
+        if (signedOut || switchedAccount) {
+          _getIt<ChatSendQueue>().resetForSignOut();
           await Future.wait<void>([
             chatMessageCache.clearAll(),
             chatPreviewCache.clear(),
@@ -519,7 +523,17 @@ class AppStartupService implements AppStartupServiceInterface {
             postsCache.clearAll(),
             userProfileCache.clearAll(),
             treeGraphCache.clearAll(),
+            localStorageService.clearCache(),
+            callCoordinatorService.reset(),
+            customApiTreeService.resetForSignOut(),
+            customApiNotificationService.resetForSignOut(),
+            customApiProfileService.resetForSignOut(),
+            if (_getIt.isRegistered<TreeProvider>())
+              _getIt<TreeProvider>().resetForSignOut(),
           ]);
+          if (_getIt.isRegistered<CustomApiCallService>()) {
+            _getIt<CustomApiCallService>().resetForSignOut();
+          }
         }
       } catch (error, stackTrace) {
         debugPrint(

@@ -174,6 +174,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   // this screen so StoryRequestStatusLine's key changes and it remounts
   // (fresh fetch) instead of showing stale «нет открытых вопросов».
   int _storyRequestStatusTick = 0;
+  int _biographyRefreshVersion = 0;
 
   // Small wrapper so _sections.dart (an `extension on _RelativeDetails-
   // ScreenState`, not a State subclass itself) can trigger a rebuild
@@ -182,6 +183,19 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   void _refreshStoryRequestStatus() {
     setState(() => _storyRequestStatusTick++);
   }
+
+  void _bumpBiographyRefreshVersion() {
+    setState(() => _biographyRefreshVersion++);
+  }
+
+  void _navigateBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/tree');
+    }
+  }
+
   List<FamilyRelation> _relations = [];
   List<TreeChangeRecord> _historyRecords = [];
   UserProfile? _userProfile;
@@ -680,7 +694,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         leading: IconButton(
           icon: Icon(Icons.arrow_back),
           tooltip: 'Назад',
-          onPressed: () => context.pop(),
+          onPressed: _navigateBack,
         ),
         actions: [
           // §3.1 top-right: ✏️ (structured-field edit) + ⋯ (everything
@@ -802,7 +816,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   }
 
   bool _canEditOrDelete() {
-    return _person != null && (_dossier?.canEditFamilyFields ?? true);
+    return _person != null && (_dossier?.canEditFamilyFields ?? false);
   }
 
   /// Phase 3.4 chunk 5: открывает reusable conflict-resolution
@@ -1930,7 +1944,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         }
         if (mounted) {
           _showRelativeSnackBar('Карточка ${_person!.displayName} удалена.');
-          context.pop();
+          _navigateBack();
         }
       } catch (e) {
         debugPrint('Ошибка удаления родственника: $e');

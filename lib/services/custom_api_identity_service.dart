@@ -10,6 +10,7 @@ import '../models/identity_claim.dart';
 import '../models/merge_proposal.dart';
 import '../models/person_attribute.dart';
 import '../models/public_identity_result.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import 'custom_api_auth_service.dart';
 
@@ -257,16 +258,21 @@ class CustomApiIdentityService implements IdentityServiceInterface {
       if (response.body.isEmpty) {
         return <String, dynamic>{};
       }
-      final decoded = jsonDecode(response.body);
-      return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+      final decoded = tryDecodeJsonMap(response.body);
+      if (decoded == null) {
+        throw CustomApiIdentityException(
+          'Identity Service Error: некорректный ответ сервера (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
+      }
+      return decoded;
     }
 
-    final errorData = response.body.isNotEmpty ? jsonDecode(response.body) : {};
+    final errorData =
+        tryDecodeJsonMap(response.body) ?? const <String, dynamic>{};
     throw CustomApiIdentityException(
-      errorData is Map<String, dynamic>
-          ? errorData['message']?.toString() ??
-              'Identity Service Error: ${response.statusCode}'
-          : 'Identity Service Error: ${response.statusCode}',
+      errorData['message']?.toString() ??
+          'Identity Service Error: ${response.statusCode}',
       statusCode: response.statusCode,
     );
   }

@@ -12,6 +12,7 @@ import '../backend/interfaces/story_service_interface.dart';
 import '../models/post.dart' show TreeContentScopeType;
 import '../models/reaction_summary.dart';
 import '../models/story.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import 'custom_api_auth_service.dart';
 
@@ -221,10 +222,18 @@ class CustomApiStoryService implements StoryServiceInterface {
       if (response.body.isEmpty) {
         return <String, dynamic>{};
       }
-      return jsonDecode(response.body);
+      final decoded = tryDecodeJsonValue(response.body);
+      if (decoded == null) {
+        throw CustomApiStoryException(
+          'Story Service Error: некорректный ответ сервера (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
+      }
+      return decoded;
     }
 
-    final errorData = response.body.isNotEmpty ? jsonDecode(response.body) : {};
+    final errorData =
+        tryDecodeJsonMap(response.body) ?? const <String, dynamic>{};
     throw CustomApiStoryException(
       errorData['message']?.toString() ??
           'Story Service Error: ${response.statusCode}',

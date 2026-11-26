@@ -474,7 +474,14 @@ class AppUpdateService extends ChangeNotifier {
     // (authority ${applicationId}.fileProvider...) и сам ставит
     // FLAG_GRANT_READ_URI_PERMISSION; APK той же релиз-подписью ставится
     // поверх (in-place update).
-    await OpenFilex.open(path);
+    final result = await OpenFilex.open(path);
+    if (result.type != ResultType.done) {
+      throw Exception(
+        result.message.isNotEmpty
+            ? result.message
+            : 'Не удалось открыть установщик (${result.type.name})',
+      );
+    }
   }
 
   Future<void> _defaultUpdateInstaller(

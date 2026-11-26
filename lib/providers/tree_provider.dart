@@ -100,6 +100,12 @@ class TreeProvider with ChangeNotifier {
     await selectTree(null, null);
   }
 
+  Future<void> resetForSignOut() async {
+    _availableTrees = const <FamilyTree>[];
+    _hasLoadedAvailableTrees = false;
+    await clearSelection();
+  }
+
   Future<void> selectDefaultTreeIfNeeded({
     List<FamilyTree>? preloadedTrees,
   }) async {

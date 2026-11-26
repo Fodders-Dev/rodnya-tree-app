@@ -400,8 +400,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       } else {
         // Один bulk-запрос вместо N поштучных POST'ов (роут read-all).
         await _notificationService?.markAllNotificationsRead(
-          fallbackIds:
-              notificationsToMark.map((item) => item.id).toList(growable: false),
+          fallbackIds: notificationsToMark
+              .map((item) => item.id)
+              .toList(growable: false),
         );
       }
 
@@ -694,144 +695,146 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       ),
                     ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Центр активности',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color:
-                              theme.colorScheme.primary.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isFriendsTree
-                                  ? Icons.diversity_3_outlined
-                                  : Icons.account_tree_outlined,
-                              size: 16,
-                              color: theme.colorScheme.primary,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              isFriendsTree
-                                  ? 'Контекст круга друзей'
-                                  : 'Контекст семейного дерева',
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        'Здесь собираются новые сообщения, приглашения в $graphLabel и $eventLabel. На desktop проще быстро просматривать очередь уведомлений и сразу переходить в нужный раздел.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Всего новых: ${_notifications.length}',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _buildPanelStatChip(
-                            theme,
-                            icon: Icons.notifications_active_outlined,
-                            label: '${_notifications.length} в очереди',
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Центр активности',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
                           ),
-                          _buildPanelStatChip(
-                            theme,
-                            icon: Icons.chat_bubble_outline,
-                            label:
-                                '${typeSummary['chat_message'] ?? typeSummary['chat'] ?? 0} чатов',
-                          ),
-                          _buildPanelStatChip(
-                            theme,
-                            icon: Icons.people_outline,
-                            label:
-                                '${typeSummary['relation_request'] ?? 0} запросов',
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      if (_notifications.isNotEmpty)
-                        FilledButton.icon(
-                          onPressed: _isMutating ? null : _markAllAsRead,
-                          icon: const Icon(Icons.done_all),
-                          label: const Text('Отметить всё прочитанным'),
                         ),
-                      const SizedBox(height: 14),
-                      OutlinedButton.icon(
-                        onPressed: () => context.go('/chats'),
-                        icon: const Icon(Icons.chat_bubble_outline),
-                        label: const Text('Открыть чаты'),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: () => context.go('/tree'),
-                        icon: const Icon(Icons.account_tree_outlined),
-                        label: Text(
-                          isFriendsTree ? 'Открыть круг' : 'Открыть дерево',
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: () => context.go('/identity/review'),
-                        icon: const Icon(Icons.merge_type_outlined),
-                        label: const Text('Проверить совпадения'),
-                      ),
-                      const SizedBox(height: 16),
-                      ...sortedTypeSummary.map(
-                        (entry) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary
+                                .withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
                           child: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                _notificationIconForType(entry.key),
-                                size: 18,
+                                isFriendsTree
+                                    ? Icons.diversity_3_outlined
+                                    : Icons.account_tree_outlined,
+                                size: 16,
                                 color: theme.colorScheme.primary,
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  _notificationLabelForType(entry.key),
-                                  style: theme.textTheme.bodyMedium,
-                                ),
-                              ),
+                              const SizedBox(width: 8),
                               Text(
-                                '${entry.value}',
-                                style: theme.textTheme.titleSmall?.copyWith(
+                                isFriendsTree
+                                    ? 'Контекст круга друзей'
+                                    : 'Контекст семейного дерева',
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  color: theme.colorScheme.primary,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 14),
+                        Text(
+                          'Здесь собираются новые сообщения, приглашения в $graphLabel и $eventLabel. На desktop проще быстро просматривать очередь уведомлений и сразу переходить в нужный раздел.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Всего новых: ${_notifications.length}',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _buildPanelStatChip(
+                              theme,
+                              icon: Icons.notifications_active_outlined,
+                              label: '${_notifications.length} в очереди',
+                            ),
+                            _buildPanelStatChip(
+                              theme,
+                              icon: Icons.chat_bubble_outline,
+                              label:
+                                  '${typeSummary['chat_message'] ?? typeSummary['chat'] ?? 0} чатов',
+                            ),
+                            _buildPanelStatChip(
+                              theme,
+                              icon: Icons.people_outline,
+                              label:
+                                  '${typeSummary['relation_request'] ?? 0} запросов',
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        if (_notifications.isNotEmpty)
+                          FilledButton.icon(
+                            onPressed: _isMutating ? null : _markAllAsRead,
+                            icon: const Icon(Icons.done_all),
+                            label: const Text('Отметить всё прочитанным'),
+                          ),
+                        const SizedBox(height: 14),
+                        OutlinedButton.icon(
+                          onPressed: () => context.go('/chats'),
+                          icon: const Icon(Icons.chat_bubble_outline),
+                          label: const Text('Открыть чаты'),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: () => context.go('/tree'),
+                          icon: const Icon(Icons.account_tree_outlined),
+                          label: Text(
+                            isFriendsTree ? 'Открыть круг' : 'Открыть дерево',
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: () => context.go('/identity/review'),
+                          icon: const Icon(Icons.merge_type_outlined),
+                          label: const Text('Проверить совпадения'),
+                        ),
+                        const SizedBox(height: 16),
+                        ...sortedTypeSummary.map(
+                          (entry) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _notificationIconForType(entry.key),
+                                  size: 18,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _notificationLabelForType(entry.key),
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                ),
+                                Text(
+                                  '${entry.value}',
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -906,9 +909,23 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final sameType = previousItem.type == item.type;
       final sameTitle = previousItem.title == item.title;
       final closeInTime = _isSameDay(previousItem.createdAt, item.createdAt);
-      final sameChat = previousItem.data['chatId'] == item.data['chatId'];
+      final sameChat = item.data['chatId'] != null &&
+          previousItem.data['chatId'] == item.data['chatId'];
+      final isStoryRequestType = item.type.startsWith('story_request');
+      final sameStoryRequest = isStoryRequestType &&
+          item.data['requestId'] != null &&
+          previousItem.data['requestId'] == item.data['requestId'];
+      final isChatType = item.type == 'chat' ||
+          item.type == 'chat_message' ||
+          item.type == 'chat_mention' ||
+          item.type == 'message' ||
+          item.data['chatId'] != null ||
+          previousItem.data['chatId'] != null;
 
-      if (sameType && sameTitle && closeInTime && (sameChat || sameType)) {
+      if (sameType &&
+          sameTitle &&
+          closeInTime &&
+          (isChatType ? sameChat : (!isStoryRequestType || sameStoryRequest))) {
         previousGroup.add(item);
       } else {
         grouped.add(<AppNotificationItem>[item]);
@@ -1163,8 +1180,7 @@ class _NotificationsMessageState extends StatelessWidget {
                     width: 56,
                     height: 56,
                     decoration: BoxDecoration(
-                      color:
-                          theme.colorScheme.primary.withValues(alpha: 0.12),
+                      color: theme.colorScheme.primary.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
                     child:

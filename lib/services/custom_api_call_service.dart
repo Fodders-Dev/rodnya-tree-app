@@ -10,6 +10,7 @@ import '../models/call_event.dart';
 import '../models/call_invite.dart';
 import '../models/call_media_mode.dart';
 import '../utils/client_instance_id.dart';
+import '../utils/safe_json_decode.dart';
 import '../utils/startup_trace.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
@@ -95,6 +96,10 @@ class CustomApiCallService
     _realtimeSubscription = null;
   }
 
+  void resetForSignOut() {
+    _activeCallInFlight.clear();
+  }
+
   @override
   Future<CallInvite?> getActiveCall({String? chatId}) {
     final normalizedChatId = chatId?.trim();
@@ -105,14 +110,14 @@ class CustomApiCallService
     if (inFlight != null) {
       return inFlight;
     }
-    final future = _fetchActiveCall(normalizedChatId);
-    _activeCallInFlight[key] = future;
-    unawaited(future.whenComplete(() {
-      if (identical(_activeCallInFlight[key], future)) {
+    late final Future<CallInvite?> tracked;
+    tracked = _fetchActiveCall(normalizedChatId).whenComplete(() {
+      if (identical(_activeCallInFlight[key], tracked)) {
         _activeCallInFlight.remove(key);
       }
-    }));
-    return future;
+    });
+    _activeCallInFlight[key] = tracked;
+    return tracked;
   }
 
   Future<CallInvite?> _fetchActiveCall(String? normalizedChatId) async {
@@ -331,7 +336,7 @@ class CustomApiCallService
     final response = await http.Response.fromStream(streamedResponse);
     final decodedBody = response.body.isEmpty
         ? const <String, dynamic>{}
-        : jsonDecode(response.body) as Map<String, dynamic>;
+        : (tryDecodeJsonMap(response.body) ?? const <String, dynamic>{});
     if (allowNotFound && response.statusCode == 404) {
       return const <String, dynamic>{};
     }

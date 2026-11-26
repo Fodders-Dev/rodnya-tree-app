@@ -260,10 +260,11 @@ class _ProfileArticleEditorScreenState
     _dirty.clear();
     if (mounted) setState(() => _saving = true);
     var sawConflict = false;
+    var hadError = false;
     for (final id in ids) {
-      final idx = _blocks.indexWhere((b) => b.id == id);
-      if (idx < 0) continue;
-      final block = _blocks[idx];
+      final preIdx = _blocks.indexWhere((b) => b.id == id);
+      if (preIdx < 0) continue;
+      final block = _blocks[preIdx];
       final text = _controllers[id]?.text ?? '';
       final Map<String, dynamic> content;
       if (block.type == 'photo') {
@@ -290,16 +291,22 @@ class _ProfileArticleEditorScreenState
           baseUpdatedAt: block.updatedAt,
         );
         if (!mounted) return;
-        _blocks[idx] = result.block;
+        final currentIdx = _blocks.indexWhere((b) => b.id == id);
+        if (currentIdx >= 0) {
+          _blocks[currentIdx] = result.block;
+        }
         if (result.conflict) sawConflict = true;
       } catch (_) {
+        hadError = true;
         _dirty.add(id); // keep for retry
       }
     }
     if (!mounted) return;
     setState(() {
       _saving = false;
-      _lastSavedAt = DateTime.now();
+      if (!hadError) {
+        _lastSavedAt = DateTime.now();
+      }
     });
     if (sawConflict && !_conflictNoticed) {
       _conflictNoticed = true;
@@ -355,6 +362,7 @@ class _ProfileArticleEditorScreenState
           widget.personId,
           _blocks.map((b) => b.id).toList(growable: false),
         );
+        if (!mounted) return;
       }
       // Divider has no editable field — nothing to focus.
       if (type != 'divider') _focus[block.id]?.requestFocus();
@@ -457,7 +465,7 @@ class _ProfileArticleEditorScreenState
     final source = await _choosePhotoSource();
     if (source == null || !mounted) return;
     final url = await _pickAndUpload(source);
-    if (url == null) return;
+    if (url == null || !mounted) return;
     await _patchBlockContent(block, {...block.content, 'url': url});
   }
 
@@ -662,7 +670,7 @@ class _ProfileArticleEditorScreenState
 
   Future<void> _replaceAudio(ArticleBlock block) async {
     final res = await _recordAndUpload();
-    if (res == null) return;
+    if (res == null || !mounted) return;
     await _patchBlockContent(
       block,
       ArticleBlock.audioContent(url: res.url, durationSec: res.durationSec),
@@ -675,8 +683,8 @@ class _ProfileArticleEditorScreenState
   ) async {
     final svc = _service();
     if (svc == null) return;
-    final idx = _blocks.indexWhere((b) => b.id == block.id);
-    if (idx < 0) return;
+    final preIdx = _blocks.indexWhere((b) => b.id == block.id);
+    if (preIdx < 0) return;
     setState(() => _busyBlockId = block.id);
     try {
       final result = await svc.updateBlock(
@@ -687,7 +695,10 @@ class _ProfileArticleEditorScreenState
       );
       if (!mounted) return;
       setState(() {
-        _blocks[idx] = result.block;
+        final currentIdx = _blocks.indexWhere((b) => b.id == block.id);
+        if (currentIdx >= 0) {
+          _blocks[currentIdx] = result.block;
+        }
         _busyBlockId = null;
       });
     } catch (_) {
@@ -702,15 +713,32 @@ class _ProfileArticleEditorScreenState
     if (svc == null) return;
     final idx = _blocks.indexWhere((b) => b.id == block.id);
     if (idx < 0) return;
+    final wasDirty = _dirty.remove(block.id);
+    final ctrl = _controllers.remove(block.id);
+    final attrCtrl = _attributionControllers.remove(block.id);
+    final focus = _focus.remove(block.id);
     setState(() => _blocks.removeAt(idx));
-    _dirty.remove(block.id);
-    _controllers.remove(block.id)?.dispose();
-    _attributionControllers.remove(block.id)?.dispose();
-    _focus.remove(block.id)?.dispose();
     try {
       await svc.removeBlock(widget.personId, block.id);
+      ctrl?.dispose();
+      attrCtrl?.dispose();
+      focus?.dispose();
     } catch (_) {
-      _snack('Не удалось удалить');
+      if (mounted) {
+        setState(() {
+          final insertAt = idx.clamp(0, _blocks.length);
+          _blocks.insert(insertAt, block);
+          if (ctrl != null) _controllers[block.id] = ctrl;
+          if (attrCtrl != null) _attributionControllers[block.id] = attrCtrl;
+          if (focus != null) _focus[block.id] = focus;
+          if (wasDirty) _dirty.add(block.id);
+        });
+        _snack('Не удалось удалить');
+      } else {
+        ctrl?.dispose();
+        attrCtrl?.dispose();
+        focus?.dispose();
+      }
     }
   }
 
@@ -801,6 +829,7 @@ class _ProfileArticleEditorScreenState
       return;
     }
     await _addBlock('header', initialText: prompt.title);
+    if (!mounted) return;
     await _addBlock(
       'paragraph',
       afterIndex: _blocks.length - 1,
@@ -912,7 +941,28 @@ class _ProfileArticleEditorScreenState
 
   Future<bool> _onWillPop() async {
     await _flush();
-    return true;
+    if (!mounted) return false;
+    if (_dirty.isEmpty) return true;
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Не все изменения сохранились'),
+        content: const Text(
+          'Проверьте подключение к интернету. Выйти без сохранения последних правок?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Остаться'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+    return leave == true;
   }
 
   String _describe(Object error) {
@@ -944,8 +994,8 @@ class _ProfileArticleEditorScreenState
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         final navigator = Navigator.of(context);
-        await _onWillPop();
-        if (mounted) navigator.pop();
+        final shouldPop = await _onWillPop();
+        if (shouldPop && mounted) navigator.pop();
       },
       child: Scaffold(
         backgroundColor: bg,
@@ -958,8 +1008,8 @@ class _ProfileArticleEditorScreenState
               key: const Key('article-done'),
               onPressed: () async {
                 final navigator = Navigator.of(context);
-                await _flush();
-                if (mounted) navigator.pop();
+                final shouldPop = await _onWillPop();
+                if (shouldPop && mounted) navigator.pop();
               },
               child: const Text('Готово'),
             ),

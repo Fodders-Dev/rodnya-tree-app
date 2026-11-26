@@ -33,6 +33,7 @@ import 'services/app_startup_service.dart';
 import 'services/call_coordinator_service.dart';
 import 'services/custom_api_diagnostics_service.dart';
 import 'services/invitation_service.dart';
+import 'services/secure_session_storage.dart';
 import 'startup/startup_failure_policy.dart';
 import 'startup/app_warmup_coordinator.dart';
 import 'widgets/app_update_ui.dart';
@@ -226,6 +227,9 @@ void _installClientDiagnostics() {
 
 Future<void> _resetRecoverableSessionAndRetry() async {
   final preferences = await SharedPreferences.getInstance();
+  try {
+    await SecureSessionStorage(fallbackPreferences: preferences).delete();
+  } catch (_) {}
   await preferences.remove('custom_api_session_v1');
   await _bootstrapAndRunApp();
 }
@@ -236,6 +240,13 @@ Future<bool> _shouldOfferSessionReset(Object error) async {
   }
 
   final preferences = await SharedPreferences.getInstance();
+  try {
+    final stored =
+        await SecureSessionStorage(fallbackPreferences: preferences).read();
+    if (stored != null && stored.isNotEmpty) {
+      return true;
+    }
+  } catch (_) {}
   return preferences.containsKey('custom_api_session_v1');
 }
 

@@ -305,24 +305,36 @@ abstract class PendingSendQueue<T> extends ChangeNotifier {
     try {
       await performSend(item).timeout(sendTimeoutFor(item));
       sendTrace.finish();
-      if (!itemExists(key, id)) {
+      final currentItem = findItem(key, id);
+      if (currentItem == null) {
         return;
       }
-      _upsert(markItemSent(item));
+      _upsert(markItemSent(currentItem));
       _notify();
       unawaited(_persistKeySafely(key));
-      onItemSent(item);
+      onItemSent(currentItem);
     } catch (error) {
       sendTrace.cancel();
-      if (!itemExists(key, id)) {
+      final currentItem = findItem(key, id);
+      if (currentItem == null) {
         return;
       }
-      _upsert(markItemFailed(item, errorTextFor(error)));
+      _upsert(markItemFailed(currentItem, errorTextFor(error)));
       _notify();
       unawaited(_persistKeySafely(key));
     } finally {
       _inFlightIds.remove(id);
     }
+  }
+
+  /// Drops in-memory queue entries & in-flight guards on sign-out without
+  /// touching persisted drafts of other accounts on disk.
+  @protected
+  void clearInMemoryQueue() {
+    _itemsByKey.clear();
+    _restoreTasks.clear();
+    _inFlightIds.clear();
+    _notify();
   }
 
   @protected

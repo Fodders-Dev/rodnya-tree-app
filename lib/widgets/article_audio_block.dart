@@ -152,6 +152,22 @@ class _ArticleAudioBlockState extends State<ArticleAudioBlock> {
   }
 
   @override
+  void didUpdateWidget(covariant ArticleAudioBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.block.audioUrl != widget.block.audioUrl) {
+      final p = _player;
+      if (p != null) {
+        unawaited(p.stop().catchError((_) {}));
+      }
+      _sourceLoaded = false;
+      _state = PlayerState.stopped;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _dragMs = null;
+    }
+  }
+
+  @override
   void dispose() {
     _stateSub?.cancel();
     _posSub?.cancel();

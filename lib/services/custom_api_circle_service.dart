@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
@@ -8,6 +7,7 @@ import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/circle_service_interface.dart';
 import '../models/audience_preset.dart';
 import '../models/circle.dart';
+import '../utils/safe_json_decode.dart';
 import 'custom_api_auth_service.dart';
 
 class CustomApiCircleService implements CircleServiceInterface {
@@ -89,10 +89,18 @@ class CustomApiCircleService implements CircleServiceInterface {
       if (response.body.isEmpty) {
         return <String, dynamic>{};
       }
-      return jsonDecode(response.body);
+      final decoded = tryDecodeJsonValue(response.body);
+      if (decoded == null) {
+        throw CustomApiCircleException(
+          'Circle Service Error: некорректный ответ сервера (${response.statusCode})',
+          statusCode: response.statusCode,
+        );
+      }
+      return decoded;
     }
 
-    final errorData = response.body.isNotEmpty ? jsonDecode(response.body) : {};
+    final errorData =
+        tryDecodeJsonMap(response.body) ?? const <String, dynamic>{};
     throw CustomApiCircleException(
       errorData['message']?.toString() ??
           'Circle Service Error: ${response.statusCode}',
