@@ -137,6 +137,31 @@ module.exports = {
     });
   },
 
+  _isActiveSemyaOwnerForTree(db, treeId, actorUserId) {
+    const normalizedActorId = String(actorUserId || "").trim();
+    const normalizedTreeId = String(treeId || "").trim();
+    if (!normalizedActorId || !normalizedTreeId || !db) {
+      return false;
+    }
+    const tree = (db.trees || []).find((t) => t.id === normalizedTreeId);
+    if (!tree?.semyaId) {
+      return false;
+    }
+    const semya = (db.semyi || []).find(
+      (s) => s.id === tree.semyaId && !s.deletedAt,
+    );
+    if (!semya) {
+      return false;
+    }
+    return (db.semyaMembers || []).some(
+      (m) =>
+        m.semyaId === semya.id &&
+        m.userId === normalizedActorId &&
+        m.role === "owner" &&
+        !m.hiddenAt,
+    );
+  },
+
   async findSemyaById(semyaId) {
     if (!semyaId || typeof semyaId !== "string") {
       return null;

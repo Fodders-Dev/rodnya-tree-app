@@ -468,6 +468,19 @@ module.exports = {
           (entry) => entry !== detachedUserId,
         );
       }
+      if (tree.semyaId && detachedUserId !== tree.creatorId) {
+        const now = nowIso();
+        for (const membership of db.semyaMembers || []) {
+          if (
+            membership.semyaId === tree.semyaId &&
+            membership.userId === detachedUserId &&
+            !membership.hiddenAt &&
+            membership.role !== "owner"
+          ) {
+            membership.hiddenAt = now;
+          }
+        }
+      }
       tree.updatedAt = nowIso();
     }
 
@@ -854,7 +867,7 @@ module.exports = {
         );
         if (
           !sourceTree ||
-          !this._userCanAccessTreeRecord(sourceTree, creatorId)
+          !this._userCanAccessTreeRecord(sourceTree, creatorId, db)
         ) {
           // Don't surface the existence of inaccessible persons —
           // treat as "source unknown" and proceed without the link.
@@ -969,8 +982,8 @@ module.exports = {
     const targetTree = db.trees.find((entry) => entry.id === targetTreeId);
     if (!sourceTree || !targetTree) return null;
     if (
-      !this._userCanAccessTreeRecord(sourceTree, actorId) ||
-      !this._userCanAccessTreeRecord(targetTree, actorId)
+      !this._userCanAccessTreeRecord(sourceTree, actorId, db) ||
+      !this._userCanAccessTreeRecord(targetTree, actorId, db)
     ) {
       return null;
     }
@@ -1586,6 +1599,90 @@ module.exports = {
       .map((entry) => structuredClone(entry));
   },
 
+  _assertCanManageDeletedPerson(
+    db,
+    row,
+    actorUserId,
+    {requireActiveSemya = false} = {},
+  ) {
+    const semyaId = row.semyaId || null;
+    let activeSemyaExists = false;
+    let activeMembership = null;
+    let hasHiddenRow = false;
+    if (semyaId) {
+      const semya = (db.semyi || []).find((s) => s.id === semyaId);
+      if (requireActiveSemya && semya?.deletedAt) {
+        throw new Error("SEMYA_DELETED");
+      }
+      activeSemyaExists = Boolean(semya && !semya.deletedAt);
+      const memberRows = (db.semyaMembers || []).filter(
+        (m) => m.userId === actorUserId && m.semyaId === semyaId,
+      );
+      activeMembership = memberRows.find((m) => !m.hiddenAt) || null;
+      hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
+    }
+    if (hasHiddenRow || (activeSemyaExists && !activeMembership)) {
+      throw new Error("FORBIDDEN");
+    }
+
+    const tree = (db.trees || []).find((entry) => entry.id === row.treeId);
+    const hasLegacyTreeAccess = Boolean(
+      tree &&
+      (tree.creatorId === actorUserId ||
+        (Array.isArray(tree.memberIds) && tree.memberIds.includes(actorUserId))),
+    );
+    const isOriginalActor = row.deletedByUserId === actorUserId;
+    const claimedUserId = normalizeNullableString(row.snapshot?.userId);
+
+    if (claimedUserId) {
+      if (semyaId && !activeSemyaExists && !isOriginalActor && !activeMembership) {
+        throw new Error("FORBIDDEN");
+      }
+      if (!semyaId && !isOriginalActor && !hasLegacyTreeAccess) {
+        throw new Error("FORBIDDEN");
+      }
+      if (actorUserId === claimedUserId) {
+        return;
+      }
+      const identityId = normalizeNullableString(row.snapshot?.identityId);
+      const hasSoftDeleteGrant = (db.graphPersonEditGrants || []).some(
+        (g) =>
+          !g.revokedAt &&
+          g.granteeUserId === actorUserId &&
+          g.scope === "soft-delete" &&
+          ((identityId && g.graphPersonId === identityId) ||
+            g.graphPersonId === row.originalPersonId),
+      );
+      if (!hasSoftDeleteGrant) {
+        throw new Error("FORBIDDEN");
+      }
+      return;
+    }
+
+    if (semyaId) {
+      if (activeSemyaExists) {
+        if (
+          activeMembership.role !== "editor" &&
+          activeMembership.role !== "owner"
+        ) {
+          throw new Error("FORBIDDEN");
+        }
+        return;
+      }
+      const canManageByMembership =
+        Boolean(activeMembership) &&
+        (activeMembership.role === "editor" || activeMembership.role === "owner");
+      if (!isOriginalActor && !canManageByMembership) {
+        throw new Error("FORBIDDEN");
+      }
+      return;
+    }
+
+    if (!isOriginalActor && !hasLegacyTreeAccess) {
+      throw new Error("FORBIDDEN");
+    }
+  },
+
   /// Ship Q4a: restore person из deletedPersons → live db.persons.
   /// Restores person snapshot + relations snapshot. Updates
   /// tree.memberIds/members if person had userId. Emits
@@ -1593,7 +1690,7 @@ module.exports = {
   ///   • DELETED_PERSON_NOT_FOUND (404)
   ///   • ALREADY_RESTORED (409)
   ///   • HARD_DELETE_ELAPSED (410 — past retention window)
-  ///   • FORBIDDEN (403 — not семя member либо not original actor)
+  ///   • FORBIDDEN (403 — role/owner/grant check failed)
   ///   • SEMYA_DELETED (410 — parent семя soft-deleted, restore
   ///     would orphan person)
   async restorePerson({deletedPersonId, actorUserId}) {
@@ -1616,28 +1713,9 @@ module.exports = {
         throw new Error("HARD_DELETE_ELAPSED");
       }
 
-      const isOriginalActor = row.deletedByUserId === actorUserId;
-      let isSemyaMember = false;
-      let hasHiddenRow = false;
-      let activeSemyaExists = false;
-      if (row.semyaId) {
-        const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
-        if (semya?.deletedAt) {
-          throw new Error("SEMYA_DELETED");
-        }
-        activeSemyaExists = Boolean(semya && !semya.deletedAt);
-        const memberRows = (db.semyaMembers || []).filter(
-          (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
-        );
-        isSemyaMember = memberRows.some((m) => !m.hiddenAt);
-        hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
-      }
-      if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
-        throw new Error("FORBIDDEN");
-      }
-      if (!isOriginalActor && !isSemyaMember) {
-        throw new Error("FORBIDDEN");
-      }
+      this._assertCanManageDeletedPerson(db, row, actorUserId, {
+        requireActiveSemya: true,
+      });
 
       const tree = (db.trees || []).find((entry) => entry.id === row.treeId);
       if (!tree) {
@@ -1724,25 +1802,9 @@ module.exports = {
       throw new Error("FLOOR_NOT_MET");
     }
 
-    const isOriginalActor = row.deletedByUserId === actorUserId;
-    let isSemyaMember = false;
-    let hasHiddenRow = false;
-    let activeSemyaExists = false;
-    if (row.semyaId) {
-      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
-      activeSemyaExists = Boolean(semya && !semya.deletedAt);
-      const memberRows = (db.semyaMembers || []).filter(
-        (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
-      );
-      isSemyaMember = memberRows.some((m) => !m.hiddenAt);
-      hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
-    }
-    if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
-      throw new Error("FORBIDDEN");
-    }
-    if (!isOriginalActor && !isSemyaMember) {
-      throw new Error("FORBIDDEN");
-    }
+    this._assertCanManageDeletedPerson(db, row, actorUserId, {
+      requireActiveSemya: false,
+    });
 
     db.deletedPersons.splice(idx, 1);
     await this._write(db);

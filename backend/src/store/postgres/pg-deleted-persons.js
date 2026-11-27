@@ -322,28 +322,9 @@ module.exports = {
       }
 
       const db = await this._read();
-      const isOriginalActor = row.deletedByUserId === actorUserId;
-      let isSemyaMember = false;
-      let hasHiddenRow = false;
-      let activeSemyaExists = false;
-      if (row.semyaId) {
-        const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
-        if (semya?.deletedAt) {
-          throw new Error("SEMYA_DELETED");
-        }
-        activeSemyaExists = Boolean(semya && !semya.deletedAt);
-        const memberRows = (db.semyaMembers || []).filter(
-          (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
-        );
-        isSemyaMember = memberRows.some((m) => !m.hiddenAt);
-        hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
-      }
-      if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
-        throw new Error("FORBIDDEN");
-      }
-      if (!isOriginalActor && !isSemyaMember) {
-        throw new Error("FORBIDDEN");
-      }
+      this._assertCanManageDeletedPerson(db, row, actorUserId, {
+        requireActiveSemya: true,
+      });
 
       const tree = (db.trees || []).find((entry) => entry.id === row.treeId);
       if (!tree) {
@@ -431,26 +412,10 @@ module.exports = {
       throw new Error("FLOOR_NOT_MET");
     }
 
-    const isOriginalActor = row.deletedByUserId === actorUserId;
-    let isSemyaMember = false;
-    let hasHiddenRow = false;
-    let activeSemyaExists = false;
-    if (row.semyaId) {
-      const db = await this._read();
-      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
-      activeSemyaExists = Boolean(semya && !semya.deletedAt);
-      const memberRows = (db.semyaMembers || []).filter(
-        (m) => m.userId === actorUserId && m.semyaId === row.semyaId,
-      );
-      isSemyaMember = memberRows.some((m) => !m.hiddenAt);
-      hasHiddenRow = memberRows.some((m) => Boolean(m.hiddenAt));
-    }
-    if (hasHiddenRow || (activeSemyaExists && !isSemyaMember)) {
-      throw new Error("FORBIDDEN");
-    }
-    if (!isOriginalActor && !isSemyaMember) {
-      throw new Error("FORBIDDEN");
-    }
+    const db = await this._read();
+    this._assertCanManageDeletedPerson(db, row, actorUserId, {
+      requireActiveSemya: false,
+    });
 
     // В отличие от FileStore (splice из блоба + полный _write) — точечный
     // DELETE, без чтения/записи всего блоба ради удаления одной корзинной

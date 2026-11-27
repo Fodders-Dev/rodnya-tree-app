@@ -155,6 +155,7 @@ function registerRelationRequestRoutes(
             treeId: request.treeId,
             personId: request.targetPersonId,
             userId: req.auth.user.id,
+            bypassClaimToken: true,
           });
 
           if (linkedPerson === null || linkedPerson === undefined) {

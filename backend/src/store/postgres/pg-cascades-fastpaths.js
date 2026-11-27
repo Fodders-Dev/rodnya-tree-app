@@ -381,6 +381,7 @@ module.exports = {
     const removedIds = {
       chats: asSet(result?.removedChatIds),
       trees: asSet(result?.removedTreeIds),
+      semyi: asSet(result?.removedSemyaIds),
       posts: asSet(result?.removedPostIds),
       comments: asSet(result?.removedCommentIds),
       relationRequests: asSet(result?.removedRelationRequestIds),
@@ -502,6 +503,33 @@ module.exports = {
           `DELETE FROM ${this._qualifiedDeletedPersonsTableName}
             WHERE tree_id IN (${placeholders.join(", ")})`,
           treeIds,
+        );
+      }
+      if (removedIds.semyi.size > 0) {
+        const semyaIds = Array.from(removedIds.semyi);
+        const placeholders = semyaIds.map((_, idx) => `$${idx + 1}`);
+        await this._pool.query(
+          `DELETE FROM ${this._qualifiedDeletedPersonsTableName}
+            WHERE semya_id IN (${placeholders.join(", ")})`,
+          semyaIds,
+        );
+      }
+      const remainingDeletedPersons = await this._pool.query(
+        `SELECT id, row_data FROM ${this._qualifiedDeletedPersonsTableName}`,
+      );
+      const snapshotUserRowIds = remainingDeletedPersons.rows
+        .filter((row) => {
+          const parsed = this._rowToDeletedPerson(row);
+          return String(parsed?.snapshot?.userId || "").trim() === normalizedUserId;
+        })
+        .map((row) => String(row.id || "").trim())
+        .filter(Boolean);
+      if (snapshotUserRowIds.length > 0) {
+        const placeholders = snapshotUserRowIds.map((_, idx) => `$${idx + 1}`);
+        await this._pool.query(
+          `DELETE FROM ${this._qualifiedDeletedPersonsTableName}
+            WHERE id IN (${placeholders.join(", ")})`,
+          snapshotUserRowIds,
         );
       }
     }

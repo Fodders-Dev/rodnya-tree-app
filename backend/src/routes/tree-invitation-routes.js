@@ -41,6 +41,17 @@ function registerTreeInvitationRoutes(
       if (!tree) {
         return;
       }
+      if (
+        req.semyaMembership &&
+        req.semyaMembership.role !== "owner" &&
+        req.semyaMembership.hasInviteGrant !== true
+      ) {
+        res.status(403).json({
+          message:
+            "Только владелец семьи или редактор с правом приглашать может отправлять приглашения",
+        });
+        return;
+      }
 
       const recipientUserId = String(req.body?.recipientUserId || "").trim();
       const recipientEmail = String(req.body?.recipientEmail || "")
@@ -94,6 +105,13 @@ function registerTreeInvitationRoutes(
         });
         return;
       }
+      if (invitation === "KICKED_FROM_SEMYA") {
+        res.status(403).json({
+          message:
+            "Этот пользователь был исключён — повторно пригласить может только владелец семьи",
+        });
+        return;
+      }
 
       // Друзья-полиш FR1: копия пуша зависит от вида дерева. tree.kind
       // приходит из store.findTree (raw record) — "friends" для круга.
@@ -137,10 +155,27 @@ function registerTreeInvitationRoutes(
         return;
       }
 
-      const result = await store.respondToTreeInvitation(
-        req.params.invitationId,
-        accept,
-      );
+      let result;
+      try {
+        result = await store.respondToTreeInvitation(
+          req.params.invitationId,
+          accept,
+        );
+      } catch (error) {
+        const code = error?.message;
+        if (code === "KICKED_FROM_SEMYA") {
+          res.status(403).json({
+            message:
+              "Вы были исключены из этой семьи — повторно пригласить может только владелец",
+          });
+          return;
+        }
+        if (code === "SEMYA_DELETED") {
+          res.status(410).json({message: "Семья удалена"});
+          return;
+        }
+        throw error;
+      }
       if (result === null) {
         res.status(404).json({message: "Приглашение не найдено"});
         return;

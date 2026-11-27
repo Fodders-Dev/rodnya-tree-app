@@ -930,7 +930,7 @@ module.exports = {
     const accessibleTreeIds = new Set(
       db.trees
         .filter((tree) =>
-          this._userCanAccessTreeRecord(tree, normalizedUserId),
+          this._userCanAccessTreeRecord(tree, normalizedUserId, db),
         )
         .map((tree) => tree.id),
     );
@@ -985,7 +985,7 @@ module.exports = {
     );
     if (
       !targetTree ||
-      !this._userCanAccessTreeRecord(targetTree, normalizedActorId)
+      !this._userCanAccessTreeRecord(targetTree, normalizedActorId, db)
     ) {
       throw new Error("FORBIDDEN");
     }
@@ -1127,7 +1127,7 @@ module.exports = {
     if (!tree) {
       return "Дерево удалено";
     }
-    if (this._userCanAccessTreeRecord(tree, viewerUserId)) {
+    if (this._userCanAccessTreeRecord(tree, viewerUserId, db)) {
       const treeName =
         String(tree.name || "Без названия").trim() || "Без названия";
       return `Дерево: ${treeName}`;
@@ -1261,7 +1261,9 @@ module.exports = {
 
     const accessibleTreeIds = new Set(
       db.trees
-        .filter((tree) => this._userCanAccessTreeRecord(tree, normalizedUserId))
+        .filter((tree) =>
+          this._userCanAccessTreeRecord(tree, normalizedUserId, db),
+        )
         .map((tree) => tree.id),
     );
     const stewardPersons = db.persons.filter((person) => {

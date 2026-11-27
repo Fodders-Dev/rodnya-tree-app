@@ -879,7 +879,19 @@ module.exports = {
         ),
       );
 
-      if (tree.creatorId === userId && nextMemberIds.length === 0) {
+      const semyaHasOtherActiveMember =
+        tree.semyaId &&
+        (db.semyaMembers || []).some(
+          (m) =>
+            m.semyaId === tree.semyaId &&
+            m.userId !== userId &&
+            !m.hiddenAt,
+        );
+      if (
+        tree.creatorId === userId &&
+        nextMemberIds.length === 0 &&
+        !semyaHasOtherActiveMember
+      ) {
         removedTreeIds.add(tree.id);
         return trees;
       }
@@ -1152,21 +1164,85 @@ module.exports = {
     }
     if (Array.isArray(db.profileContributions)) {
       db.profileContributions = db.profileContributions.filter((entry) => {
-        return entry.contributorId !== userId && entry.targetUserId !== userId;
-      });
-    }
-    if (Array.isArray(db.mergeProposals)) {
-      db.mergeProposals = db.mergeProposals.filter((entry) => {
         return (
-          entry.proposerId !== userId &&
-          !removedTreeIds.has(entry.treeId)
+          entry.authorUserId !== userId &&
+          entry.contributorId !== userId &&
+          entry.targetUserId !== userId &&
+          !removedTreeIds.has(entry.treeId) &&
+          !removedPersonIds.has(entry.personId)
         );
       });
     }
+    if (Array.isArray(db.mergeProposals)) {
+      const nextMergeProposals = [];
+      for (const entry of db.mergeProposals) {
+        if (
+          entry.proposedByUserId === userId ||
+          entry.proposerId === userId ||
+          removedTreeIds.has(entry.treeId) ||
+          removedTreeIds.has(entry.fromTreeId) ||
+          removedTreeIds.has(entry.candidateTreeId) ||
+          removedPersonIds.has(entry.fromPersonId) ||
+          removedPersonIds.has(entry.candidatePersonId)
+        ) {
+          continue;
+        }
+        const hasReviewerRefs =
+          Array.isArray(entry.reviewerUserIds) || Array.isArray(entry.reviews);
+        if (!hasReviewerRefs) {
+          nextMergeProposals.push(entry);
+          continue;
+        }
+        const nextReviewerIds = normalizeParticipantIds(
+          (entry.reviewerUserIds || []).filter((id) => id !== userId),
+        );
+        const nextReviews = Array.isArray(entry.reviews)
+          ? entry.reviews.filter((r) => r.userId !== userId)
+          : entry.reviews;
+        if (
+          (entry.status || "pending") === "pending" &&
+          nextReviewerIds.length === 0
+        ) {
+          continue;
+        }
+        nextMergeProposals.push({
+          ...entry,
+          reviewerUserIds: nextReviewerIds,
+          ...(Array.isArray(nextReviews) ? {reviews: nextReviews} : {}),
+        });
+      }
+      db.mergeProposals = nextMergeProposals;
+    }
     if (Array.isArray(db.identityClaims)) {
-      db.identityClaims = db.identityClaims.filter(
-        (entry) => entry.claimerId !== userId,
-      );
+      const nextIdentityClaims = [];
+      for (const entry of db.identityClaims) {
+        if (
+          entry.claimantUserId === userId ||
+          entry.claimerId === userId ||
+          removedTreeIds.has(entry.treeId) ||
+          removedPersonIds.has(entry.personId)
+        ) {
+          continue;
+        }
+        const hasReviewerRefs =
+          Array.isArray(entry.reviewerUserIds) || Array.isArray(entry.reviews);
+        if (!hasReviewerRefs) {
+          nextIdentityClaims.push(entry);
+          continue;
+        }
+        const nextReviewerIds = normalizeParticipantIds(
+          (entry.reviewerUserIds || []).filter((id) => id !== userId),
+        );
+        const nextReviews = Array.isArray(entry.reviews)
+          ? entry.reviews.filter((r) => r.userId !== userId)
+          : entry.reviews;
+        nextIdentityClaims.push({
+          ...entry,
+          reviewerUserIds: nextReviewerIds,
+          ...(Array.isArray(nextReviews) ? {reviews: nextReviews} : {}),
+        });
+      }
+      db.identityClaims = nextIdentityClaims;
     }
     if (Array.isArray(db.storyRequests)) {
       db.storyRequests = db.storyRequests.filter(
@@ -1218,9 +1294,107 @@ module.exports = {
           entry.grantorUserId !== userId && entry.granteeUserId !== userId,
       );
     }
+    const removedSemyaIds = new Set();
     if (Array.isArray(db.semyaMembers)) {
       db.semyaMembers = db.semyaMembers.filter(
         (entry) => entry.userId !== userId,
+      );
+    }
+    if (Array.isArray(db.semyi)) {
+      for (const semya of db.semyi) {
+        if (removedTreeIds.has(semya.treeId)) {
+          semya.deletedAt = semya.deletedAt || timestamp;
+          semya.updatedAt = timestamp;
+          removedSemyaIds.add(semya.id);
+          for (const member of db.semyaMembers || []) {
+            if (member.semyaId === semya.id && !member.hiddenAt) {
+              member.hiddenAt = timestamp;
+            }
+          }
+          continue;
+        }
+        if (semya.deletedAt) {
+          continue;
+        }
+        const activeMembers = (db.semyaMembers || [])
+          .filter((m) => m.semyaId === semya.id && !m.hiddenAt)
+          .sort((a, b) =>
+            String(a.joinedAt || "").localeCompare(String(b.joinedAt || "")),
+          );
+        if (activeMembers.length === 0) {
+          semya.deletedAt = timestamp;
+          semya.updatedAt = timestamp;
+          removedSemyaIds.add(semya.id);
+          continue;
+        }
+        const activeOwners = activeMembers.filter((m) => m.role === "owner");
+        if (activeOwners.length === 0) {
+          const successor =
+            activeMembers.find((m) => m.role === "editor") || activeMembers[0];
+          successor.role = "owner";
+          successor.hasInviteGrant = true;
+          semya.ownerId = successor.userId;
+          semya.updatedAt = timestamp;
+          const boundTree = (db.trees || []).find(
+            (t) => t.id === semya.treeId,
+          );
+          if (
+            boundTree &&
+            (boundTree.creatorId === userId || !boundTree.creatorId)
+          ) {
+            boundTree.creatorId = successor.userId;
+            boundTree.updatedAt = timestamp;
+          }
+        } else if (semya.ownerId === userId) {
+          semya.ownerId = activeOwners[0].userId;
+          semya.updatedAt = timestamp;
+        }
+      }
+    }
+    if (Array.isArray(db.semyaInvitations)) {
+      db.semyaInvitations = db.semyaInvitations.filter(
+        (entry) =>
+          entry.recipientUserId !== userId &&
+          !removedSemyaIds.has(entry.semyaId) &&
+          !(entry.inviterUserId === userId && entry.status === "pending"),
+      );
+    }
+    if (Array.isArray(db.semyaBrowseTokens)) {
+      db.semyaBrowseTokens = db.semyaBrowseTokens.filter(
+        (entry) =>
+          entry.createdByUserId !== userId &&
+          !removedSemyaIds.has(entry.semyaId),
+      );
+    }
+    if (Array.isArray(db.semyaMemberHiddenPersons)) {
+      db.semyaMemberHiddenPersons = db.semyaMemberHiddenPersons.filter(
+        (entry) =>
+          entry.userId !== userId &&
+          !removedSemyaIds.has(entry.semyaId) &&
+          !removedPersonIds.has(entry.personId),
+      );
+    }
+    if (Array.isArray(db.onboardingStates)) {
+      db.onboardingStates = db.onboardingStates.filter(
+        (entry) => entry.userId !== userId,
+      );
+      this._onboardingIncompleteCache?.delete(userId);
+    }
+    if (Array.isArray(db.deletedPersons)) {
+      db.deletedPersons = db.deletedPersons.filter(
+        (entry) =>
+          entry.deletedByUserId !== userId &&
+          entry.snapshot?.userId !== userId &&
+          !removedTreeIds.has(entry.treeId) &&
+          !removedSemyaIds.has(entry.semyaId),
+      );
+    }
+    if (Array.isArray(db.deletedPosts)) {
+      db.deletedPosts = db.deletedPosts.filter(
+        (entry) =>
+          entry.deletedByUserId !== userId &&
+          entry.snapshot?.authorId !== userId &&
+          !removedTreeIds.has(entry.treeId),
       );
     }
     if (Array.isArray(db.profileArticles)) {
@@ -1275,6 +1449,7 @@ module.exports = {
     return {
       userId,
       removedTreeIds: Array.from(removedTreeIds),
+      removedSemyaIds: Array.from(removedSemyaIds),
       removedPersonIds: Array.from(removedPersonIds),
       removedChatIds: Array.from(removedChatIds),
       removedPostIds: Array.from(removedPostIds),
@@ -1368,7 +1543,59 @@ module.exports = {
     );
   },
 
-  async linkPersonToUser({treeId, personId, userId}) {
+  async issuePersonClaimToken({treeId, personId, actorUserId}) {
+    const normalizedTreeId = normalizeNullableString(treeId);
+    const normalizedPersonId = normalizeNullableString(personId);
+    const normalizedActorId = normalizeNullableString(actorUserId);
+    if (!normalizedTreeId || !normalizedPersonId || !normalizedActorId) {
+      throw new Error("NOT_FOUND");
+    }
+
+    return this._mutate((db) => {
+      const tree = (db.trees || []).find(
+        (entry) => entry.id === normalizedTreeId,
+      );
+      const person = (db.persons || []).find(
+        (entry) =>
+          entry.id === normalizedPersonId && entry.treeId === normalizedTreeId,
+      );
+      if (!tree || !person) {
+        throw new Error("NOT_FOUND");
+      }
+      if (person.userId) {
+        throw new Error("ALREADY_CLAIMED");
+      }
+      if (
+        person.isAlive === false ||
+        Boolean(normalizeNullableString(person.deathDate))
+      ) {
+        throw new Error("PERSON_DECEASED");
+      }
+
+      const token = crypto.randomBytes(24).toString("base64url");
+      const now = nowIso();
+      const expiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
+      person.inviteClaimToken = token;
+      person.inviteClaimCreatedBy = normalizedActorId;
+      person.inviteClaimExpiresAt = expiresAt;
+      person.updatedAt = now;
+      return {
+        claimToken: token,
+        expiresAt,
+        treeId: tree.id,
+        personId: person.id,
+      };
+    });
+  },
+
+  async linkPersonToUser({
+    treeId,
+    personId,
+    userId,
+    claimToken = null,
+    requireClaimToken = false,
+    bypassClaimToken = false,
+  }) {
     const db = await this._read();
     const tree = db.trees.find((entry) => entry.id === treeId);
     if (!tree) {
@@ -1389,6 +1616,59 @@ module.exports = {
     const user = db.users.find((entry) => entry.id === userId);
     if (!user) {
       return null;
+    }
+
+    if (
+      person.isAlive === false ||
+      Boolean(normalizeNullableString(person.deathDate))
+    ) {
+      throw new Error("PERSON_DECEASED");
+    }
+
+    const creatorCheckIds = new Set(
+      [tree.creatorId, person.creatorId]
+        .map((id) => normalizeNullableString(id))
+        .filter((id) => id && id !== userId),
+    );
+    const isBlockedByCreator = (db.blocks || []).some((entry) => {
+      const blocker = normalizeNullableString(
+        entry.blockerId ?? entry.blockerUserId,
+      );
+      const blocked = normalizeNullableString(
+        entry.blockedUserId ?? entry.blockedId,
+      );
+      if (!blocker || !blocked) return false;
+      return (
+        (blocker === userId && creatorCheckIds.has(blocked)) ||
+        (blocked === userId && creatorCheckIds.has(blocker))
+      );
+    });
+    if (isBlockedByCreator) {
+      throw new Error("BLOCKED");
+    }
+
+    if (!bypassClaimToken) {
+      const storedToken = normalizeNullableString(person.inviteClaimToken);
+      const providedToken = normalizeNullableString(claimToken);
+      if (requireClaimToken || storedToken || providedToken) {
+        if (!storedToken || !providedToken) {
+          throw new Error("INVALID_CLAIM_TOKEN");
+        }
+        if (
+          person.inviteClaimExpiresAt &&
+          Date.parse(person.inviteClaimExpiresAt) < Date.now()
+        ) {
+          throw new Error("CLAIM_TOKEN_EXPIRED");
+        }
+        const storedBuf = Buffer.from(storedToken, "utf8");
+        const providedBuf = Buffer.from(providedToken, "utf8");
+        if (
+          storedBuf.length !== providedBuf.length ||
+          !crypto.timingSafeEqual(storedBuf, providedBuf)
+        ) {
+          throw new Error("INVALID_CLAIM_TOKEN");
+        }
+      }
     }
 
     const canonicalIdentity = this._ensureUserIdentity(db, userId);
@@ -1413,6 +1693,9 @@ module.exports = {
     }
 
     person.userId = userId;
+    person.inviteClaimToken = null;
+    person.inviteClaimCreatedBy = null;
+    person.inviteClaimExpiresAt = null;
     // additive=true: НЕ перезатирать имя/гендер/birthDate/фото
     // существующего слота в дереве. Если владелец дерева заполнил
     // поля под этого человека, они остаются как есть. Если что-то

@@ -910,6 +910,7 @@ module.exports = {
     treeId,
     userId,
     addedBy = null,
+    invitedByUserId = null,
     relationToTree = null,
   }) {
     const db = await this._read();
@@ -921,6 +922,40 @@ module.exports = {
     const user = db.users.find((entry) => entry.id === userId);
     if (!user) {
       return undefined;
+    }
+
+    const inviterId =
+      normalizeNullableString(addedBy) ||
+      normalizeNullableString(invitedByUserId) ||
+      null;
+
+    if (tree.semyaId) {
+      const semya = (db.semyi || []).find(
+        (entry) => entry.id === tree.semyaId && !entry.deletedAt,
+      );
+      if (semya) {
+        const kickedRow = (db.semyaMembers || []).find(
+          (m) =>
+            m.semyaId === semya.id &&
+            m.userId === userId &&
+            Boolean(m.hiddenAt),
+        );
+        if (kickedRow) {
+          const inviterIsOwner = Boolean(
+            inviterId &&
+              (db.semyaMembers || []).some(
+                (m) =>
+                  m.semyaId === semya.id &&
+                  m.userId === inviterId &&
+                  m.role === "owner" &&
+                  !m.hiddenAt,
+              ),
+          );
+          if (!inviterIsOwner) {
+            return "KICKED_FROM_SEMYA";
+          }
+        }
+      }
     }
 
     const isMember =
@@ -944,7 +979,7 @@ module.exports = {
     const invitation = createTreeInvitationRecord({
       treeId,
       userId,
-      addedBy,
+      addedBy: inviterId,
       relationToTree,
     });
     db.treeInvitations.push(invitation);
@@ -993,8 +1028,18 @@ module.exports = {
       if (!tree.members.includes(invitation.userId)) {
         tree.members.push(invitation.userId);
       }
+      const allowUnhide =
+        !tree.semyaId ||
+        (Boolean(invitation.addedBy) &&
+          (db.semyaMembers || []).some(
+            (m) =>
+              m.semyaId === tree.semyaId &&
+              m.userId === invitation.addedBy &&
+              m.role === "owner" &&
+              !m.hiddenAt,
+          ));
       this._ensureSemyaMembershipForLegacyJoin(db, tree, invitation.userId, {
-        allowUnhide: true,
+        allowUnhide,
       });
       tree.updatedAt = nowIso();
     }

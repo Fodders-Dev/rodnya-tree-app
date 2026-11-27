@@ -186,7 +186,9 @@ module.exports = {
     // even score posts the viewer can't open.
     const accessibleTreeIds = new Set(
       (Array.isArray(db.trees) ? db.trees : [])
-        .filter((tree) => this._userCanAccessTreeRecord(tree, normalizedUserId))
+        .filter((tree) =>
+          this._userCanAccessTreeRecord(tree, normalizedUserId, db),
+        )
         .map((tree) => tree.id),
     );
     if (normalizedTreeId && !accessibleTreeIds.has(normalizedTreeId)) {
@@ -295,7 +297,9 @@ module.exports = {
     if (Array.isArray(branchIds) && branchIds.length > 0) {
       const accessibleTreeIds = new Set(
         db.trees
-          .filter((entry) => this._userCanAccessTreeRecord(entry, authorId))
+          .filter((entry) =>
+            this._userCanAccessTreeRecord(entry, authorId, db),
+          )
           .map((entry) => entry.id),
       );
       resolvedBranchIds = Array.from(
@@ -359,7 +363,10 @@ module.exports = {
     }
 
     const post = db.posts[postIndex];
-    if (post.authorId !== actorUserId) {
+    const canDelete =
+      post.authorId === actorUserId ||
+      this._isActiveSemyaOwnerForTree(db, post.treeId, actorUserId);
+    if (!canDelete) {
       return false;
     }
 
@@ -906,7 +913,9 @@ module.exports = {
     }
 
     const canDelete =
-      comment.authorId === actorUserId || post.authorId === actorUserId;
+      comment.authorId === actorUserId ||
+      post.authorId === actorUserId ||
+      this._isActiveSemyaOwnerForTree(db, post.treeId, actorUserId);
     if (!canDelete) {
       return false;
     }

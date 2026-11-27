@@ -68,7 +68,7 @@ async function startTestServer(extraState = {}) {
     semyi: [{id: "semya-1", name: "Семья", createdAt: "2026-04-01T10:00:00.000Z"}],
     trees: [{id: "tree-1", name: "Дерево", creatorId: "user-1", memberIds: ["user-1"], semyaId: "semya-1"}],
     semyaMembers: [
-      {userId: "user-1", semyaId: "semya-1", hiddenAt: null},
+      {userId: "user-1", semyaId: "semya-1", role: "owner", hiddenAt: null},
     ],
     deletedPersons: [
       deletedPersonRow({id: "dp-1", originalPersonId: "person-gone-1", deletedByUserId: "user-1"}),

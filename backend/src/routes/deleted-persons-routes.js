@@ -112,7 +112,7 @@ function registerDeletedPersonsRoutes(
         }
         if (code === "FORBIDDEN") {
           res.status(403).json({
-            message: "Восстановить может только участник семьи",
+            message: "Недостаточно прав для восстановления карточки",
           });
           return;
         }
@@ -164,7 +164,7 @@ function registerDeletedPersonsRoutes(
         }
         if (code === "FORBIDDEN") {
           res.status(403).json({
-            message: "Удалить навсегда может только участник семьи",
+            message: "Недостаточно прав для окончательного удаления карточки",
           });
           return;
         }

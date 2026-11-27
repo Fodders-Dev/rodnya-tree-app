@@ -572,6 +572,7 @@ function createApp({
   registerPendingInvitationRoutes(app, {
     store,
     requireAuth,
+    requireTreeAccess,
     mapTree,
     mapPerson,
   });

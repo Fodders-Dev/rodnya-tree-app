@@ -202,7 +202,9 @@ function registerGatheringRoutes(
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, treeId);
+    const tree = await requireTreeAccess(req, res, treeId, {
+      requiredRole: "editor",
+    });
     if (!tree) {
       return;
     }

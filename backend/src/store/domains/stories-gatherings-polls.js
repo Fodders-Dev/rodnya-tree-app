@@ -261,7 +261,10 @@ module.exports = {
     }
 
     const story = db.stories[storyIndex];
-    if (story.authorId !== actorUserId) {
+    const canDelete =
+      story.authorId === actorUserId ||
+      this._isActiveSemyaOwnerForTree(db, story.treeId, actorUserId);
+    if (!canDelete) {
       return false;
     }
 
@@ -390,7 +393,9 @@ module.exports = {
     if (Array.isArray(branchIds) && branchIds.length > 0) {
       const accessibleTreeIds = new Set(
         db.trees
-          .filter((entry) => this._userCanAccessTreeRecord(entry, authorId))
+          .filter((entry) =>
+            this._userCanAccessTreeRecord(entry, authorId, db),
+          )
           .map((entry) => entry.id),
       );
       resolvedBranchIds = Array.from(
@@ -438,8 +443,12 @@ module.exports = {
     if (index < 0) {
       return null;
     }
-    if (db.gatherings[index].authorId !== actorUserId) {
-      return false; // Only the author may delete (route maps → 403).
+    const gathering = db.gatherings[index];
+    const canDelete =
+      gathering.authorId === actorUserId ||
+      this._isActiveSemyaOwnerForTree(db, gathering.treeId, actorUserId);
+    if (!canDelete) {
+      return false; // Author or active Semya owner may delete (route maps → 403).
     }
     const [removed] = db.gatherings.splice(index, 1);
     await this._write(db);
@@ -559,7 +568,9 @@ module.exports = {
     if (Array.isArray(branchIds) && branchIds.length > 0) {
       const accessibleTreeIds = new Set(
         db.trees
-          .filter((entry) => this._userCanAccessTreeRecord(entry, authorId))
+          .filter((entry) =>
+            this._userCanAccessTreeRecord(entry, authorId, db),
+          )
           .map((entry) => entry.id),
       );
       resolvedBranchIds = Array.from(
@@ -631,8 +642,12 @@ module.exports = {
     if (index < 0) {
       return null;
     }
-    if (db.polls[index].authorId !== actorUserId) {
-      return false; // Only the author may delete (route maps → 403).
+    const poll = db.polls[index];
+    const canDelete =
+      poll.authorId === actorUserId ||
+      this._isActiveSemyaOwnerForTree(db, poll.treeId, actorUserId);
+    if (!canDelete) {
+      return false; // Author or active Semya owner may delete (route maps → 403).
     }
     const [removed] = db.polls.splice(index, 1);
     await this._write(db);
