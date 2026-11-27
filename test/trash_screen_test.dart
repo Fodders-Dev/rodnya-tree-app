@@ -47,7 +47,8 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
   }
 
   @override
-  Future<List<DeletedPerson>> listDeletedPersonsForSemya(String semyaId) async =>
+  Future<List<DeletedPerson>> listDeletedPersonsForSemya(
+          String semyaId) async =>
       const <DeletedPerson>[];
 
   @override
@@ -223,8 +224,18 @@ DeletedPost _post({
   });
 }
 
-Widget _wrap(SemyaCapableFamilyTreeService service) =>
-    MaterialApp(home: TrashScreen(serviceOverride: service));
+Widget _wrap(
+  SemyaCapableFamilyTreeService service, {
+  String? semyaId,
+  String? semyaName,
+}) =>
+    MaterialApp(
+      home: TrashScreen(
+        semyaId: semyaId,
+        semyaName: semyaName,
+        serviceOverride: service,
+      ),
+    );
 
 void main() {
   // 3h floor: any past timestamp == floor passed; future == not yet.
@@ -274,8 +285,8 @@ void main() {
     expect(find.textContaining('восстановлен'), findsOneWidget);
   });
 
-  testWidgets(
-      'permanent delete disabled когда 3h floor не пройден', (tester) async {
+  testWidgets('permanent delete disabled когда 3h floor не пройден',
+      (tester) async {
     final service = _FakeSemyaService(
       persons: [
         _person(id: 'p-1', name: 'Иван', earliestHardDelete: futureFloor),
@@ -323,7 +334,8 @@ void main() {
     expect(find.text('Повторить'), findsOneWidget);
   });
 
-  testWidgets('тач-таргет restore/purge в DeletedItemRow ≥44dp', (tester) async {
+  testWidgets('тач-таргет restore/purge в DeletedItemRow ≥44dp',
+      (tester) async {
     final service = _FakeSemyaService(
       persons: [
         _person(id: 'p-1', name: 'Иван', earliestHardDelete: pastFloor),
@@ -360,8 +372,7 @@ void main() {
       posts: [
         _post(
           id: 'po-1',
-          content:
-              'Очень длинный текст поста для проверки переноса строк и '
+          content: 'Очень длинный текст поста для проверки переноса строк и '
               'отсутствия горизонтального overflow на узком экране телефона.',
           earliestHardDelete: pastFloor,
         ),
@@ -374,5 +385,30 @@ void main() {
     await tester.tap(find.text('Посты'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  group('semya-scoped TrashScreen (consolidated P2.5b)', () {
+    testWidgets('empty state when семья has no deleted persons',
+        (tester) async {
+      final service = _FakeSemyaService();
+      await tester.pumpWidget(_wrap(service, semyaId: 's-1'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('В этой семье нет удалённых родственников'),
+        findsOneWidget,
+      );
+      expect(service.loadPersonCalls, 0);
+      expect(service.loadPostCalls, 0);
+    });
+
+    testWidgets('semyaName renders в AppBar title без TabBar', (tester) async {
+      final service = _FakeSemyaService();
+      await tester.pumpWidget(
+        _wrap(service, semyaId: 's-1', semyaName: 'Ивановых'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Удалённые · Ивановых'), findsOneWidget);
+      expect(find.text('Посты'), findsNothing);
+    });
   });
 }

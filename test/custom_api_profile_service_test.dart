@@ -8,7 +8,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:rodnya/backend/backend_runtime_config.dart';
 import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
 import 'package:rodnya/backend/models/profile_form_data.dart';
-import 'package:rodnya/models/profile_note.dart';
 import 'package:rodnya/services/custom_api_auth_service.dart';
 import 'package:rodnya/services/custom_api_profile_service.dart';
 import 'package:rodnya/services/invitation_service.dart';
@@ -302,65 +301,6 @@ void main() {
         );
       }
 
-      if (request.url.path == '/v1/users/user-1/profile-notes' &&
-          request.method == 'GET') {
-        return http.Response(
-          jsonEncode({
-            'notes': [
-              {
-                'id': 'note-1',
-                'title': 'Первая заметка',
-                'content': 'Содержимое заметки',
-                'createdAt': '2026-03-27T10:00:00.000Z',
-              },
-            ],
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }
-
-      if (request.url.path == '/v1/users/user-1/profile-notes' &&
-          request.method == 'POST') {
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body['title'], 'Новая заметка');
-        expect(body['content'], 'Новый текст');
-
-        return http.Response(
-          jsonEncode({
-            'note': {
-              'id': 'note-2',
-              'title': body['title'],
-              'content': body['content'],
-              'createdAt': '2026-03-27T11:00:00.000Z',
-            },
-          }),
-          201,
-          headers: {'content-type': 'application/json'},
-        );
-      }
-
-      if (request.url.path == '/v1/users/user-1/profile-notes/note-1' &&
-          request.method == 'PATCH') {
-        return http.Response(
-          jsonEncode({
-            'note': {
-              'id': 'note-1',
-              'title': 'Обновлённая заметка',
-              'content': 'Исправленный текст',
-              'createdAt': '2026-03-27T10:00:00.000Z',
-            },
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }
-
-      if (request.url.path == '/v1/users/user-1/profile-notes/note-1' &&
-          request.method == 'DELETE') {
-        return http.Response('', 204);
-      }
-
       if (request.url.path == '/v1/auth/session') {
         return http.Response('{"message":"offline"}', 500);
       }
@@ -430,27 +370,6 @@ void main() {
       ),
     );
     expect(photoUrl, 'https://api.example.ru/media/avatars/user-1/avatar.png');
-
-    final notesStream = profileService.getProfileNotesStream('user-1');
-    final initialNotes = await notesStream.first;
-    expect(initialNotes, hasLength(1));
-    expect(initialNotes.first.title, 'Первая заметка');
-
-    await profileService.addProfileNote(
-      'user-1',
-      'Новая заметка',
-      'Новый текст',
-    );
-    await profileService.updateProfileNote(
-      'user-1',
-      ProfileNote(
-        id: 'note-1',
-        title: 'Обновлённая заметка',
-        content: 'Исправленный текст',
-        createdAt: initialNotes.first.createdAt,
-      ),
-    );
-    await profileService.deleteProfileNote('user-1', 'note-1');
   });
 
   test('CustomApiProfileService ignores legacy cached profile of another user',

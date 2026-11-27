@@ -51,6 +51,64 @@ void main() {
         ),
         isNull,
       );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/story/guest-story-token'),
+        ),
+        isNull,
+      );
+    });
+
+    test('maps P2.6 synced deep-linkable routes and preserves query strings',
+        () {
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/post/post-42?commentId=c-1'),
+        ),
+        '/post/post-42?commentId=c-1',
+      );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/user/user-9'),
+        ),
+        '/user/user-9',
+      );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/notifications'),
+        ),
+        '/notifications',
+      );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/semya/semya-1?section=hidden'),
+        ),
+        '/semya/semya-1?section=hidden',
+      );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/relative/details/p-7?treeId=t-2'),
+        ),
+        '/relative/details/p-7?treeId=t-2',
+      );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/discover/relatives?incoming=chk-1'),
+        ),
+        '/discover/relatives?incoming=chk-1',
+      );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/story-requests/req-1/answer'),
+        ),
+        '/story-requests/req-1/answer',
+      );
+      expect(
+        AppLinksDynamicLinkService.routeForUri(
+          Uri.parse('https://rodnya-tree.ru/story-requests/req-1'),
+        ),
+        isNull,
+      );
     });
   });
 }

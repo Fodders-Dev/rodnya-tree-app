@@ -6,25 +6,26 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../models/call_media_mode.dart';
 import '../screens/auth_screen.dart';
 import '../screens/browse_tree_screen.dart';
-import '../screens/complete_profile_screen.dart';
 import '../screens/create_story_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/identity_review_screen.dart';
 import '../screens/notifications_screen.dart';
 import '../screens/discover_relatives/discover_relatives_screen.dart';
-import '../screens/onboarding_screen.dart';
 import '../screens/onboarding/onboarding_wizard_screen.dart';
 import '../screens/password_reset_screen.dart';
 import '../screens/reset_password_confirm_screen.dart';
 import '../screens/privacy_policy_screen.dart';
+import '../screens/profile_article_editor_screen.dart';
 import '../screens/public_tree_entry_screen.dart';
 import '../screens/qr_login_display_screen.dart';
 import '../screens/public_tree_viewer_screen.dart';
 import '../screens/relative_details_screen.dart';
+import '../screens/semya_details_screen.dart';
 import '../screens/semya_invitation_accept_screen.dart';
-import '../screens/send_relation_request_screen.dart';
 import '../screens/story_request_answer_screen.dart';
 import '../screens/story_viewer_screen.dart';
+import '../screens/trash_screen.dart';
+import '../utils/url_utils.dart';
 import 'app_router_shared.dart';
 
 class AppOverlayRouteModule {
@@ -149,15 +150,9 @@ class AppOverlayRouteModule {
       GoRoute(
         path: '/onboarding',
         parentNavigatorKey: rootNavigatorKey,
-        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
-          key: state.pageKey,
-          child: const OnboardingScreen(),
-          transitionsBuilder: AppRouteTransitions.fade,
-        ),
+        redirect: (_, __) => '/setup',
       ),
-      // Phase 6 chunk 2: wizard (profile + first-relatives seed).
-      // Route name `/setup` чтобы не collide с existing
-      // `/onboarding` (Phase 1 welcome tour, different scope).
+      // Phase 6 chunk 2: unified wizard (profile + first-relatives seed).
       GoRoute(
         path: '/setup',
         parentNavigatorKey: rootNavigatorKey,
@@ -195,46 +190,7 @@ class AppOverlayRouteModule {
       GoRoute(
         path: '/complete_profile',
         parentNavigatorKey: rootNavigatorKey,
-        pageBuilder: (context, state) {
-          final queryParams = state.uri.queryParameters;
-          Map<String, bool> requiredFields = <String, bool>{};
-          final fieldsString = queryParams['requiredFields'];
-          if (fieldsString != null) {
-            try {
-              final pairs =
-                  fieldsString.replaceAll(RegExp(r'[{}]'), '').split(', ');
-              for (final pair in pairs) {
-                final parts = pair.split(': ');
-                if (parts.length == 2) {
-                  requiredFields[parts[0]] = parts[1] == 'true';
-                }
-              }
-            } catch (error) {
-              debugPrint('Error parsing requiredFields query param: $error');
-              requiredFields = <String, bool>{
-                'hasPhoneNumber': false,
-                'hasGender': false,
-                'hasUsername': false,
-                'isComplete': false,
-              };
-            }
-          } else {
-            requiredFields = state.extra as Map<String, bool>? ??
-                <String, bool>{
-                  'hasPhoneNumber': false,
-                  'hasGender': false,
-                  'hasUsername': false,
-                  'isComplete': false,
-                };
-          }
-
-          return RodnyaCustomTransitionPage(
-            key: state.pageKey,
-            constrainWidth: true,
-            child: CompleteProfileScreen(requiredFields: requiredFields),
-            transitionsBuilder: AppRouteTransitions.fade,
-          );
-        },
+        redirect: (_, __) => '/profile?edit=1',
       ),
       GoRoute(
         path: '/chats/view/:chatId',
@@ -299,26 +255,10 @@ class AppOverlayRouteModule {
             child: ChatScreen(
               otherUserId: userId,
               title: name,
-              photoUrl:
-                  photoUrl != null && photoUrl.isNotEmpty ? photoUrl : null,
+              photoUrl: UrlUtils.normalizeImageUrl(photoUrl),
               relativeId: relativeId,
               chatType: 'direct',
             ),
-            transitionsBuilder: AppRouteTransitions.slide,
-          );
-        },
-      ),
-      GoRoute(
-        path: '/send_relation_request',
-        parentNavigatorKey: rootNavigatorKey,
-        pageBuilder: (context, state) {
-          final treeId = state.uri.queryParameters['treeId'] ??
-              state.uri.queryParameters['userId'] ??
-              '';
-          return RodnyaCustomTransitionPage(
-            key: state.pageKey,
-            constrainWidth: true,
-            child: SendRelationRequestScreen(treeId: treeId),
             transitionsBuilder: AppRouteTransitions.slide,
           );
         },
@@ -487,6 +427,72 @@ class AppOverlayRouteModule {
             constrainWidth: true,
             child: StoryRequestAnswerScreen(requestId: requestId),
             transitionsBuilder: AppRouteTransitions.slideUp,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/semya/:semyaId',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final semyaId = state.pathParameters['semyaId'] ?? '';
+          final scrollToHidden =
+              state.uri.queryParameters['section'] == 'hidden' ||
+                  state.uri.queryParameters['scrollToHidden'] == '1';
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            constrainWidth: true,
+            child: SemyaDetailsScreen(
+              semyaId: semyaId,
+              scrollToHidden: scrollToHidden,
+            ),
+            transitionsBuilder: AppRouteTransitions.slide,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/profile/trash',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final semyaId = state.uri.queryParameters['semyaId'];
+          final semyaName = state.uri.queryParameters['semyaName'];
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            constrainWidth: true,
+            child: TrashScreen(
+              semyaId: semyaId,
+              semyaName: semyaName,
+            ),
+            transitionsBuilder: AppRouteTransitions.slide,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/relative/details/:personId/biography',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final personId = state.pathParameters['personId'] ?? '';
+          final args = state.extra is ProfileArticleEditorRouteArgs
+              ? state.extra as ProfileArticleEditorRouteArgs
+              : null;
+          final name = args?.personName ?? state.uri.queryParameters['name'];
+          final relation =
+              args?.personRelation ?? state.uri.queryParameters['relation'];
+          final gender =
+              args?.personGender ?? state.uri.queryParameters['gender'];
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            constrainWidth: true,
+            child: ProfileArticleEditorScreen(
+              personId: personId,
+              personName: name != null && name.isNotEmpty ? name : null,
+              personRelation:
+                  relation != null && relation.isNotEmpty ? relation : null,
+              personGender: gender != null && gender.isNotEmpty ? gender : null,
+              initialStoryTitle: args?.initialStoryTitle,
+              initialStoryQuestion: args?.initialStoryQuestion,
+              initialStoryHint: args?.initialStoryHint,
+            ),
+            transitionsBuilder: AppRouteTransitions.slide,
           );
         },
       ),

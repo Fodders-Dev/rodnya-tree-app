@@ -13,9 +13,9 @@ import 'package:rodnya/models/call_session.dart';
 import 'package:rodnya/models/call_state.dart';
 import 'package:rodnya/providers/onboarding_controller.dart';
 import 'package:rodnya/providers/semya_details_controller.dart';
-import 'package:rodnya/screens/complete_profile_screen.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
 import 'package:rodnya/services/chat_pin_store.dart';
+import 'package:rodnya/utils/phone_parser.dart';
 import 'package:rodnya/widgets/call_floating_pip.dart';
 
 class _MemoryPinStore implements ChatPinStore {
@@ -181,17 +181,18 @@ void main() {
     expect(await local.getPinnedMessage(key), isNull);
   });
 
-  test('Wave 4: CompleteProfileScreen parses +7, +375, and +1 numbers cleanly',
+  test(
+      'Wave 4: parsePhoneWithCountryCode parses +7, +375, and +1 numbers cleanly',
       () {
-    final ru = CompleteProfileScreen.parsePhoneWithCountryCode('+79991234567');
+    final ru = parsePhoneWithCountryCode('+79991234567');
     expect(ru.key, '+7');
     expect(ru.value, '9991234567');
 
-    final by = CompleteProfileScreen.parsePhoneWithCountryCode('+375291234567');
+    final by = parsePhoneWithCountryCode('+375291234567');
     expect(by.key, '+375');
     expect(by.value, '291234567');
 
-    final us = CompleteProfileScreen.parsePhoneWithCountryCode('+14155550100');
+    final us = parsePhoneWithCountryCode('+14155550100');
     expect(us.key, '+1');
     expect(us.value, '4155550100');
   });

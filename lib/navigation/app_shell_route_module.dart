@@ -19,7 +19,6 @@ import '../screens/add_relative_screen.dart';
 import '../screens/blocked_users_screen.dart';
 import '../screens/qr_login_scan_screen.dart';
 import '../screens/sessions_screen.dart';
-import '../screens/chat_screen.dart';
 import '../screens/chats_list_screen.dart';
 import '../screens/create_post_screen.dart';
 import '../screens/create_gathering_screen.dart';
@@ -32,13 +31,11 @@ import '../screens/post_search_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/story_archive_screen.dart';
 import '../screens/relation_requests_screen.dart';
-import '../screens/send_relation_request_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/tree_selector_screen.dart';
 import '../screens/user_profile_entry_screen.dart';
 import '../services/custom_api_notification_service.dart';
 import '../theme/app_theme.dart';
-import '../utils/url_utils.dart';
 import '../widgets/app_backdrop.dart';
 import '../widgets/app_update_ui.dart';
 import '../widgets/main_navigation_bar.dart';
@@ -485,55 +482,6 @@ class AppShellRouteModule {
                 child: FindRelativeScreen(
                   treeId: treeId,
                   initialProfileCode: state.uri.queryParameters['profileCode'],
-                ),
-                transitionsBuilder: AppRouteTransitions.slide,
-              );
-            },
-          ),
-          GoRoute(
-            path: 'send_request/:treeId',
-            parentNavigatorKey: rootNavigatorKey,
-            pageBuilder: (context, state) {
-              final treeId = state.pathParameters['treeId'] ?? '';
-              return RodnyaCustomTransitionPage(
-                key: state.pageKey,
-                constrainWidth: true,
-                child: SendRelationRequestScreen(treeId: treeId),
-                transitionsBuilder: AppRouteTransitions.slide,
-              );
-            },
-          ),
-          GoRoute(
-            path: 'chat/:userId',
-            parentNavigatorKey: rootNavigatorKey,
-            pageBuilder: (context, state) {
-              final userId = state.pathParameters['userId'] ?? '';
-              final name = state.uri.queryParameters['name'] ?? 'Пользователь';
-              final photoUrl = state.uri.queryParameters['photo'];
-              final relativeId = state.uri.queryParameters['relativeId'] ?? '';
-
-              if (relativeId.isEmpty) {
-                debugPrint('Error: Missing relativeId for chat route');
-                return MaterialPage<void>(
-                  key: state.pageKey,
-                  child: Scaffold(
-                    appBar: AppBar(title: const Text('Ошибка')),
-                    body: const Center(
-                      child: Text('Не найден ID родственника для чата.'),
-                    ),
-                  ),
-                );
-              }
-
-              return RodnyaCustomTransitionPage(
-                key: state.pageKey,
-                constrainWidth: true,
-                child: ChatScreen(
-                  otherUserId: userId,
-                  title: name,
-                  photoUrl: UrlUtils.normalizeImageUrl(photoUrl),
-                  relativeId: relativeId,
-                  chatType: 'direct',
                 ),
                 transitionsBuilder: AppRouteTransitions.slide,
               );

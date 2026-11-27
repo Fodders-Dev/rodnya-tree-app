@@ -164,7 +164,41 @@ module.exports = {
     // Apply profile to user record (additive — не затирать существующее).
     const profile = payload?.profile || {};
     user.profile = user.profile || {};
-    if (profile.name) user.profile.displayName = String(profile.name).trim();
+    if (profile.name) {
+      const fullName = String(profile.name).trim();
+      if (fullName) {
+        user.profile.displayName = fullName;
+        const nameParts = fullName.split(/\s+/).filter(Boolean);
+        if (
+          nameParts.length > 0 &&
+          !String(user.profile.firstName || "").trim()
+        ) {
+          user.profile.firstName = nameParts[0];
+        }
+        if (
+          nameParts.length >= 2 &&
+          !String(user.profile.lastName || "").trim()
+        ) {
+          user.profile.lastName = nameParts.slice(1).join(" ");
+        }
+      }
+    }
+    if (!String(user.profile.username || "").trim()) {
+      const emailLocal = String(user.email || "").split("@")[0] || "user";
+      const baseSlug =
+        emailLocal.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16) ||
+        "user";
+      const takenUsernames = new Set(
+        (db.users || [])
+          .map((u) => String(u?.profile?.username || "").trim().toLowerCase())
+          .filter(Boolean),
+      );
+      let candidate = `${baseSlug}_${crypto.randomBytes(3).toString("hex")}`;
+      while (takenUsernames.has(candidate)) {
+        candidate = `${baseSlug}_${crypto.randomBytes(3).toString("hex")}`;
+      }
+      user.profile.username = candidate;
+    }
     if (profile.gender) user.profile.gender = String(profile.gender);
     if (profile.birthDate) {
       user.profile.birthDate = String(profile.birthDate);
@@ -293,6 +327,7 @@ module.exports = {
     }
 
     await this._write(db);
+    this._rememberUser(user);
     // Write-through: seedOnboarding записывает финальное состояние
     // wizard'а (`completed: true`) через собственный code path, не
     // через `updateOnboardingState`. Без явной синхронизации

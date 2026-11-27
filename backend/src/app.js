@@ -125,7 +125,6 @@ function createApp({
     operationalStatus;
 
   const {
-    mapProfileNote,
     mapTree,
     mapPerson,
     mapProfileContribution,
@@ -240,7 +239,6 @@ function createApp({
     computeProfileStatus,
     composeDisplayName,
     mapProfileContribution,
-    mapProfileNote,
     mapLinkedAuthIdentity,
     buildTrustedChannels,
     resolvePrimaryTrustedChannelProvider,

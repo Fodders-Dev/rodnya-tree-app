@@ -118,7 +118,7 @@ extension _RelativesActions on _RelativesScreenState {
       'Navigating to chat with ${relative.displayName} (ID: $userId)',
     );
     context.push(
-      '/relatives/chat/$userId?name=$nameParam&photo=$photoParam&relativeId=${relative.id}',
+      '/chat/$userId?name=$nameParam&photo=$photoParam&relativeId=${relative.id}',
     );
   }
 

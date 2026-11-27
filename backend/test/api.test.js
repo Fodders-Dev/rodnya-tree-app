@@ -4584,7 +4584,7 @@ test("vk auth start, exchange and pending link flow work end-to-end", async () =
   }
 });
 
-test("profile notes and media endpoints work for authenticated user", async () => {
+test("media upload, fetch and delete endpoints work for authenticated user", async () => {
   const ctx = await startTestServer();
 
   try {
@@ -4602,55 +4602,6 @@ test("profile notes and media endpoints work for authenticated user", async () =
     const registered = await registerResponse.json();
     const token = registered.accessToken;
     const userId = registered.user.id;
-
-    const createNoteResponse = await fetch(
-      `${ctx.baseUrl}/v1/users/${userId}/profile-notes`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          title: "Семейная история",
-          content: "Первая заметка профиля",
-        }),
-      },
-    );
-    assert.equal(createNoteResponse.status, 201);
-    const createdNotePayload = await createNoteResponse.json();
-    assert.equal(createdNotePayload.note.title, "Семейная история");
-
-    const noteId = createdNotePayload.note.id;
-    assert.ok(noteId);
-
-    const listNotesResponse = await fetch(
-      `${ctx.baseUrl}/v1/users/${userId}/profile-notes`,
-      {
-        headers: {authorization: `Bearer ${token}`},
-      },
-    );
-    assert.equal(listNotesResponse.status, 200);
-    const listedNotes = await listNotesResponse.json();
-    assert.equal(listedNotes.notes.length, 1);
-
-    const updateNoteResponse = await fetch(
-      `${ctx.baseUrl}/v1/users/${userId}/profile-notes/${noteId}`,
-      {
-        method: "PATCH",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          title: "Обновлённая история",
-          content: "Исправленный текст заметки",
-        }),
-      },
-    );
-    assert.equal(updateNoteResponse.status, 200);
-    const updatedNotePayload = await updateNoteResponse.json();
-    assert.equal(updatedNotePayload.note.title, "Обновлённая история");
 
     const uploadResponse = await fetch(
       `${ctx.baseUrl}/v1/media/object?bucket=avatars` +
@@ -4678,15 +4629,6 @@ test("profile notes and media endpoints work for authenticated user", async () =
       body: JSON.stringify({url: uploadedMedia.url}),
     });
     assert.equal(deleteMediaResponse.status, 204);
-
-    const deleteNoteResponse = await fetch(
-      `${ctx.baseUrl}/v1/users/${userId}/profile-notes/${noteId}`,
-      {
-        method: "DELETE",
-        headers: {authorization: `Bearer ${token}`},
-      },
-    );
-    assert.equal(deleteNoteResponse.status, 204);
   } finally {
     await stopTestServer(ctx);
   }

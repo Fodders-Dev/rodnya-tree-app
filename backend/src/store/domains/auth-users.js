@@ -18,7 +18,6 @@ const {
   composeDisplayNameFromProfile,
   createAuthHandoffRecord,
   createPasswordAuthIdentity,
-  createProfileNote,
   deriveProviderIdsForUser,
   deriveSessionPublicId,
   dummyVerifyForTimingParity,
@@ -2670,79 +2669,6 @@ module.exports = {
       contribution: structuredClone(storedContribution),
       user: updatedUser,
     };
-  },
-
-  async listProfileNotes(userId) {
-    const db = await this._read();
-    const user = db.users.find((entry) => entry.id === userId);
-    if (!user) {
-      return null;
-    }
-
-    const notes = Array.isArray(user.profileNotes) ? user.profileNotes : [];
-    return notes
-      .slice()
-      .sort((left, right) => {
-        return String(right.createdAt || "").localeCompare(
-          String(left.createdAt || ""),
-        );
-      })
-      .map((note) => structuredClone(note));
-  },
-
-  async addProfileNote(userId, {title, content}) {
-    const db = await this._read();
-    const user = db.users.find((entry) => entry.id === userId);
-    if (!user) {
-      return null;
-    }
-
-    const note = createProfileNote({title, content});
-    user.profileNotes = Array.isArray(user.profileNotes) ? user.profileNotes : [];
-    user.profileNotes.unshift(note);
-    user.updatedAt = nowIso();
-    await this._write(db);
-    return structuredClone(note);
-  },
-
-  async updateProfileNote(userId, noteId, {title, content}) {
-    const db = await this._read();
-    const user = db.users.find((entry) => entry.id === userId);
-    if (!user) {
-      return null;
-    }
-
-    user.profileNotes = Array.isArray(user.profileNotes) ? user.profileNotes : [];
-    const note = user.profileNotes.find((entry) => entry.id === noteId);
-    if (!note) {
-      return undefined;
-    }
-
-    note.title = String(title || note.title || "").trim();
-    note.content = String(content || note.content || "").trim();
-    note.updatedAt = nowIso();
-    user.updatedAt = nowIso();
-    await this._write(db);
-    return structuredClone(note);
-  },
-
-  async deleteProfileNote(userId, noteId) {
-    const db = await this._read();
-    const user = db.users.find((entry) => entry.id === userId);
-    if (!user) {
-      return null;
-    }
-
-    user.profileNotes = Array.isArray(user.profileNotes) ? user.profileNotes : [];
-    const initialLength = user.profileNotes.length;
-    user.profileNotes = user.profileNotes.filter((entry) => entry.id !== noteId);
-    if (user.profileNotes.length === initialLength) {
-      return false;
-    }
-
-    user.updatedAt = nowIso();
-    await this._write(db);
-    return true;
   },
 
   async searchUsers({query, limit}) {

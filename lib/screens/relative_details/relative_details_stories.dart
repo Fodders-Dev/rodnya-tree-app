@@ -9,21 +9,37 @@ extension _RelativeDetailsStories on _RelativeDetailsScreenState {
   }) async {
     final person = _person;
     if (person == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ProfileArticleEditorScreen(
-          personId: person.id,
+    final initialStoryHint = initialQuestion == null
+        ? null
+        : buildFamilyStoryEditorHint(initialQuestion);
+    final router = GoRouter.maybeOf(context);
+    if (router != null) {
+      await router.push(
+        '/relative/details/${Uri.encodeComponent(person.id)}/biography',
+        extra: ProfileArticleEditorRouteArgs(
           personName: name,
           personRelation: relation,
           personGender: gender,
           initialStoryTitle: initialQuestion?.title,
           initialStoryQuestion: initialQuestion?.question,
-          initialStoryHint: initialQuestion == null
-              ? null
-              : buildFamilyStoryEditorHint(initialQuestion),
+          initialStoryHint: initialStoryHint,
         ),
-      ),
-    );
+      );
+    } else {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ProfileArticleEditorScreen(
+            personId: person.id,
+            personName: name,
+            personRelation: relation,
+            personGender: gender,
+            initialStoryTitle: initialQuestion?.title,
+            initialStoryQuestion: initialQuestion?.question,
+            initialStoryHint: initialStoryHint,
+          ),
+        ),
+      );
+    }
     if (mounted) {
       _bumpBiographyRefreshVersion();
     }

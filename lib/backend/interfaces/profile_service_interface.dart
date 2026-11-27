@@ -1,6 +1,5 @@
 import 'package:image_picker/image_picker.dart';
 
-import '../../models/profile_note.dart';
 import '../../models/profile_contribution.dart';
 import '../../models/account_linking_status.dart';
 import '../../models/user_profile.dart';
@@ -18,10 +17,6 @@ abstract class ProfileServiceInterface {
   Future<List<ProfileContribution>> getPendingProfileContributions();
   Future<void> acceptProfileContribution(String contributionId);
   Future<void> rejectProfileContribution(String contributionId);
-  Stream<List<ProfileNote>> getProfileNotesStream(String userId);
-  Future<void> addProfileNote(String userId, String title, String content);
-  Future<void> updateProfileNote(String userId, ProfileNote note);
-  Future<void> deleteProfileNote(String userId, String noteId);
   Future<List<UserProfile>> searchUsersByField({
     required String field,
     required String value,

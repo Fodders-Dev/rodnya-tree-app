@@ -1,8 +1,5 @@
 // Ship Q4a frontend (2026-05-28, Ship 31b): shared row widget для
-// soft-deleted items. Extracted из TrashScreen (Ship 31) так per-семя
-// SemyaDeletedPersonsScreen reuses identical layout — avatar/thumbnail
-// + name/preview + «Удалится через N дней» + restore/purge actions с
-// 3h floor visualization (purge disabled + tooltip пока floor не пройден).
+// soft-deleted items. Shared between global Корзина and semya-scoped TrashScreen.
 //
 // Caller builds `leading` (CircleAvatar для persons, thumbnail для
 // posts) и passes display fields + action callbacks. Row key передаётся

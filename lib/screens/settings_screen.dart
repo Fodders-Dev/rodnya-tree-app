@@ -325,11 +325,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
       if (semyi.length == 1) {
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => SemyaDetailsScreen(semyaId: semyi.first.id),
-          ),
-        );
+        final semyaId = semyi.first.id;
+        final router = GoRouter.maybeOf(context);
+        if (router != null) {
+          router.push('/semya/${Uri.encodeComponent(semyaId)}');
+        } else {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => SemyaDetailsScreen(semyaId: semyaId),
+            ),
+          );
+        }
         return;
       }
       await showModalBottomSheet<void>(
@@ -361,12 +367,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: Text(entry.name),
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: () {
+                      final router = GoRouter.maybeOf(context);
                       Navigator.of(sheetContext).pop();
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => SemyaDetailsScreen(semyaId: entry.id),
-                        ),
-                      );
+                      if (router != null) {
+                        router.push('/semya/${Uri.encodeComponent(entry.id)}');
+                      } else {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                SemyaDetailsScreen(semyaId: entry.id),
+                          ),
+                        );
+                      }
                     },
                   ),
                 ),
@@ -426,14 +438,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
       if (semyi.length == 1) {
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => SemyaDetailsScreen(
-              semyaId: semyi.first.id,
-              scrollToHidden: true,
+        final semyaId = semyi.first.id;
+        final router = GoRouter.maybeOf(context);
+        if (router != null) {
+          router.push('/semya/${Uri.encodeComponent(semyaId)}?section=hidden');
+        } else {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => SemyaDetailsScreen(
+                semyaId: semyaId,
+                scrollToHidden: true,
+              ),
             ),
-          ),
-        );
+          );
+        }
         return;
       }
       // 2+ семей — picker sheet.
@@ -1531,11 +1549,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           icon: Icons.delete_outline_rounded,
           title: 'Корзина',
           subtitle: 'Удалённые карточки и посты — 30 дней до удаления',
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => const TrashScreen(),
-            ),
-          ),
+          onTap: () {
+            final router = GoRouter.maybeOf(context);
+            if (router != null) {
+              router.push('/profile/trash');
+            } else {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const TrashScreen(),
+                ),
+              );
+            }
+          },
         ),
       ]),
       _buildCallSettingsSection(),

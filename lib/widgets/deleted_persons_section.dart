@@ -1,6 +1,6 @@
 // Ship Q4a frontend (2026-05-28, Ship 31b): per-семя «Удалённые»
 // entry tile для FE2 семя details screen. Self-loading counter →
-// tap pushes SemyaDeletedPersonsScreen.
+// tap pushes scoped TrashScreen.
 //
 // Visibility: rendered ТОЛЬКО когда семья has ≥1 soft-deleted person.
 // Empty семья → SizedBox.shrink (no noise — global Корзина в настройках
@@ -14,10 +14,11 @@
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
-import '../screens/semya_deleted_persons_screen.dart';
+import '../screens/trash_screen.dart';
 import 'deleted_item_row.dart';
 
 class DeletedPersonsSection extends StatefulWidget {
@@ -80,14 +81,24 @@ class _DeletedPersonsSectionState extends State<DeletedPersonsSection> {
   }
 
   Future<void> _open() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => SemyaDeletedPersonsScreen(
-          semyaId: widget.semyaId,
-          semyaName: widget.semyaName,
+    final router = GoRouter.maybeOf(context);
+    if (router != null) {
+      final name = widget.semyaName?.trim();
+      final query = (name != null && name.isNotEmpty)
+          ? '?semyaId=${Uri.encodeComponent(widget.semyaId)}'
+              '&semyaName=${Uri.encodeComponent(name)}'
+          : '?semyaId=${Uri.encodeComponent(widget.semyaId)}';
+      await router.push('/profile/trash$query');
+    } else {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => TrashScreen(
+            semyaId: widget.semyaId,
+            semyaName: widget.semyaName,
+          ),
         ),
-      ),
-    );
+      );
+    }
     // Refresh counter — user may have restored/purged items on the
     // dedicated screen.
     if (mounted) await _load();

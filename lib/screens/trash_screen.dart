@@ -29,7 +29,17 @@ import '../widgets/deleted_item_row.dart';
 import '../widgets/safe_delete_confirmation_dialog.dart';
 
 class TrashScreen extends StatefulWidget {
-  const TrashScreen({super.key, this.serviceOverride});
+  const TrashScreen({
+    super.key,
+    this.semyaId,
+    this.semyaName,
+    this.serviceOverride,
+  });
+
+  /// Optional semya scope — when non-empty, renders the single-list
+  /// persons trash for that semya (formerly `SemyaDeletedPersonsScreen`).
+  final String? semyaId;
+  final String? semyaName;
 
   /// Test seam — production resolves via GetIt.
   final SemyaCapableFamilyTreeService? serviceOverride;
@@ -40,7 +50,7 @@ class TrashScreen extends StatefulWidget {
 
 class _TrashScreenState extends State<TrashScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+  TabController? _tabs;
   bool _isLoading = false;
   bool _hasLoaded = false;
   List<DeletedPerson> _persons = const <DeletedPerson>[];
@@ -48,16 +58,21 @@ class _TrashScreenState extends State<TrashScreen>
   String? _errorMessage;
   String? _busyId;
 
+  bool get _isSemyaScoped =>
+      widget.semyaId != null && widget.semyaId!.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    if (!_isSemyaScoped) {
+      _tabs = TabController(length: 2, vsync: this);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
   @override
   void dispose() {
-    _tabs.dispose();
+    _tabs?.dispose();
     super.dispose();
   }
 
@@ -85,17 +100,29 @@ class _TrashScreenState extends State<TrashScreen>
       _errorMessage = null;
     });
     try {
-      final results = await Future.wait([
-        svc.listMyDeletedPersons(),
-        svc.listMyDeletedPosts(),
-      ]);
-      if (!mounted) return;
-      setState(() {
-        _persons = results[0] as List<DeletedPerson>;
-        _posts = results[1] as List<DeletedPost>;
-        _isLoading = false;
-        _hasLoaded = true;
-      });
+      if (_isSemyaScoped) {
+        final persons =
+            await svc.listDeletedPersonsForSemya(widget.semyaId!.trim());
+        if (!mounted) return;
+        setState(() {
+          _persons = persons;
+          _posts = const <DeletedPost>[];
+          _isLoading = false;
+          _hasLoaded = true;
+        });
+      } else {
+        final results = await Future.wait([
+          svc.listMyDeletedPersons(),
+          svc.listMyDeletedPosts(),
+        ]);
+        if (!mounted) return;
+        setState(() {
+          _persons = results[0] as List<DeletedPerson>;
+          _posts = results[1] as List<DeletedPost>;
+          _isLoading = false;
+          _hasLoaded = true;
+        });
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -213,6 +240,17 @@ class _TrashScreenState extends State<TrashScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_isSemyaScoped) {
+      final name = widget.semyaName?.trim();
+      final title = (name != null && name.isNotEmpty)
+          ? 'Удалённые · $name'
+          : 'Удалённые родственники';
+      return Scaffold(
+        appBar: AppBar(title: Text(title)),
+        body: _buildPersonsTab(),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Корзина'),
@@ -242,9 +280,14 @@ class _TrashScreenState extends State<TrashScreen>
     if (_errorMessage != null) return _buildError();
     if (_persons.isEmpty) {
       return _buildEmpty(
-        subtitle:
-            'Удалённые карточки родственников будут храниться здесь 30 дней '
-            'перед окончательным удалением.',
+        title: _isSemyaScoped
+            ? 'В этой семье нет удалённых родственников'
+            : 'Корзина пуста',
+        subtitle: _isSemyaScoped
+            ? 'Удалённые карточки этой семьи будут храниться здесь 30 дней '
+                'перед окончательным удалением.'
+            : 'Удалённые карточки родственников будут храниться здесь 30 дней '
+                'перед окончательным удалением.',
       );
     }
     return Align(

@@ -22,7 +22,6 @@ import '../models/family_tree.dart';
 import '../models/person_dossier.dart';
 import '../models/person_attribute.dart';
 import '../models/profile_contribution.dart';
-import '../models/profile_note.dart';
 import '../models/relation_request.dart';
 import '../models/user_profile.dart';
 import '../models/audience_preset.dart';
@@ -178,16 +177,6 @@ class PendingBackendProfileService implements ProfileServiceInterface {
   const PendingBackendProfileService();
 
   @override
-  Future<void> addProfileNote(String userId, String title, String content) {
-    throw UnsupportedError(_pendingProviderMessage('profile'));
-  }
-
-  @override
-  Future<void> deleteProfileNote(String userId, String noteId) {
-    throw UnsupportedError(_pendingProviderMessage('profile'));
-  }
-
-  @override
   Future<ProfileFormData> getCurrentUserProfileFormData() {
     throw UnsupportedError(_pendingProviderMessage('profile'));
   }
@@ -199,11 +188,6 @@ class PendingBackendProfileService implements ProfileServiceInterface {
 
   @override
   Future<UserProfile?> getCurrentUserProfile() async => null;
-
-  @override
-  Stream<List<ProfileNote>> getProfileNotesStream(String userId) {
-    return Stream<List<ProfileNote>>.value(const []);
-  }
 
   @override
   Future<UserProfile?> getUserProfile(String userId) async => null;
@@ -234,11 +218,6 @@ class PendingBackendProfileService implements ProfileServiceInterface {
 
   @override
   Future<String?> uploadCoverPhoto(XFile photo) {
-    throw UnsupportedError(_pendingProviderMessage('profile'));
-  }
-
-  @override
-  Future<void> updateProfileNote(String userId, ProfileNote note) {
     throw UnsupportedError(_pendingProviderMessage('profile'));
   }
 

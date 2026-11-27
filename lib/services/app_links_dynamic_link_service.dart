@@ -101,28 +101,56 @@ class AppLinksDynamicLinkService implements DynamicLinkServiceInterface {
     final path = uri.path.trim().isEmpty ? '/' : uri.path.trim();
     final query = uri.hasQuery ? '?${uri.query}' : '';
 
-    if (path == '/invite') {
-      return '/invite$query';
+    // Never hijack OAuth callbacks or public guest SSR story URLs.
+    if (path.startsWith('/oauth/') || path.startsWith('/story/')) {
+      return null;
     }
-    if (path == '/reset-password') {
-      return '/reset-password$query';
-    }
-    if (path.startsWith('/invite/') && path.length > '/invite/'.length) {
+
+    if (path == '/invite' ||
+        path == '/reset-password' ||
+        path == '/notifications' ||
+        path == '/discover/relatives' ||
+        path == '/tree' ||
+        path == '/trees' ||
+        path == '/family' ||
+        path == '/profile/trash' ||
+        path == '/privacy' ||
+        path == '/terms' ||
+        path == '/support' ||
+        path == '/account-deletion') {
       return '$path$query';
     }
-    if (path.startsWith('/browse/') && path.length > '/browse/'.length) {
+
+    if (_hasNonEmptyTail(path, '/invite/') ||
+        _hasNonEmptyTail(path, '/browse/') ||
+        _hasNonEmptyTail(path, '/public/tree/') ||
+        _hasNonEmptyTail(path, '/tree/view/') ||
+        _hasNonEmptyTail(path, '/post/') ||
+        _hasNonEmptyTail(path, '/user/') ||
+        _hasNonEmptyTail(path, '/relative/details/') ||
+        _hasNonEmptyTail(path, '/relatives/find/') ||
+        _hasNonEmptyTail(path, '/chats/view/') ||
+        _hasNonEmptyTail(path, '/chat/') ||
+        _hasNonEmptyTail(path, '/stories/view/') ||
+        _hasNonEmptyTail(path, '/semya/')) {
       return '$path$query';
     }
-    if (path.startsWith('/public/tree/')) {
-      return '$path$query';
+
+    if (path.startsWith('/story-requests/') && path.endsWith('/answer')) {
+      final requestId = path.substring(
+        '/story-requests/'.length,
+        path.length - '/answer'.length,
+      );
+      if (requestId.isNotEmpty && !requestId.contains('/')) {
+        return '$path$query';
+      }
     }
-    if (path.startsWith('/tree/view/')) {
-      return '$path$query';
-    }
-    if (path.startsWith('/story-requests/')) {
-      return '$path$query';
-    }
+
     return null;
+  }
+
+  static bool _hasNonEmptyTail(String path, String prefix) {
+    return path.startsWith(prefix) && path.length > prefix.length;
   }
 
   @override

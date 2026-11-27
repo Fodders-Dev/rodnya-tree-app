@@ -12,7 +12,6 @@ import '../models/account_linking_status.dart';
 import '../backend/models/profile_form_data.dart';
 import '../models/family_person.dart';
 import '../models/profile_contribution.dart';
-import '../models/profile_note.dart';
 import '../models/user_profile.dart';
 import '../utils/safe_json_decode.dart';
 import 'custom_api_auth_service.dart';
@@ -51,7 +50,6 @@ class CustomApiProfileService implements ProfileServiceInterface {
   final SharedPreferences _preferences;
   final BackendRuntimeConfig _runtimeConfig;
   final StorageServiceInterface? _storageService;
-  final Map<String, StreamController<List<ProfileNote>>> _noteControllers = {};
 
   static Future<CustomApiProfileService> create({
     required CustomApiAuthService authService,
@@ -255,14 +253,7 @@ class CustomApiProfileService implements ProfileServiceInterface {
     return coverPhotoUrl;
   }
 
-  Future<void> resetForSignOut() async {
-    for (final controller in _noteControllers.values) {
-      if (!controller.isClosed) {
-        await controller.close();
-      }
-    }
-    _noteControllers.clear();
-  }
+  Future<void> resetForSignOut() async {}
 
   @override
   Future<void> updateUserProfile(String userId, UserProfile profile) async {
@@ -361,61 +352,6 @@ class CustomApiProfileService implements ProfileServiceInterface {
   }
 
   @override
-  Stream<List<ProfileNote>> getProfileNotesStream(String userId) {
-    final controller = _noteControllers.putIfAbsent(
-      userId,
-      () {
-        final streamController = StreamController<List<ProfileNote>>.broadcast(
-          onListen: () {
-            _refreshProfileNotes(userId);
-          },
-        );
-        return streamController;
-      },
-    );
-
-    _refreshProfileNotes(userId);
-    return controller.stream;
-  }
-
-  @override
-  Future<void> addProfileNote(
-      String userId, String title, String content) async {
-    final response = await _requestJson(
-      method: 'POST',
-      path: '/v1/users/$userId/profile-notes',
-      body: {
-        'title': title,
-        'content': content,
-      },
-    );
-
-    final note = _profileNoteFromResponse(response);
-    await _refreshProfileNotes(userId, insertedNote: note);
-  }
-
-  @override
-  Future<void> updateProfileNote(String userId, ProfileNote note) async {
-    await _requestJson(
-      method: 'PATCH',
-      path: '/v1/users/$userId/profile-notes/${note.id}',
-      body: {
-        'title': note.title,
-        'content': note.content,
-      },
-    );
-    await _refreshProfileNotes(userId);
-  }
-
-  @override
-  Future<void> deleteProfileNote(String userId, String noteId) async {
-    await _requestDelete(
-      path: '/v1/users/$userId/profile-notes/$noteId',
-    );
-    await _refreshProfileNotes(userId);
-  }
-
-  @override
   Future<List<UserProfile>> searchUsersByField({
     required String field,
     required String value,
@@ -510,33 +446,6 @@ class CustomApiProfileService implements ProfileServiceInterface {
       payload['message']?.toString() ??
           payload['error']?.toString() ??
           'Ошибка backend (${response.statusCode})',
-      statusCode: response.statusCode,
-    );
-  }
-
-  Future<void> _requestDelete({
-    required String path,
-  }) async {
-    final uri = _buildUri(path);
-    final response = await _httpClient.delete(uri, headers: _headers());
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return;
-    }
-
-    if (response.body.isNotEmpty) {
-      final payload = tryDecodeJsonMap(response.body);
-      if (payload != null) {
-        throw CustomApiException(
-          payload['message']?.toString() ??
-              'Ошибка backend (${response.statusCode})',
-          statusCode: response.statusCode,
-        );
-      }
-    }
-
-    throw CustomApiException(
-      'Ошибка backend (${response.statusCode})',
       statusCode: response.statusCode,
     );
   }
@@ -1023,67 +932,5 @@ class CustomApiProfileService implements ProfileServiceInterface {
         return '.jpg';
     }
     return '';
-  }
-
-  Future<void> _refreshProfileNotes(
-    String userId, {
-    ProfileNote? insertedNote,
-  }) async {
-    final controller = _noteControllers[userId];
-    if (controller == null || controller.isClosed) {
-      return;
-    }
-
-    try {
-      final notes = insertedNote == null
-          ? await _fetchProfileNotes(userId)
-          : [
-              insertedNote,
-              ...await _fetchProfileNotes(userId).then((items) =>
-                  items.where((item) => item.id != insertedNote.id).toList()),
-            ];
-      controller.add(notes);
-    } catch (error, stackTrace) {
-      controller.addError(error, stackTrace);
-    }
-  }
-
-  Future<List<ProfileNote>> _fetchProfileNotes(String userId) async {
-    final response = await _requestJson(
-      method: 'GET',
-      path: '/v1/users/$userId/profile-notes',
-    );
-
-    final rawList = response['notes'];
-    if (rawList is! List<dynamic>) {
-      return const [];
-    }
-
-    return rawList
-        .whereType<Map<String, dynamic>>()
-        .map(_profileNoteFromJson)
-        .toList();
-  }
-
-  ProfileNote _profileNoteFromResponse(Map<String, dynamic> response) {
-    final note = response['note'];
-    if (note is Map<String, dynamic>) {
-      return _profileNoteFromJson(note);
-    }
-    return _profileNoteFromJson(response);
-  }
-
-  ProfileNote _profileNoteFromJson(Map<String, dynamic> json) {
-    final createdAtValue = json['createdAt']?.toString();
-    final createdAt = createdAtValue != null && createdAtValue.isNotEmpty
-        ? DateTime.tryParse(createdAtValue) ?? DateTime.now()
-        : DateTime.now();
-
-    return ProfileNote(
-      id: json['id']?.toString() ?? '',
-      title: json['title']?.toString() ?? '',
-      content: json['content']?.toString() ?? '',
-      createdAt: createdAt,
-    );
   }
 }

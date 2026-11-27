@@ -450,7 +450,7 @@ void main() {
           builder: (context, state) => const Text('tree-selector'),
         ),
         GoRoute(
-          path: '/relatives/chat/:userId',
+          path: '/chat/:userId',
           builder: (context, state) =>
               Text('chat:${state.pathParameters['userId']}'),
         ),

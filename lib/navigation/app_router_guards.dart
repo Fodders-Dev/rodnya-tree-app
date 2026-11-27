@@ -91,8 +91,8 @@ class AppRouterGuards {
   static const String familyTreeLocation = '/tree';
 
   /// Gated redirect for the legacy `/relatives` root → «Семья» Список.
-  /// Only the bare root folds in; the add/edit/find/requests/
-  /// send_request/chat sub-routes keep rendering their own pushed pages.
+  /// Only the bare root folds in; the add/edit/find/requests
+  /// sub-routes keep rendering their own pushed pages.
   static String? resolveRelativesRootRedirect({required Uri uri}) {
     if (uri.path != '/relatives') {
       return null;
@@ -146,11 +146,6 @@ class AppRouterGuards {
     await SemyaInvitationDeepLinkService().ready;
     final isLoggedIn = _authService.currentUserId != null;
     final isAuthEntryRoute = isAuthEntryPage(state.matchedLocation);
-    final completingProfile = state.matchedLocation == '/complete_profile';
-    // Phase 6 chunk 4a bypass: /setup wizard собирает profile fields сам
-    // (displayName / gender / birthDate через wizard's profile step).
-    // Без этого exception router guard fires _ensureCompletedProfile →
-    // redirects fresh user к /complete_profile, обнуляя wizard entirely.
     final setupWizard = state.matchedLocation == '/setup';
     final invitePage = state.matchedLocation == '/invite';
     // Ship FE3b (2026-05-28): семя invitation token deep link.
@@ -188,9 +183,7 @@ class AppRouterGuards {
       return null;
     }
 
-    if (!isLoggedIn &&
-        !allowsAnonymousAccess(state.matchedLocation) &&
-        !completingProfile) {
+    if (!isLoggedIn && !allowsAnonymousAccess(state.matchedLocation)) {
       return buildLoginRedirectTarget(state);
     }
 
@@ -206,13 +199,13 @@ class AppRouterGuards {
       return deferredTarget ?? '/';
     }
 
-    if (isLoggedIn && !completingProfile && !setupWizard) {
+    if (isLoggedIn && !setupWizard) {
       if (_authService.currentRequiresOnboarding) {
         return '/setup';
       }
-      final profileRedirect = await _ensureCompletedProfile(state);
-      if (profileRedirect != null) {
-        return profileRedirect;
+      final sessionRedirect = await _ensureCompletedProfile(state);
+      if (sessionRedirect != null) {
+        return sessionRedirect;
       }
     }
     return null;
@@ -277,17 +270,11 @@ class AppRouterGuards {
     }
 
     try {
-      final profileStatus = await _authService.checkProfileCompleteness();
+      await _authService.checkProfileCompleteness();
       if (_authService.currentUserId == null) {
         _completedProfileUserId = null;
         _completedProfileCheckedAt = null;
         return buildLoginRedirectTarget(state);
-      }
-      final isComplete = profileStatus['isComplete'] == true;
-      if (!isComplete) {
-        _completedProfileUserId = null;
-        _completedProfileCheckedAt = null;
-        return '/complete_profile?requiredFields=${Uri.encodeComponent(profileStatus.toString())}';
       }
       _completedProfileUserId = activeUserId;
       _completedProfileCheckedAt = DateTime.now();

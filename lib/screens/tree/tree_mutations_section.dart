@@ -432,11 +432,16 @@ extension _TreeMutationsSection on _TreeViewScreenState {
   Future<void> _openOrBindSemyaForTree(String treeId) async {
     final existing = _currentSemyaContext;
     if (existing != null) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => SemyaDetailsScreen(semyaId: existing.semya.id),
-        ),
-      );
+      final router = GoRouter.maybeOf(context);
+      if (router != null) {
+        await router.push('/semya/${Uri.encodeComponent(existing.semya.id)}');
+      } else {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SemyaDetailsScreen(semyaId: existing.semya.id),
+          ),
+        );
+      }
       await _refreshSemyaContext(treeId);
       return;
     }
@@ -457,11 +462,16 @@ extension _TreeMutationsSection on _TreeViewScreenState {
           .createSemya(name: semyaName, treeId: treeId);
       await _refreshSemyaContext(treeId);
       if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => SemyaDetailsScreen(semyaId: created.id),
-        ),
-      );
+      final router = GoRouter.maybeOf(context);
+      if (router != null) {
+        await router.push('/semya/${Uri.encodeComponent(created.id)}');
+      } else {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SemyaDetailsScreen(semyaId: created.id),
+          ),
+        );
+      }
       await _refreshSemyaContext(treeId);
     } catch (error) {
       if (!mounted) return;

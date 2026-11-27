@@ -6,17 +6,6 @@ const {
   nowIso,
 } = require("./utils");
 
-function createProfileNote({title, content}) {
-  const timestamp = nowIso();
-  return {
-    id: crypto.randomUUID(),
-    title: String(title || "").trim(),
-    content: String(content || "").trim(),
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
-}
-
 function createPostRecord({
   treeId,
   branchIds = null,
@@ -301,7 +290,6 @@ function createCommentRecord({
 }
 
 module.exports = {
-  createProfileNote,
   createPostRecord,
   createGatheringRecord,
   createPollRecord,

@@ -28,6 +28,24 @@ import '../widgets/article_audio_block.dart';
 import '../widgets/audio_record_sheet.dart';
 import '../widgets/voice_input_sheet.dart';
 
+class ProfileArticleEditorRouteArgs {
+  const ProfileArticleEditorRouteArgs({
+    this.personName,
+    this.personRelation,
+    this.personGender,
+    this.initialStoryTitle,
+    this.initialStoryQuestion,
+    this.initialStoryHint,
+  });
+
+  final String? personName;
+  final String? personRelation;
+  final String? personGender;
+  final String? initialStoryTitle;
+  final String? initialStoryQuestion;
+  final String? initialStoryHint;
+}
+
 class ProfileArticleEditorScreen extends StatefulWidget {
   const ProfileArticleEditorScreen({
     super.key,

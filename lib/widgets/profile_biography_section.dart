@@ -13,6 +13,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 
 import '../backend/interfaces/profile_article_service_interface.dart';
 import '../backend/models/profile_article.dart';
@@ -98,16 +99,28 @@ class _ProfileBiographySectionState extends State<ProfileBiographySection> {
   }
 
   Future<void> _openEditor() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ProfileArticleEditorScreen(
-          personId: widget.personId,
+    final router = GoRouter.maybeOf(context);
+    if (router != null) {
+      await router.push(
+        '/relative/details/${Uri.encodeComponent(widget.personId)}/biography',
+        extra: ProfileArticleEditorRouteArgs(
           personName: widget.fullName,
           personRelation: widget.relation,
           personGender: widget.gender,
         ),
-      ),
-    );
+      );
+    } else {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ProfileArticleEditorScreen(
+            personId: widget.personId,
+            personName: widget.fullName,
+            personRelation: widget.relation,
+            personGender: widget.gender,
+          ),
+        ),
+      );
+    }
     if (mounted) _load(); // reflect any edits
   }
 

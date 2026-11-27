@@ -480,13 +480,20 @@ extension _TreeTopbarSection on _TreeViewScreenState {
                         legacyLabel: 'Настроить семью',
                         onTap: _currentSemyaContext != null
                             ? () async {
-                                await Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => SemyaDetailsScreen(
-                                      semyaId: _currentSemyaContext!.semya.id,
+                                final semyaId = _currentSemyaContext!.semya.id;
+                                final router = GoRouter.maybeOf(context);
+                                if (router != null) {
+                                  await router.push(
+                                    '/semya/${Uri.encodeComponent(semyaId)}',
+                                  );
+                                } else {
+                                  await Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          SemyaDetailsScreen(semyaId: semyaId),
                                     ),
-                                  ),
-                                );
+                                  );
+                                }
                                 await _refreshSemyaContext(selectedTreeId);
                               }
                             : () => _openOrBindSemyaForTree(selectedTreeId),

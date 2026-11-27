@@ -239,8 +239,8 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 | `reset_password_confirm_screen.dart` | `/reset-password?token=` | `Новый пароль` | Подтверждение токена → `/login` | `[ОСТАВЛЯЕМ]` |
 | `qr_login_display_screen.dart` | `/auth/qr` | `Вход по QR` | Polling QR → `/` | `[ОСТАВЛЯЕМ]` |
 | `onboarding/onboarding_wizard_screen.dart` | `/setup` | `Старт / О вас / Семья / Готово` | Профиль + первые родные → автосоздание дерева и `Semya` → `/` или `/tree` | `[ОСТАВЛЯЕМ]` |
-| `onboarding_screen.dart` | `/onboarding` | `Добро пожаловать в Родню` (5 слайдов) | Показывается редко при `!requiresOnboarding`; слайд 5 врёт про вход из Настроек | `[ОБЪЕДИНИТЬ → СНЕСТИ]` (влить/удалить в пользу `/setup`) |
-| `complete_profile_screen.dart` | `/complete_profile?requiredFields=` | `Профиль` | Заглушка дозаполнения полей после legacy-входа → `/` | `[ОБЪЕДИНИТЬ]` (слить с шагом профиля `/setup`) |
+| `onboarding_screen.dart` | `/onboarding` → redirect `/setup` | — | **Снесён в Wave C1:** старый маршрут редиректит на `/setup` | `[СНЕСЕНО]` |
+| `complete_profile_screen.dart` | `/complete_profile` → redirect `/profile?edit=1` | — | **Снесён в Wave C1:** `parsePhoneWithCountryCode` вынесен в `utils/phone_parser.dart`, `/setup` заполняет профиль полностью | `[СНЕСЕНО]` |
 
 #### C. Лента, события, истории, активность (10)
 
@@ -267,7 +267,7 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 | `find_relative_screen.dart` | `/relatives/find/:treeId` | `Найти родственника` | Поиск по Email/Коду/Ссылке → отправка `RelationRequest` | `[ОБЪЕДИНИТЬ]` с `/discover/relatives` |
 | `discover_relatives/discover_relatives_screen.dart` | `/discover/relatives` | `Найти родню` | Bilateral `KinshipCheck` («мы родственники?»), цепочка графа | `[ОБЪЕДИНИТЬ]` (основной поиск родных) |
 | `relation_requests_screen.dart` | `/relatives/requests/:treeId` | `Запросы на родство` | Принять/отклонить legacy `RelationRequest` | `[ОБЪЕДИНИТЬ]` с общим центром запросов |
-| `send_relation_request_screen.dart` | `/relatives/send_request/:treeId` **и** `/send_relation_request` | `Пригласить в дерево` | **0 вызовов в коде `lib/`**, 2 мёртвых роута | `[СНЕСТИ]` (Delete-first!) |
+| `send_relation_request_screen.dart` | ~~`/relatives/send_request/:treeId` и `/send_relation_request`~~ | — | **Снесён в Wave C1** вместе с 2 мёртвыми роутами и `page_transitions.dart` | `[СНЕСЕНО]` |
 | `identity_review_screen.dart` | `/identity/review` | `Один человек?` | Мердж-предложения, клеймы, публичный discovery | `[ОСТАВЛЯЕМ]` |
 | `browse_tree_screen.dart` | `/browse/:browseToken` | `<semyaName>` / `Дерево семьи` | Анонимный просмотр по токену + `PullPersonSheet` в своё дерево | `[ОСТАВЛЯЕМ]` (целевой гостевой режим) |
 | `public_tree_entry_screen.dart` | `/public/tree/:publicTreeId` | `Публичное дерево` | Legacy-лендинг публичного дерева | `[ОБЪЕДИНИТЬ → СНЕСТИ]` в `/browse/:token` |
@@ -279,7 +279,7 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 |---|---|---|---|---|
 | `relative_details_screen.dart` | `/relative/details/:personId` (`?treeId=&action=`) | `<person.displayName>` | Досье, связи, фото, биография, `FamilyStoryQuestionsSheet`, правка, чат | `[ОСТАВЛЯЕМ]` |
 | `user_profile_entry_screen.dart` | `/user/:userId` | `Мой профиль / Профиль` | Резолв чужого/своего профиля из ленты/ссылки | `[ОСТАВЛЯЕМ]` |
-| `profile_article_editor_screen.dart` | `Navigator.push` из `RelativeDetailsScreen` | `<personName> / Биография` | Блоки текста/цитат/заголовков/фото/аудио, порядок, удаление | `[ОСТАВЛЯЕМ]` (перенести в GoRouter) |
+| `profile_article_editor_screen.dart` | `/relative/details/:personId/biography` *(Wave C1)* | `<personName> / Биография` | Блоки текста/цитат/заголовков/фото/аудио, порядок, удаление | `[ОСТАВЛЯЕМ]` *(GoRouter ✓)* |
 | `profile_article_history_screen.dart` | `Navigator.push` из `RelativeDetailsScreen` | `История изменений` | Аудит правок биографии (пока read-only) | `[ОСТАВЛЯЕМ]` |
 | `profile_all_photos_screen.dart` | `Navigator.push` из `RelativeDetailsScreen` | `Все фото` | Сетка всех фото персоны → лайтбокс | `[ОСТАВЛЯЕМ]` |
 | `profile_voice_recordings_screen.dart` | `Navigator.push` из `RelativeDetailsScreen` | `Голосовые записи` | Список/плеер всех аудио-блоков | `[ОСТАВЛЯЕМ]` |
@@ -290,17 +290,17 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 
 | Экран | Маршрут / Вход | UI-название | Ключевые действия и выходы | Вердикт |
 |---|---|---|---|---|
-| `semya_details_screen.dart` | `Navigator.push` (Настройки / бейдж в Дереве) | `<semya.name>` / `Семья` | Участники, роли, переименование, инвайты, browse-ссылки, скрытые, удалённые, выход | `[ОСТАВЛЯЕМ]` (перенести в GoRouter) |
+| `semya_details_screen.dart` | `/semya/:semyaId` (`?section=hidden`) *(Wave C1)* | `<semya.name>` / `Семья` | Участники, роли, переименование, инвайты, browse-ссылки, скрытые, удалённые, выход | `[ОСТАВЛЯЕМ]` *(GoRouter ✓)* |
 | `semya_invitations_list_screen.dart` | `Navigator.push` из `SemyaDetailsScreen` | `Приглашения` | Список инвайтов, копирование, отзыв, кнопка `+` | `[ОСТАВЛЯЕМ]` |
 | `semya_invite_screen.dart` | `Navigator.push` из `SemyaInvitationsListScreen` | `Пригласить в семью` | Роль, адресат, генерация `/invite/:token` | `[ОСТАВЛЯЕМ]` |
 | `semya_invitation_accept_screen.dart` | `/invite/:token` | `Приглашение в семью` | Авто-принятие по токену + переход в дерево | `[ОСТАВЛЯЕМ]` |
-| `semya_deleted_persons_screen.dart` | `Navigator.push` из `SemyaDetailsScreen` | `Удалённые · <semyaName>` | Восстановление/purge удалённых персон семьи | `[ОБЪЕДИНИТЬ]` с `TrashScreen` |
+| `semya_deleted_persons_screen.dart` | `/profile/trash?semyaId=` *(Wave C1)* | — | **Снесён в Wave C1:** объединён с `TrashScreen` | `[СНЕСЕНО]` |
 
 #### G. Чаты, звонки и кружки (3 файла, включая `lib/widgets/kruzhok_recorder_screen.dart`)
 
 | Экран | Маршрут / Вход | UI-название | Ключевые действия и выходы | Вердикт |
 |---|---|---|---|---|
-| `chat_screen.dart` | `/chats/view/:chatId` (канон) **+ дубли** `/chat/:userId`, `/relatives/chat/:userId` | `<title>` / `Чат` | Сообщения, ответы, правка, удаление, пересылка, закреп, кружки/голос, звонок, `ChatInfoSheet` | `[ОСТАВЛЯЕМ]` (**дубли роутов `[СНЕСТИ]`**) |
+| `chat_screen.dart` | `/chats/view/:chatId` (канон) **+ `/chat/:userId`** *(дубль `/relatives/chat/:userId` снесён в Wave C1)* | `<title>` / `Чат` | Сообщения, ответы, правка, удаление, пересылка, закреп, кружки/голос, звонок, `ChatInfoSheet` | `[ОСТАВЛЯЕМ]` |
 | `call_screen.dart` | `Navigator.push` из `CallRuntimeHost` | `Аудиозвонок / Видеозвонок / таймер` | LiveKit звонок 1:1 и группа, PiP, ростер, чат в звонке | `[ОСТАВЛЯЕМ]` |
 | `lib/widgets/kruzhok_recorder_screen.dart` | `Navigator.push` (fullscreenDialog) | `Кружок / История / Видео` | Запись видеокружка для сторис и постов | `[ОСТАВЛЯЕМ]` |
 
@@ -314,14 +314,14 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 | `sessions_screen.dart` | `/profile/sessions` | `Активные сеансы` | Переименование устройства, отзыв сеанса, вход в QR-сканер | `[ОСТАВЛЯЕМ]` |
 | `qr_login_scan_screen.dart` | `/profile/sessions/scan` | `Сканировать QR` | Подтверждение QR-входа на десктопе/вебе | `[ОСТАВЛЯЕМ]` |
 | `offline_profiles_screen.dart` | `/profile/offline_profiles` | `Созданные профили` | Список офлайн-карточек пользователя → `/relative/details/:id` | `[ОСТАВЛЯЕМ]` |
-| `trash_screen.dart` | `Navigator.push` из `SettingsScreen` | `Корзина` | Вкладки «Родственники» и «Посты» (30 дней, восстановление / purge) | `[ОБЪЕДИНИТЬ]` с `SemyaDeletedPersonsScreen` |
+| `trash_screen.dart` | `/profile/trash` (`?semyaId=&semyaName=`) *(Wave C1)* | `Корзина` / `Удалённые · <семя>` | Единая корзина: «Родственники» и «Посты» глобально + режим по `semyaId` (30 дней, восстановление / purge) | `[ОСТАВЛЯЕМ]` *(объединён ✓)* |
 | `about_screen.dart` | `/profile/about` | `О приложении` | Версия + переходы в правовые разделы | `[ОСТАВЛЯЕМ]` |
 | `privacy_policy_screen.dart` (4 класса) | `/privacy`, `/terms`, `/support`, `/account-deletion` | `Политика`, `Соглашение`, `Поддержка`, `Удаление аккаунта` | Публичные информационные экраны | `[ОСТАВЛЯЕМ]` |
 | Служебные виджеты/оверлеи | `/__e2e__/idle`, `MediaLightbox`, `_MandatoryUpdateScreen`, `_GalleryViewer`, `PersonMultiPickerSheet` | — | Вспомогательные системные оверлеи и лайтбоксы | `[ОСТАВЛЯЕМ]` (прим.: `lib/navigation/page_transitions.dart` — 0 импортов → `[СНЕСТИ]`) |
 
 ### 3.4 Инфраструктурные долги навигации
-- **12 экранов на сыром `Navigator.push(MaterialPageRoute)` вместо `GoRouter`:** `SemyaDetailsScreen`, `SemyaInvitationsListScreen`, `SemyaInviteScreen`, `SemyaDeletedPersonsScreen`, `TrashScreen`, `ProfileArticleEditorScreen`, `ProfileArticleHistoryScreen`, `ProfileAllPhotosScreen`, `ProfileVoiceRecordingsScreen`, `ProfileVisibilityScreen`, `CallScreen`, `KruzhokRecorderScreen` — не имеют URL-состояния и истории браузера в Web.
-- **Пропущенные Android App Links (`app_links_dynamic_link_service.dart`):** клиент шарит `/user/:id`, `/post/:id`, `/relatives/find/:treeId?profileCode=...`, но обработчик внешних ссылок их не перехватывает.
+- **Оставшиеся `Navigator.push` экраны (после Wave C1 — переведены в GoRouter `SemyaDetailsScreen`, `TrashScreen`, `ProfileArticleEditorScreen`):** `SemyaInvitationsListScreen`, `SemyaInviteScreen`, `ProfileArticleHistoryScreen`, `ProfileAllPhotosScreen`, `ProfileVoiceRecordingsScreen`, `ProfileVisibilityScreen`, `CallScreen`, `KruzhokRecorderScreen`.
+- **Android App Links (`app_links_dynamic_link_service.dart`):** синхронизирован в Wave C1 (`/post/:id`, `/user/:id`, `/notifications`, `/relative/details/:id`, `/discover/relatives`, `/semya/:id`, `/profile/trash`, `/chats/view/:id`, `/chat/:userId`, `/stories/view/...`, с исключением `/oauth/*` и `/story/:token`).
 
 ---
 
@@ -355,12 +355,12 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
    - Добавлен sync `photoUrl` в `PATCH /v1/users/:userId/profile` (плюс фикс `photoGallery` в `syncUserPhotoToTreePersons`), сессионная смена/задание пароля (`POST /v1/auth/change-password`), отвязка OAuth-провайдеров (`DELETE /v1/auth/providers/:provider` с защитой `409 LAST_LOGIN_METHOD`), UI «Вход и безопасность» и passwordless delete для OAuth-аккаунтов в `SettingsScreen`.
 
 ### P2 — Delete-first и консолидация экранов/маршрутов
-1. **Мгновенная чистка мёртвого кода:** удалить `SendRelationRequestScreen` + 2 его мёртвых роута (`/relatives/send_request/:treeId`, `/send_relation_request`), `lib/navigation/page_transitions.dart`, дубль `/relatives/chat/:userId`, и либо удалить, либо подключить `ProfileNote`.
-2. **Консолидация 3 онбордингов → 1:** оставить единый `/setup` (`OnboardingWizardScreen`), влить недостающие поля из `/complete_profile` и убрать legacy `/onboarding` (вместе со сломанным обещанием входа из Настроек).
-3. **Консолидация 3 инвайт-потоков → 1:** добавить preview (`GET /v1/invitation/:token`) и `decline` к `SemyaInvitation`, и поэтапно вывести legacy `TreeInvitation` и `/invite?treeId=&personId=`.
-4. **Консолидация 2 публичных просмотров → 1:** мигрировать `/public/tree/*` на отзываемый `SemyaBrowseToken` (`/browse/:token`).
-5. **Консолидация поиска родных и корзин:** слить `/relatives/find/:treeId` и `/discover/relatives` в единый поток поиска + объединить `TrashScreen` и `SemyaDeletedPersonsScreen`.
-6. **Маршрутизация:** перевести ключевые `Navigator.push`-экраны (`SemyaDetailsScreen`, `TrashScreen`, `ProfileArticleEditorScreen`) в `GoRouter` и синхронизировать `AppLinksDynamicLinkService`.
+1. **Мгновенная чистка мёртвого кода — ✅ Закрыто в Wave C1 (2026-11-27):** удалены `SendRelationRequestScreen` + 2 мёртвых роута (`/relatives/send_request/:treeId`, `/send_relation_request`), `lib/navigation/page_transitions.dart`, дубль `/relatives/chat/:userId` (с переносом `UrlUtils.normalizeImageUrl` в `/chat/:userId`), а также неиспользуемый `ProfileNote` во Flutter и на бэке.
+2. **Консолидация 3 онбордингов → 1 — ✅ Закрыто в Wave C1 (2026-11-27):** оставлен единый `/setup` (`OnboardingWizardScreen` с опциональной датой рождения; `seedOnboarding` заполняет `firstName`, `lastName` и уникальный `username`), удалены `OnboardingScreen`/`OnboardingService` и `CompleteProfileScreen` (парсер телефона перенесён в `lib/utils/phone_parser.dart`, `/onboarding` → `/setup`, `/complete_profile` → `/profile?edit=1`).
+3. **Консолидация 3 инвайт-потоков → 1 (Wave C2):** добавить preview (`GET /v1/invitation/:token`) и `decline` к `SemyaInvitation`, и поэтапно вывести legacy `TreeInvitation` и `/invite?treeId=&personId=`.
+4. **Консолидация 2 публичных просмотров → 1 (Wave C2):** мигрировать `/public/tree/*` на отзываемый `SemyaBrowseToken` (`/browse/:token`).
+5. **Консолидация поиска родных и корзин — ⚠️ Частично закрыто (корзины ✅ в Wave C1):** объединены `TrashScreen` и `SemyaDeletedPersonsScreen` в единый `/profile/trash` (`?semyaId=&semyaName=`). Поиск родных (`/relatives/find/:treeId` + `/discover/relatives`) консолидируется в Wave C2.
+6. **Маршрутизация — ✅ Закрыто в Wave C1 (2026-11-27):** переведены в `GoRouter` `SemyaDetailsScreen` (`/semya/:semyaId`), `TrashScreen` (`/profile/trash`) и `ProfileArticleEditorScreen` (`/relative/details/:personId/biography`), а `AppLinksDynamicLinkService` + `AndroidManifest.xml` синхронизированы со всеми активными deep-link маршрутами.
 
 ---
 
@@ -382,7 +382,7 @@ flowchart LR
     subgraph sgEntry ["Вход и внешние ссылки"]
         authLogin["Вход и QR (/login)"]
         setupWizard["Мастер старта (/setup)"]
-        legacyOnboard["ОБЪЕДИНИТЬ: /onboarding + /complete_profile"]
+        legacyOnboard["УДАЛЕНО: /onboarding + /complete_profile → redirect"]
         inviteAccept["Инвайт семьи (/invite/:token)"]
         storyGuest["Гостевая история SSR (/story/:token)"]
         browseVsPublic["ОБЪЕДИНИТЬ: /browse/:token vs /public/tree/*"]
@@ -414,15 +414,15 @@ flowchart LR
     subgraph sgProfile ["Профиль, Семья и Настройки (Tab 5)"]
         profileTab["Профиль (/profile)"]
         settingsHub["Настройки (/profile/settings)"]
-        semyaHub["Семья, роли, инвайты (без URL)"]
-        trashDup["ОБЪЕДИНИТЬ: Trash vs SemyaDeletedPersons"]
+        semyaHub["Семья (/semya/:id)"]
+        trashDup["Корзина (/profile/trash?semyaId=)"]
         securitySub["Сеансы, Доступы, Блокировки, Право"]
     end
 
-    subgraph sgDelete ["СНЕСТИ (Delete-first)"]
-        sendReqDead["СНЕСТИ: SendRelationRequestScreen (0 вызовов)"]
-        chatRouteDup["СНЕСТИ: дубль /relatives/chat/:id"]
-        legacyInviteDead["СНЕСТИ: /invite legacy и page_transitions"]
+    subgraph sgDelete ["Снесено в Wave C1 / к сносу в C2"]
+        sendReqDead["СНЕСЕНО: SendRelationRequestScreen + page_transitions"]
+        chatRouteDup["СНЕСЕНО: дубль /relatives/chat/:id + ProfileNote"]
+        legacyInviteDead["СНЕСТИ в C2: /invite legacy и /public/tree"]
     end
 
     authLogin -->|"новый пользователь"| setupWizard

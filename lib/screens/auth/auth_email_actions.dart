@@ -47,29 +47,12 @@ extension _AuthEmailActions on _AuthScreenState {
           return;
         }
 
-        // Brand-new email registrations get the onboarding tour first —
-        // gives them a quick orientation before being dropped into an
-        // empty home feed. Existing users (login) skip straight to the
-        // resolved target. We still gate by hasSeen() so a returning user
-        // who happens to register on a second device doesn't re-watch.
-        final shouldShowOnboarding = !_isLogin &&
-            !linkedTelegram &&
-            !linkedVk &&
-            !linkedMax &&
-            !(await OnboardingService.instance.hasSeen());
-
-        if (!mounted) {
-          return;
-        }
-
         final pendingInviteToken =
             SemyaInvitationDeepLinkService().pendingToken;
         if (pendingInviteToken != null && pendingInviteToken.isNotEmpty) {
           context.go('/invite/$pendingInviteToken');
         } else if (_authService.currentRequiresOnboarding) {
           context.go('/setup');
-        } else if (shouldShowOnboarding) {
-          context.go('/onboarding');
         } else {
           context.go(_resolvePostAuthRedirect());
         }

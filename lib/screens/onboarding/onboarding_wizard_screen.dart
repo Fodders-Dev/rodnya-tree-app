@@ -535,6 +535,66 @@ class _ProfileStepState extends State<_ProfileStep> {
                     },
                     emptySelectionAllowed: true,
                   ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Дата рождения (необязательно)',
+                    style: theme.textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          key: const Key('onboarding-birth-date-btn'),
+                          icon: const Icon(Icons.cake_outlined, size: 18),
+                          onPressed: () async {
+                            final now = DateTime.now();
+                            final existing = DateTime.tryParse(
+                              controller.profileBirthDate ?? '',
+                            );
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate:
+                                  existing ?? DateTime(now.year - 30, 1, 1),
+                              firstDate: DateTime(1900, 1, 1),
+                              lastDate: now,
+                            );
+                            if (picked != null && mounted) {
+                              final iso =
+                                  '${picked.year.toString().padLeft(4, '0')}-'
+                                  '${picked.month.toString().padLeft(2, '0')}-'
+                                  '${picked.day.toString().padLeft(2, '0')}';
+                              controller.setProfileBirthDate(iso);
+                            }
+                          },
+                          label: Builder(
+                            builder: (_) {
+                              final parsed = DateTime.tryParse(
+                                controller.profileBirthDate ?? '',
+                              );
+                              if (parsed == null) {
+                                return const Text('Указать дату рождения');
+                              }
+                              return Text(
+                                '${parsed.day.toString().padLeft(2, '0')}.'
+                                '${parsed.month.toString().padLeft(2, '0')}.'
+                                '${parsed.year}',
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      if (controller.profileBirthDate != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          key: const Key('onboarding-birth-date-clear'),
+                          tooltip: 'Очистить дату',
+                          onPressed: () => controller.setProfileBirthDate(null),
+                          icon: const Icon(Icons.clear),
+                        ),
+                      ],
+                    ],
+                  ),
                   const Spacer(),
                   const SizedBox(height: 16),
                   Row(

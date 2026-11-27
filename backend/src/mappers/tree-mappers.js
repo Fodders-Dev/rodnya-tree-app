@@ -4,16 +4,6 @@ const {
 } = require("../profile-utils");
 const {resolveUserDisplayName} = require("./notification-safety-mappers");
 
-function mapProfileNote(note) {
-  return {
-    id: note.id,
-    title: note.title,
-    content: note.content,
-    createdAt: note.createdAt,
-    updatedAt: note.updatedAt,
-  };
-}
-
 function mapTree(tree) {
   return {
     id: tree.id,
@@ -265,7 +255,6 @@ function mapTreeInvitation(invitation, tree = null) {
 
 
 module.exports = {
-  mapProfileNote,
   mapTree,
   mapPerson,
   mapProfileContribution,

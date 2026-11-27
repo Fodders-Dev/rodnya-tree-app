@@ -16,7 +16,7 @@ import 'package:rodnya/backend/models/semya.dart';
 import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
 import 'package:rodnya/backend/models/semya_pull_person_result.dart';
-import 'package:rodnya/screens/semya_deleted_persons_screen.dart';
+import 'package:rodnya/screens/trash_screen.dart';
 import 'package:rodnya/widgets/deleted_persons_section.dart';
 
 class _FakeSemyaService implements SemyaCapableFamilyTreeService {
@@ -44,8 +44,7 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
       throw UnimplementedError();
 
   @override
-  Future<List<DeletedPost>> listMyDeletedPosts() async =>
-      const <DeletedPost>[];
+  Future<List<DeletedPost>> listMyDeletedPosts() async => const <DeletedPost>[];
 
   @override
   Future<void> restoreDeletedPost(String deletedPostId) async =>
@@ -217,7 +216,7 @@ void main() {
     expect(find.text('Удалённые родственники (3)'), findsOneWidget);
   });
 
-  testWidgets('tap navigates к SemyaDeletedPersonsScreen', (tester) async {
+  testWidgets('tap navigates к TrashScreen', (tester) async {
     final service = _FakeSemyaService(persons: [_person('p-1')]);
     await tester.pumpWidget(_wrap(service));
     await tester.pumpAndSettle();
@@ -225,7 +224,7 @@ void main() {
       find.byKey(const Key('semya-details-deleted-persons-section')),
     );
     await tester.pumpAndSettle();
-    expect(find.byType(SemyaDeletedPersonsScreen), findsOneWidget);
+    expect(find.byType(TrashScreen), findsOneWidget);
   });
 
   testWidgets('hidden когда load fails (silent degrade)', (tester) async {

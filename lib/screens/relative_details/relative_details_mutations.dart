@@ -730,7 +730,7 @@ extension _RelativeDetailsMutations on _RelativeDetailsScreenState {
       final photoParam = photoUrl != null ? Uri.encodeComponent(photoUrl) : '';
       final relativeIdParam = Uri.encodeComponent(_person!.id);
       context.push(
-        '/relatives/chat/${_person!.userId}?name=$nameParam&photo=$photoParam&relativeId=$relativeIdParam',
+        '/chat/${_person!.userId}?name=$nameParam&photo=$photoParam&relativeId=$relativeIdParam',
       );
     } catch (e) {
       debugPrint('Ошибка при переходе в чат: $e');

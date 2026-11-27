@@ -333,3 +333,41 @@ test(
     }
   },
 );
+
+test(
+  "POST /onboarding/seed populates firstName, lastName, unique username so profileStatus.isComplete is true",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const registerRes = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: "Complete.Wizard@test.app",
+          password: "secret123",
+          consentDocVersion: "test-consent-v1",
+          displayName: "Мария",
+        }),
+      });
+      assert.equal(registerRes.status, 201);
+      const user = await registerRes.json();
+      const seedRes = await seedOnboarding(ctx, user.accessToken, {
+        profile: {name: "Мария Соколова", gender: "female"},
+        relatives: [],
+      });
+      assert.equal(seedRes.status, 201);
+
+      const profileRes = await fetch(`${ctx.baseUrl}/v1/profile/me/bootstrap`, {
+        headers: {authorization: `Bearer ${user.accessToken}`},
+      });
+      assert.equal(profileRes.status, 200);
+      const profileBody = await profileRes.json();
+      assert.equal(profileBody.profile.firstName, "Мария");
+      assert.equal(profileBody.profile.lastName, "Соколова");
+      assert.match(profileBody.profile.username, /^[a-z0-9_]+$/);
+      assert.equal(profileBody.profileStatus.isComplete, true);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);

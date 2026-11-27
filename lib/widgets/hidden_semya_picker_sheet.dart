@@ -6,6 +6,7 @@
 // skips picker и navigates directly из settings.
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../backend/models/semya.dart';
 import '../screens/semya_details_screen.dart';
@@ -62,18 +63,26 @@ class _HiddenSemyaPickerSheet extends StatelessWidget {
                 visualDensity: const VisualDensity(vertical: -1),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 4),
                 leading: const Icon(Icons.family_restroom_rounded),
-                title: Text(s.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                title:
+                    Text(s.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: () {
+                  final router = GoRouter.maybeOf(context);
                   Navigator.of(context).pop();
-                  Navigator.of(context, rootNavigator: true).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => SemyaDetailsScreen(
-                        semyaId: s.id,
-                        scrollToHidden: true,
+                  if (router != null) {
+                    router.push(
+                      '/semya/${Uri.encodeComponent(s.id)}?section=hidden',
+                    );
+                  } else {
+                    Navigator.of(context, rootNavigator: true).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => SemyaDetailsScreen(
+                          semyaId: s.id,
+                          scrollToHidden: true,
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  }
                 },
               ),
             ),

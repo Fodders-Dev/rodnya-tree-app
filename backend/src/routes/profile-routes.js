@@ -10,7 +10,6 @@ function registerProfileRoutes(
     computeProfileStatus,
     composeDisplayName,
     mapProfileContribution,
-    mapProfileNote,
     mapLinkedAuthIdentity,
     buildTrustedChannels,
     resolvePrimaryTrustedChannelProvider,
@@ -198,100 +197,6 @@ function registerProfileRoutes(
       res.json({
         contribution: mapProfileContribution(result.contribution),
       });
-    },
-  );
-
-  app.get("/v1/users/:userId/profile-notes", requireAuth, async (req, res) => {
-    if (!requireOwnUser(req, res)) {
-      return;
-    }
-
-    const notes = await store.listProfileNotes(req.params.userId);
-    if (notes === null) {
-      res.status(404).json({message: "Пользователь не найден"});
-      return;
-    }
-
-    res.json({
-      notes: notes.map(mapProfileNote),
-    });
-  });
-
-  app.post("/v1/users/:userId/profile-notes", requireAuth, async (req, res) => {
-    if (!requireOwnUser(req, res)) {
-      return;
-    }
-
-    const {title, content} = req.body || {};
-    if (!String(title || "").trim() || !String(content || "").trim()) {
-      res.status(400).json({message: "Нужны title и content"});
-      return;
-    }
-
-    const note = await store.addProfileNote(req.params.userId, {
-      title,
-      content,
-    });
-    if (note === null) {
-      res.status(404).json({message: "Пользователь не найден"});
-      return;
-    }
-
-    res.status(201).json({note: mapProfileNote(note)});
-  });
-
-  app.patch(
-    "/v1/users/:userId/profile-notes/:noteId",
-    requireAuth,
-    async (req, res) => {
-      if (!requireOwnUser(req, res)) {
-        return;
-      }
-
-      const note = await store.updateProfileNote(
-        req.params.userId,
-        req.params.noteId,
-        {
-          title: req.body?.title,
-          content: req.body?.content,
-        },
-      );
-
-      if (note === null) {
-        res.status(404).json({message: "Пользователь не найден"});
-        return;
-      }
-      if (note === undefined) {
-        res.status(404).json({message: "Заметка не найдена"});
-        return;
-      }
-
-      res.json({note: mapProfileNote(note)});
-    },
-  );
-
-  app.delete(
-    "/v1/users/:userId/profile-notes/:noteId",
-    requireAuth,
-    async (req, res) => {
-      if (!requireOwnUser(req, res)) {
-        return;
-      }
-
-      const deleted = await store.deleteProfileNote(
-        req.params.userId,
-        req.params.noteId,
-      );
-      if (deleted === null) {
-        res.status(404).json({message: "Пользователь не найден"});
-        return;
-      }
-      if (deleted === false) {
-        res.status(404).json({message: "Заметка не найдена"});
-        return;
-      }
-
-      res.status(204).send();
     },
   );
 }

@@ -312,9 +312,8 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
           ),
           // Ship Q4a frontend (2026-05-28, Ship 31b): per-семя
           // «Удалённые родственники» entry. Self-hiding tile — appears
-          // только когда семья has soft-deleted persons. Tap → dedicated
-          // SemyaDeletedPersonsScreen (restore / purge). Mirror global
-          // Корзина (Settings, Ship 31) scoped к этой семье.
+          // только когда семья has soft-deleted persons. Tap → semya-scoped
+          // TrashScreen (restore / purge). Mirror global Корзина (Settings).
           DeletedPersonsSection(
             semyaId: details.semya.id,
             semyaName: details.semya.name,

@@ -12,7 +12,6 @@ import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/models/profile_contribution.dart';
-import 'package:rodnya/models/profile_note.dart';
 import 'package:rodnya/models/story.dart';
 import 'package:rodnya/models/tree_change_record.dart';
 import 'package:rodnya/models/user_profile.dart';
@@ -213,10 +212,6 @@ class _FakeProfileService implements ProfileServiceInterface {
   @override
   Future<List<ProfileContribution>> getPendingProfileContributions() async =>
       const <ProfileContribution>[];
-
-  @override
-  Stream<List<ProfileNote>> getProfileNotesStream(String userId) =>
-      Stream.value(const []);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
