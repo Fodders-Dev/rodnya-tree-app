@@ -36,7 +36,9 @@ function registerRateLimitMiddleware(app, {config, rateLimitBackend}) {
         normalizedPathName === "/v1/auth/google" ||
         normalizedPathName === "/v1/auth/vk/exchange" ||
         normalizedPathName === "/v1/auth/telegram/exchange" ||
-        normalizedPathName === "/v1/auth/max/exchange"
+        normalizedPathName === "/v1/auth/max/exchange" ||
+        normalizedPathName === "/v1/auth/change-password" ||
+        normalizedPathName.startsWith("/v1/auth/providers/")
       ) {
         return {bucket: "auth", limit: config.authRateLimitMax};
       }

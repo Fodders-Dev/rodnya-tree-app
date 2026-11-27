@@ -104,7 +104,7 @@ function registerProfileRoutes(
     const sanitizedProfile = sanitizeProfile(updatedUser.profile);
 
     const newPhotoUrl = sanitizedProfile.photoUrl;
-    if (newPhotoUrl && req.body?.photoUrl) {
+    if (newPhotoUrl && (req.body?.photoUrl || req.body?.photoURL)) {
       await store.syncUserPhotoToTreePersons(req.auth.user.id, newPhotoUrl).catch(
         (err) => console.warn("[profile] could not sync photo to tree persons:", err),
       );

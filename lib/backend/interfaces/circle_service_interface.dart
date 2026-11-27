@@ -11,4 +11,34 @@ abstract class CircleServiceInterface {
   Future<AudiencePresetsResponse> getAudiencePresets(String treeId) async {
     return AudiencePresetsResponse.empty;
   }
+
+  Future<FamilyCircle> createCircle({
+    required String treeId,
+    required String name,
+    String? description,
+  });
+
+  Future<FamilyCircle> updateCircle({
+    required String treeId,
+    required String circleId,
+    required String name,
+    String? description,
+  });
+
+  Future<List<String>> getCircleMemberIdentityIds({
+    required String treeId,
+    required String circleId,
+  });
+
+  Future<FamilyCircle> replaceCircleMembers({
+    required String treeId,
+    required String circleId,
+    List<String> identityIds = const <String>[],
+    List<String> personIds = const <String>[],
+  });
+
+  Future<void> deleteCircle({
+    required String treeId,
+    required String circleId,
+  });
 }

@@ -594,7 +594,90 @@ module.exports = {
     user.updatedAt = now;
 
     await this._write(db);
+    this._rememberUser(user);
     return cloneUserWithAuthState(user);
+  },
+
+  async unlinkAuthIdentity(userId, provider) {
+    const normalizedProvider = normalizeAuthProvider(provider);
+    if (
+      !normalizedProvider ||
+      normalizedProvider === "password" ||
+      !["google", "telegram", "vk", "max"].includes(normalizedProvider)
+    ) {
+      return {error: "INVALID_PROVIDER"};
+    }
+
+    let rememberedUser = null;
+    const result = await this._mutate((db, skip) => {
+      const user = db.users.find((entry) => entry.id === userId);
+      if (!user) {
+        return skip({error: "USER_NOT_FOUND"});
+      }
+
+      const identities = listAuthIdentitiesForUser(user);
+      const isLinkedInIdentities = identities.some(
+        (identity) => identity.provider === normalizedProvider,
+      );
+      const existingProviderIds = Array.isArray(user.providerIds)
+        ? user.providerIds.map((item) => normalizeAuthProvider(item)).filter(Boolean)
+        : [];
+      if (!isLinkedInIdentities && !existingProviderIds.includes(normalizedProvider)) {
+        return skip({error: "PROVIDER_NOT_LINKED"});
+      }
+
+      const hasPassword = Boolean(user.passwordHash && user.passwordSalt);
+      const remainingOAuthIdentities = identities.filter(
+        (identity) =>
+          identity.provider !== "password" &&
+          identity.provider !== normalizedProvider,
+      );
+      const remainingOAuthIds = Array.from(
+        new Set([
+          ...remainingOAuthIdentities.map((identity) => identity.provider),
+          ...existingProviderIds.filter(
+            (item) => item !== "password" && item !== normalizedProvider,
+          ),
+        ]),
+      );
+      if (!hasPassword && remainingOAuthIds.length === 0) {
+        return skip({error: "LAST_LOGIN_METHOD"});
+      }
+
+      user.authIdentities = identities.filter(
+        (identity) => identity.provider !== normalizedProvider,
+      );
+      // Reset providerIds before deriveProviderIdsForUser to avoid keeping
+      // the removed provider via the legacy union inside deriveProviderIdsForUser.
+      user.providerIds = [];
+      user.providerIds = deriveProviderIdsForUser(user);
+
+      const currentPrimary = normalizePrimaryTrustedChannel(
+        user.profile?.primaryTrustedChannel,
+      );
+      if (currentPrimary === normalizedProvider) {
+        user.profile = {
+          ...user.profile,
+          primaryTrustedChannel:
+            normalizePrimaryTrustedChannel(remainingOAuthIds[0]) || null,
+        };
+      }
+      user.updatedAt = nowIso();
+      rememberedUser = user;
+      return {
+        provider: normalizedProvider,
+        providerIds: [...user.providerIds],
+        linkedProviderIds: user.authIdentities
+          .filter((entry) => entry.provider !== "password")
+          .map((entry) => entry.provider),
+        primaryTrustedChannel: user.profile?.primaryTrustedChannel || null,
+      };
+    });
+
+    if (rememberedUser && !result?.error) {
+      this._rememberUser(rememberedUser);
+    }
+    return result;
   },
 
   async resolveAuthIdentityTarget({
@@ -1726,7 +1809,28 @@ module.exports = {
     return this.listPersonAttributes({treeId, personId});
   },
 
-  _identityClaimView(claim) {
+  _identityClaimView(claim, db = null) {
+    let personName = null;
+    let treeId = null;
+    let treeName = null;
+    if (db) {
+      const person = (Array.isArray(db.persons) ? db.persons : []).find(
+        (entry) => entry.id === claim.personId,
+      );
+      if (person) {
+        personName =
+          normalizeNullableString(person.displayName) ||
+          normalizeNullableString(person.name) ||
+          null;
+        treeId = normalizeNullableString(person.treeId) || null;
+        if (treeId) {
+          const tree = (Array.isArray(db.trees) ? db.trees : []).find(
+            (entry) => entry.id === treeId,
+          );
+          treeName = normalizeNullableString(tree?.name) || null;
+        }
+      }
+    }
     return {
       id: claim.id,
       identityId: claim.identityId,
@@ -1739,6 +1843,9 @@ module.exports = {
         : [],
       createdAt: claim.createdAt,
       resolvedAt: claim.resolvedAt || null,
+      ...(personName ? {personName} : {}),
+      ...(treeId ? {treeId} : {}),
+      ...(treeName ? {treeName} : {}),
     };
   },
 
@@ -1816,7 +1923,7 @@ module.exports = {
       });
     }
     await this._write(db);
-    return structuredClone(this._identityClaimView(claim));
+    return structuredClone(this._identityClaimView(claim, db));
   },
 
   async listPendingIdentityClaimsForUser(userId) {
@@ -1833,7 +1940,41 @@ module.exports = {
       .sort((left, right) =>
         String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
       )
-      .map((claim) => structuredClone(this._identityClaimView(claim)));
+      .map((claim) => structuredClone(this._identityClaimView(claim, db)));
+  },
+
+  async listMyIdentityClaims(userId) {
+    const db = await this._read();
+    db.identityClaims = Array.isArray(db.identityClaims)
+      ? db.identityClaims
+      : [];
+    return (db.identityClaims || [])
+      .filter((claim) => claim.claimantUserId === userId)
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .map((claim) => structuredClone(this._identityClaimView(claim, db)));
+  },
+
+  async cancelIdentityClaim({claimId, actorUserId}) {
+    return this._mutate((db, skip) => {
+      db.identityClaims = Array.isArray(db.identityClaims)
+        ? db.identityClaims
+        : [];
+      const claim = db.identityClaims.find((entry) => entry.id === claimId);
+      if (!claim) {
+        return skip(null);
+      }
+      if (claim.claimantUserId !== actorUserId) {
+        return skip({error: "FORBIDDEN"});
+      }
+      if (claim.status !== "pending") {
+        return skip({error: "CONFLICT"});
+      }
+      claim.status = "canceled";
+      claim.resolvedAt = nowIso();
+      return {claim: structuredClone(this._identityClaimView(claim, db))};
+    });
   },
 
   async reviewIdentityClaim({claimId, reviewerUserId, decision, reason = null}) {
@@ -1848,8 +1989,11 @@ module.exports = {
     if (!normalizeParticipantIds(claim.reviewerUserIds).includes(reviewerUserId)) {
       return false;
     }
+    if (claim.status === "canceled") {
+      return {error: "CONFLICT"};
+    }
     if (claim.status !== "pending") {
-      return structuredClone(this._identityClaimView(claim));
+      return structuredClone(this._identityClaimView(claim, db));
     }
     const normalizedDecision =
       String(decision || "").trim().toLowerCase() === "approve"

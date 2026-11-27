@@ -99,6 +99,19 @@ class _FakeAuthService implements AuthServiceInterface {
   }
 
   @override
+  Future<void> changePassword({
+    String? currentPassword,
+    required String newPassword,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<String>> unlinkProvider(String provider) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<Object?> signInWithGoogle({
     GoogleAccountConfirmCallback? confirm,
     String? consentDocVersion,

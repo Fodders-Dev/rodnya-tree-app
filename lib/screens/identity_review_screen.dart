@@ -38,6 +38,11 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
   List<IdentityClaim> _identityClaims = const <IdentityClaim>[];
   // D1: применённые слияния — секция «Объединённые ранее» с «Разъединить».
   List<MergeProposal> _mergedProposals = const <MergeProposal>[];
+  List<IdentityClaim> _myIdentityClaims = const <IdentityClaim>[];
+
+  List<IdentityClaim> get _pendingMyIdentityClaims => _myIdentityClaims
+      .where((claim) => claim.isPending)
+      .toList(growable: false);
 
   // K1: актив (ждёт МОЕГО решения) и «Ждём других» (я уже проголосовал,
   // консенсус не собран) — разные секции, не один список.
@@ -78,6 +83,9 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
         service.getPendingMergeProposals(),
         service.getPendingIdentityClaims(),
         service.getMergedProposals(),
+        service
+            .getMyIdentityClaims()
+            .catchError((_) => const <IdentityClaim>[]),
       ]);
       if (!mounted) {
         return;
@@ -86,6 +94,7 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
         _mergeProposals = results[0] as List<MergeProposal>;
         _identityClaims = results[1] as List<IdentityClaim>;
         _mergedProposals = results[2] as List<MergeProposal>;
+        _myIdentityClaims = results[3] as List<IdentityClaim>;
         _isLoading = false;
       });
     } catch (error) {
@@ -145,6 +154,53 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
           authService: _authService,
           error: error,
           fallbackMessage: 'Не удалось разъединить. Попробуйте ещё раз.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isMutating = false);
+      }
+    }
+  }
+
+  Future<void> _cancelMyIdentityClaim(IdentityClaim claim) async {
+    final service = _identityService;
+    if (service == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Отозвать запрос личности?'),
+        content: const Text(
+          'Ответственные в дереве больше не будут рассматривать этот запрос.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Оставить'),
+          ),
+          FilledButton(
+            key: const Key('identity-claim-cancel-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Отозвать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isMutating = true);
+    try {
+      await service.cancelIdentityClaim(claim.id);
+      if (!mounted) return;
+      _showMessage('Запрос личности отозван.');
+      await _load();
+    } catch (error) {
+      _showMessage(
+        describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: 'Не удалось отозвать запрос.',
         ),
       );
     } finally {
@@ -581,6 +637,66 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
                           ),
                         ),
                       ),
+                    if (_pendingMyIdentityClaims.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _SectionTitle(
+                        title: 'Мои запросы личности',
+                        trailing: '${_pendingMyIdentityClaims.length}',
+                      ),
+                      const SizedBox(height: 8),
+                      ..._pendingMyIdentityClaims.map(
+                        (claim) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Card(
+                            margin: EdgeInsets.zero,
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.hourglass_top_rounded),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          claim.personName ??
+                                              'Карточка ${claim.personId}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleSmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                        ),
+                                        Text(
+                                          claim.treeName != null
+                                              ? 'Дерево: ${claim.treeName} · на проверке'
+                                              : 'Запрос ожидает подтверждения',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  OutlinedButton(
+                                    key: Key(
+                                      'identity-claim-cancel-${claim.id}',
+                                    ),
+                                    onPressed: _isMutating
+                                        ? null
+                                        : () => _cancelMyIdentityClaim(claim),
+                                    child: const Text('Отозвать'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                     if (!hasReviews) ...[
                       const SizedBox(height: 14),
                       FilledButton.icon(

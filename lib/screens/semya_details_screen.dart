@@ -16,6 +16,7 @@ import '../theme/app_theme.dart';
 import '../widgets/browse_tokens_list_section.dart';
 import '../widgets/deleted_persons_section.dart';
 import '../widgets/hidden_persons_section.dart';
+import '../widgets/manage_circles_sheet.dart';
 import '../widgets/membership_action_menu.dart';
 import '../widgets/share_browse_token_modal.dart';
 import 'semya_invitations_list_screen.dart';
@@ -265,6 +266,24 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
                 context,
                 semyaId: details.semya.id,
                 semyaName: details.semya.name,
+              ),
+            ),
+          if (details.semya.treeId.isNotEmpty)
+            ListTile(
+              key: const Key('semya-manage-circles-tile'),
+              leading: const Icon(Icons.group_work_outlined),
+              title: const Text('Круги аудиторий'),
+              subtitle: const Text(
+                'Создавать и настраивать списки родных для публикаций.',
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => showManageCirclesSheet(
+                context,
+                treeId: details.semya.treeId,
+                viewerUserId: _resolveCurrentUserId() ?? '',
+                canCreate: details.callerRole == SemyaRole.owner ||
+                    details.callerRole == SemyaRole.editor,
+                isOwner: details.callerRole == SemyaRole.owner,
               ),
             ),
           // Ship FE6b (2026-05-26): «Активные ссылки» management section.

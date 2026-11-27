@@ -31,6 +31,7 @@ import '../widgets/glass_panel.dart';
 import '../models/media_upload_progress.dart';
 import '../services/gallery_media_picker.dart';
 import '../services/post_publish_queue.dart';
+import '../widgets/manage_circles_sheet.dart';
 import '../widgets/person_multi_picker_sheet.dart';
 
 part 'create_post/create_post_media.dart';

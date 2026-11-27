@@ -38,6 +38,7 @@ class FamilyCircle {
 
   bool get isAllTree => kind == FamilyCircleKind.allTree;
   bool get isFavorites => kind == FamilyCircleKind.favorites;
+  bool get isCustom => kind == FamilyCircleKind.custom;
   bool get isAuto =>
       kind == FamilyCircleKind.descendantsOf ||
       kind == FamilyCircleKind.ancestorsOf ||

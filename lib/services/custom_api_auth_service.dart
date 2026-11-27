@@ -1231,6 +1231,43 @@ class CustomApiAuthService implements AuthServiceInterface {
   }
 
   @override
+  Future<void> changePassword({
+    String? currentPassword,
+    required String newPassword,
+  }) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/auth/change-password',
+      authenticated: true,
+      body: {
+        if (currentPassword != null && currentPassword.isNotEmpty)
+          'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      },
+    );
+    final rawIds = response['providerIds'] as List<dynamic>?;
+    if (rawIds != null) {
+      await updateCachedSession(
+        providerIds: rawIds.map((e) => e.toString()).toList(growable: false),
+      );
+    }
+  }
+
+  @override
+  Future<List<String>> unlinkProvider(String provider) async {
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/auth/providers/${Uri.encodeComponent(provider.trim())}',
+      authenticated: true,
+    );
+    final providerIds = (response['providerIds'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString())
+        .toList(growable: false);
+    await updateCachedSession(providerIds: providerIds);
+    return providerIds;
+  }
+
+  @override
   Future<void> deleteAccount([String? password]) async {
     await _requestJson(
       method: 'DELETE',

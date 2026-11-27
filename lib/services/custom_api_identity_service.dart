@@ -183,6 +183,39 @@ class CustomApiIdentityService implements IdentityServiceInterface {
   }
 
   @override
+  Future<List<IdentityClaim>> getMyIdentityClaims() async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/identity-claims/mine',
+    );
+    final rawClaims = response['claims'];
+    if (rawClaims is! List<dynamic>) {
+      return const <IdentityClaim>[];
+    }
+    return rawClaims
+        .whereType<Map<String, dynamic>>()
+        .map(IdentityClaim.fromJson)
+        .where((claim) => claim.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<IdentityClaim?> cancelIdentityClaim(String claimId) async {
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/identity-claims/$claimId',
+    );
+    final rawClaim = response['claim'];
+    if (rawClaim is Map<String, dynamic>) {
+      return IdentityClaim.fromJson(rawClaim);
+    }
+    if (rawClaim is Map) {
+      return IdentityClaim.fromJson(Map<String, dynamic>.from(rawClaim));
+    }
+    return null;
+  }
+
+  @override
   Future<IdentityClaim> reviewIdentityClaim(
     String claimId, {
     required bool approve,

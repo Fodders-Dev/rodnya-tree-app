@@ -38,6 +38,10 @@ abstract class IdentityServiceInterface {
 
   Future<List<IdentityClaim>> getPendingIdentityClaims();
 
+  Future<List<IdentityClaim>> getMyIdentityClaims();
+
+  Future<IdentityClaim?> cancelIdentityClaim(String claimId);
+
   Future<IdentityClaim> reviewIdentityClaim(
     String claimId, {
     required bool approve,

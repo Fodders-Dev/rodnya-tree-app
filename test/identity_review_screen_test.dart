@@ -38,16 +38,19 @@ class _FakeIdentityService implements IdentityServiceInterface {
   _FakeIdentityService({
     this.proposals = const <MergeProposal>[],
     this.claims = const <IdentityClaim>[],
+    this.myClaims = const <IdentityClaim>[],
     this.mergedProposals = const <MergeProposal>[],
   });
 
   List<MergeProposal> proposals;
   List<IdentityClaim> claims;
+  List<IdentityClaim> myClaims;
   List<MergeProposal> mergedProposals;
   String? reviewedProposalId;
   bool? reviewedProposalAccepted;
   String? reviewedClaimId;
   bool? reviewedClaimApproved;
+  String? canceledClaimId;
   String? unmergedProposalId;
   bool discoverability = false;
 
@@ -56,6 +59,28 @@ class _FakeIdentityService implements IdentityServiceInterface {
 
   @override
   Future<List<IdentityClaim>> getPendingIdentityClaims() async => claims;
+
+  @override
+  Future<List<IdentityClaim>> getMyIdentityClaims() async => myClaims;
+
+  @override
+  Future<IdentityClaim?> cancelIdentityClaim(String claimId) async {
+    canceledClaimId = claimId;
+    final target = myClaims.firstWhere((c) => c.id == claimId);
+    myClaims = myClaims.where((c) => c.id != claimId).toList(growable: false);
+    return IdentityClaim(
+      id: target.id,
+      identityId: target.identityId,
+      personId: target.personId,
+      claimantUserId: target.claimantUserId,
+      status: 'canceled',
+      createdAt: target.createdAt,
+      resolvedAt: DateTime.now(),
+      personName: target.personName,
+      treeId: target.treeId,
+      treeName: target.treeName,
+    );
+  }
 
   @override
   Future<List<MergeProposal>> getMergedProposals() async => mergedProposals;
@@ -335,6 +360,47 @@ void main() {
     expect(find.text('Наталья — ждём'), findsOneWidget);
     // Безликий «X/Y согласовано» больше не показывается при именах.
     expect(find.textContaining('согласовано'), findsNothing);
+  });
+
+  testWidgets(
+      'Wave B2b: shows outgoing myClaims with cancel without inflating badge',
+      (tester) async {
+    final identityService = _FakeIdentityService(
+      myClaims: [
+        IdentityClaim(
+          id: 'my-claim-1',
+          identityId: 'identity-x',
+          personId: 'person-x',
+          claimantUserId: 'user-1',
+          status: 'pending',
+          createdAt: DateTime(2026, 6, 1),
+          personName: 'Сергей Иванов',
+          treeName: 'Семья Ивановых',
+        ),
+      ],
+    );
+    getIt.registerSingleton<IdentityServiceInterface>(identityService);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: IdentityReviewScreen()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Мои запросы личности'), findsOneWidget);
+    expect(find.text('Сергей Иванов'), findsOneWidget);
+    expect(find.textContaining('1 на проверку'), findsNothing);
+
+    final cancelButton =
+        find.byKey(const Key('identity-claim-cancel-my-claim-1'));
+    await tester.ensureVisible(cancelButton);
+    await tester.pumpAndSettle();
+    await tester.tap(cancelButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('identity-claim-cancel-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(identityService.canceledClaimId, 'my-claim-1');
   });
 }
 

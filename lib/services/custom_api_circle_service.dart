@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
@@ -84,6 +85,117 @@ class CustomApiCircleService implements CircleServiceInterface {
     }
   }
 
+  @override
+  Future<FamilyCircle> createCircle({
+    required String treeId,
+    required String name,
+    String? description,
+  }) async {
+    final normalizedTreeId = treeId.trim();
+    final response = await _httpClient
+        .post(
+          _buildUri('/v1/trees/$normalizedTreeId/circles'),
+          headers: _jsonHeaders(),
+          body: jsonEncode({
+            'name': name.trim(),
+            if (description != null) 'description': description.trim(),
+          }),
+        )
+        .timeout(_requestTimeout);
+    final decoded = _handleResponse(response);
+    return FamilyCircle.fromJson(
+      Map<String, dynamic>.from(decoded as Map? ?? const {}),
+    );
+  }
+
+  @override
+  Future<FamilyCircle> updateCircle({
+    required String treeId,
+    required String circleId,
+    required String name,
+    String? description,
+  }) async {
+    final response = await _httpClient
+        .patch(
+          _buildUri('/v1/trees/${treeId.trim()}/circles/${circleId.trim()}'),
+          headers: _jsonHeaders(),
+          body: jsonEncode({
+            'name': name.trim(),
+            if (description != null) 'description': description.trim(),
+          }),
+        )
+        .timeout(_requestTimeout);
+    final decoded = _handleResponse(response);
+    return FamilyCircle.fromJson(
+      Map<String, dynamic>.from(decoded as Map? ?? const {}),
+    );
+  }
+
+  @override
+  Future<List<String>> getCircleMemberIdentityIds({
+    required String treeId,
+    required String circleId,
+  }) async {
+    final response = await _httpClient
+        .get(
+          _buildUri(
+            '/v1/trees/${treeId.trim()}/circles/${circleId.trim()}/members',
+          ),
+          headers: _headers(),
+        )
+        .timeout(_requestTimeout);
+    final decoded = _handleResponse(response);
+    final rawMembers =
+        decoded is Map ? decoded['members'] as List<dynamic>? : null;
+    if (rawMembers == null) {
+      return const <String>[];
+    }
+    return rawMembers
+        .whereType<Map>()
+        .map((entry) => entry['identityId']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<FamilyCircle> replaceCircleMembers({
+    required String treeId,
+    required String circleId,
+    List<String> identityIds = const <String>[],
+    List<String> personIds = const <String>[],
+  }) async {
+    final response = await _httpClient
+        .put(
+          _buildUri(
+            '/v1/trees/${treeId.trim()}/circles/${circleId.trim()}/members',
+          ),
+          headers: _jsonHeaders(),
+          body: jsonEncode({
+            'identityIds': identityIds,
+            'personIds': personIds,
+          }),
+        )
+        .timeout(_requestTimeout);
+    final decoded = _handleResponse(response);
+    return FamilyCircle.fromJson(
+      Map<String, dynamic>.from(decoded as Map? ?? const {}),
+    );
+  }
+
+  @override
+  Future<void> deleteCircle({
+    required String treeId,
+    required String circleId,
+  }) async {
+    final response = await _httpClient
+        .delete(
+          _buildUri('/v1/trees/${treeId.trim()}/circles/${circleId.trim()}'),
+          headers: _headers(),
+        )
+        .timeout(_requestTimeout);
+    _handleResponse(response);
+  }
+
   dynamic _handleResponse(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       if (response.body.isEmpty) {
@@ -131,6 +243,13 @@ class CustomApiCircleService implements CircleServiceInterface {
     return {
       'Accept': 'application/json',
       'Authorization': 'Bearer $token',
+    };
+  }
+
+  Map<String, String> _jsonHeaders() {
+    return {
+      ..._headers(),
+      'Content-Type': 'application/json',
     };
   }
 }

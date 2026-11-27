@@ -396,6 +396,8 @@ void main() {
       find.byKey(const Key('semya-details-delete')),
       200,
     );
+    await tester.ensureVisible(find.byKey(const Key('semya-details-delete')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('semya-details-delete')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('semya-delete-confirm')), findsOneWidget);

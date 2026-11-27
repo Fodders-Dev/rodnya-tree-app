@@ -34,6 +34,23 @@ mixin _CustomApiTreeInvitationsMixin on _CustomApiFamilyTreeHost {
   }
 
   @override
+  Future<List<RelationRequest>> getSentRelationRequests(
+      {String? treeId}) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: _buildPathWithQuery(
+        '/v1/relation-requests/pending',
+        {
+          'direction': 'outgoing',
+          if (treeId != null && treeId.isNotEmpty) 'treeId': treeId,
+        },
+      ),
+    );
+
+    return _relationRequestListFromResponse(response);
+  }
+
+  @override
   Future<void> respondToTreeInvitation(String invitationId, bool accept) async {
     await _requestJson(
       method: 'POST',
@@ -55,6 +72,15 @@ mixin _CustomApiTreeInvitationsMixin on _CustomApiFamilyTreeHost {
       body: {
         'response': RelationRequest.requestStatusToString(response),
       },
+    );
+    _invalidateAllTreeCaches();
+  }
+
+  @override
+  Future<void> cancelRelationRequest(String requestId) async {
+    await _requestJson(
+      method: 'DELETE',
+      path: '/v1/relation-requests/$requestId',
     );
     _invalidateAllTreeCaches();
   }

@@ -65,6 +65,11 @@ async function makeUser(baseUrl, email) {
 async function seedNotifications(store, userId, count) {
   const created = [];
   for (let i = 1; i <= count; i += 1) {
+    if (i > 1) {
+      // Ensure strictly monotonic createdAt timestamps so same-ms UUID ties
+      // cannot reorder notifications on fast CI runners.
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
     const notification = await store.createNotification({
       userId,
       type: "generic",

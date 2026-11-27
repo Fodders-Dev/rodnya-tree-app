@@ -91,11 +91,13 @@ abstract class FamilyTreeServiceInterface {
   Stream<List<TreeInvitation>> getPendingTreeInvitations();
   Future<List<RelationRequest>> getRelationRequests({required String treeId});
   Future<List<RelationRequest>> getPendingRelationRequests({String? treeId});
+  Future<List<RelationRequest>> getSentRelationRequests({String? treeId});
   Future<void> respondToTreeInvitation(String invitationId, bool accept);
   Future<void> respondToRelationRequest({
     required String requestId,
     required RequestStatus response,
   });
+  Future<void> cancelRelationRequest(String requestId);
   Future<List<SelectableTree>> getSelectableTreesForCurrentUser();
   Future<RelationType> getRelationBetween(
     String treeId,

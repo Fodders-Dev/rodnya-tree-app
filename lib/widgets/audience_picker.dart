@@ -20,6 +20,7 @@ class AudiencePicker extends StatefulWidget {
     this.isUnavailable = false,
     this.isFriendsTree = false,
     this.onRetry,
+    this.onManageCircles,
   });
 
   final List<FamilyCircle> circles;
@@ -29,6 +30,7 @@ class AudiencePicker extends StatefulWidget {
   final bool isUnavailable;
   final bool isFriendsTree;
   final VoidCallback? onRetry;
+  final VoidCallback? onManageCircles;
 
   @override
   State<AudiencePicker> createState() => _AudiencePickerState();
@@ -122,6 +124,18 @@ class _AudiencePickerState extends State<AudiencePicker> {
             theme: theme,
             isLoading: widget.isLoading,
             onRetry: widget.onRetry,
+          ),
+        ],
+        if (widget.onManageCircles != null) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('audience-picker-manage-circles'),
+              onPressed: widget.isLoading ? null : widget.onManageCircles,
+              icon: const Icon(Icons.tune_rounded, size: 18),
+              label: const Text('Настроить круги'),
+            ),
           ),
         ],
       ],

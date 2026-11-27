@@ -2318,6 +2318,85 @@ void main() {
       expect(ctx.requestCount, 2);
     });
   });
+
+  test(
+      'CustomApiFamilyTreeService getSentRelationRequests and cancelRelationRequest',
+      () async {
+    final seenRequests = <String>[];
+    final client = MockClient((request) async {
+      seenRequests
+          .add('${request.method} ${request.url.path}?${request.url.query}');
+      if (request.url.path == '/v1/relation-requests/pending' &&
+          request.method == 'GET') {
+        expect(request.url.queryParameters['direction'], 'outgoing');
+        return http.Response(
+          jsonEncode({
+            'requests': [
+              {
+                'id': 'req-out-1',
+                'treeId': 'tree-1',
+                'senderId': 'user-1',
+                'recipientId': 'user-2',
+                'senderToRecipient': 'sibling',
+                'createdAt': '2026-06-01T10:00:00.000Z',
+                'status': 'pending',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/relation-requests/req-out-1' &&
+          request.method == 'DELETE') {
+        return http.Response(
+          jsonEncode({'ok': true}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+    final service = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final outgoing = await service.getSentRelationRequests(treeId: 'tree-1');
+    await service.cancelRelationRequest('req-out-1');
+
+    expect(outgoing.single.id, 'req-out-1');
+    expect(
+      seenRequests,
+      contains('DELETE /v1/relation-requests/req-out-1?'),
+    );
+  });
 }
 
 /// Test harness for the getRelatives cache group above. Not a record —

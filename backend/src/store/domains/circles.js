@@ -105,55 +105,104 @@ module.exports = {
     return structuredClone(this._mapCircleWithCount(db, circle));
   },
 
-  async updateCircle({treeId, circleId, name, description = undefined}) {
-    const db = await this._read();
-    const circle = db.circles.find(
-      (entry) => entry.treeId === treeId && entry.id === circleId,
+  _canManageCircle(db, treeId, circle, actorUserId) {
+    if (!actorUserId) {
+      return true;
+    }
+    const tree = (Array.isArray(db.trees) ? db.trees : []).find(
+      (entry) => entry.id === treeId,
     );
-    if (!circle) {
-      return null;
+    const isSemyaOwner =
+      typeof this._isActiveSemyaOwnerForTree === "function" &&
+      this._isActiveSemyaOwnerForTree(db, treeId, actorUserId);
+    const isLegacyOwner = Boolean(
+      tree && !tree.semyaId && tree.creatorId === actorUserId,
+    );
+    if (isSemyaOwner || isLegacyOwner) {
+      return true;
     }
-    if (circle.kind !== "custom" && circle.kind !== "favorites") {
-      return false;
-    }
-
-    const normalizedName = String(name || "").trim();
-    if (normalizedName) {
-      circle.name = normalizedName;
-    }
-    if (description !== undefined) {
-      circle.description = normalizeNullableString(description);
-    }
-    circle.updatedAt = nowIso();
-    await this._write(db);
-    return structuredClone(this._mapCircleWithCount(db, circle));
+    const ownerId = normalizeNullableString(circle?.createdBy);
+    return Boolean(ownerId && ownerId === actorUserId);
   },
 
-  async deleteCircle({treeId, circleId}) {
-    const db = await this._read();
-    const circleIndex = db.circles.findIndex(
-      (entry) => entry.treeId === treeId && entry.id === circleId,
-    );
-    if (circleIndex < 0) {
-      return null;
-    }
-    const circle = db.circles[circleIndex];
-    if (circle.kind !== "custom") {
-      return false;
-    }
-    db.circles.splice(circleIndex, 1);
-    db.circleMembers = db.circleMembers.filter(
-      (entry) => !(entry.treeId === treeId && entry.circleId === circleId),
-    );
-    for (const post of db.posts) {
-      if (post.treeId === treeId && post.circleId === circleId) {
-        const {allTreeCircle} = ensureDefaultCirclesForTree(db, treeId);
-        post.circleId = allTreeCircle?.id || null;
-        post.updatedAt = nowIso();
+  async updateCircle({
+    treeId,
+    circleId,
+    name,
+    description = undefined,
+    actorUserId = null,
+  }) {
+    return this._mutate((db, skip) => {
+      const circle = db.circles.find(
+        (entry) => entry.treeId === treeId && entry.id === circleId,
+      );
+      if (!circle) {
+        return skip(null);
       }
-    }
-    await this._write(db);
-    return structuredClone(circle);
+      if (circle.kind !== "custom" && circle.kind !== "favorites") {
+        return skip({error: "SYSTEM_CIRCLE"});
+      }
+      if (!this._canManageCircle(db, treeId, circle, actorUserId)) {
+        return skip({error: "FORBIDDEN"});
+      }
+
+      const normalizedName = String(name || "").trim();
+      if (normalizedName) {
+        circle.name = normalizedName;
+      }
+      if (description !== undefined) {
+        circle.description = normalizeNullableString(description);
+      }
+      circle.updatedAt = nowIso();
+      return structuredClone(this._mapCircleWithCount(db, circle));
+    });
+  },
+
+  async deleteCircle({treeId, circleId, actorUserId = null}) {
+    return this._mutate((db, skip) => {
+      const circleIndex = db.circles.findIndex(
+        (entry) => entry.treeId === treeId && entry.id === circleId,
+      );
+      if (circleIndex < 0) {
+        return skip(null);
+      }
+      const circle = db.circles[circleIndex];
+      if (circle.kind !== "custom") {
+        return skip({error: "SYSTEM_CIRCLE"});
+      }
+      if (!this._canManageCircle(db, treeId, circle, actorUserId)) {
+        return skip({error: "FORBIDDEN"});
+      }
+
+      db.circles.splice(circleIndex, 1);
+      db.circleMembers = db.circleMembers.filter(
+        (entry) => !(entry.treeId === treeId && entry.circleId === circleId),
+      );
+      const {allTreeCircle} = ensureDefaultCirclesForTree(db, treeId);
+      const fallbackCircleId = allTreeCircle?.id || null;
+      const timestamp = nowIso();
+
+      for (const collection of [db.posts, db.stories, db.gatherings, db.polls]) {
+        for (const item of Array.isArray(collection) ? collection : []) {
+          if (item.treeId === treeId && item.circleId === circleId) {
+            item.circleId = fallbackCircleId;
+            item.updatedAt = timestamp;
+          }
+        }
+      }
+      for (const deletedRow of Array.isArray(db.deletedPosts)
+        ? db.deletedPosts
+        : []) {
+        if (
+          deletedRow.treeId === treeId &&
+          deletedRow.snapshot?.circleId === circleId
+        ) {
+          deletedRow.snapshot.circleId = fallbackCircleId;
+          deletedRow.snapshot.updatedAt = timestamp;
+        }
+      }
+      return structuredClone(circle);
+    });
   },
 
   async replaceCircleMembers({
@@ -161,52 +210,58 @@ module.exports = {
     circleId,
     identityIds = [],
     personIds = [],
+    actorUserId = null,
   }) {
-    const db = await this._read();
-    const tree = db.trees.find((entry) => entry.id === treeId);
-    if (!tree) {
-      return null;
-    }
-    ensureCirclesForTree(db, tree);
-    const circle = db.circles.find(
-      (entry) => entry.treeId === treeId && entry.id === circleId,
-    );
-    if (!circle) {
-      return null;
-    }
-    if (circle.kind !== "custom" && circle.kind !== "favorites") {
-      return false;
-    }
+    return this._mutate((db, skip) => {
+      const tree = db.trees.find((entry) => entry.id === treeId);
+      if (!tree) {
+        return skip(null);
+      }
+      ensureCirclesForTree(db, tree);
+      const circle = db.circles.find(
+        (entry) => entry.treeId === treeId && entry.id === circleId,
+      );
+      if (!circle) {
+        return skip(null);
+      }
+      if (circle.kind !== "custom" && circle.kind !== "favorites") {
+        return skip({error: "SYSTEM_CIRCLE"});
+      }
+      if (!this._canManageCircle(db, treeId, circle, actorUserId)) {
+        return skip({error: "FORBIDDEN"});
+      }
 
-    const identityIdsFromPersons = (Array.isArray(personIds) ? personIds : [])
-      .map((personId) => {
-        const normalizedPersonId = normalizeNullableString(personId);
-        return db.persons.find(
-          (person) => person.treeId === treeId && person.id === normalizedPersonId,
-        )?.identityId;
-      })
-      .filter(Boolean);
-    const normalizedIdentityIds = normalizeCircleMemberIdentityIds(db, treeId, [
-      ...identityIds,
-      ...identityIdsFromPersons,
-    ]);
-    const timestamp = nowIso();
-    db.circleMembers = db.circleMembers.filter(
-      (entry) => !(entry.treeId === treeId && entry.circleId === circleId),
-    );
-    for (const identityId of normalizedIdentityIds) {
-      db.circleMembers.push({
-        id: crypto.randomUUID(),
+      const identityIdsFromPersons = (Array.isArray(personIds) ? personIds : [])
+        .map((personId) => {
+          const normalizedPersonId = normalizeNullableString(personId);
+          return db.persons.find(
+            (person) =>
+              person.treeId === treeId && person.id === normalizedPersonId,
+          )?.identityId;
+        })
+        .filter(Boolean);
+      const normalizedIdentityIds = normalizeCircleMemberIdentityIds(
+        db,
         treeId,
-        circleId,
-        identityId,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    }
-    circle.updatedAt = timestamp;
-    await this._write(db);
-    return structuredClone(this._mapCircleWithCount(db, circle));
+        [...identityIds, ...identityIdsFromPersons],
+      );
+      const timestamp = nowIso();
+      db.circleMembers = db.circleMembers.filter(
+        (entry) => !(entry.treeId === treeId && entry.circleId === circleId),
+      );
+      for (const identityId of normalizedIdentityIds) {
+        db.circleMembers.push({
+          id: crypto.randomUUID(),
+          treeId,
+          circleId,
+          identityId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+      circle.updatedAt = timestamp;
+      return structuredClone(this._mapCircleWithCount(db, circle));
+    });
   },
 
   async listCircleMembers(treeId, circleId) {

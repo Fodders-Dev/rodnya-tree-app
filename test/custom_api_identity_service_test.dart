@@ -163,6 +163,67 @@ void main() {
     );
     expect(seenPaths, contains('PATCH /v1/identity-discovery/me'));
   });
+
+  test('CustomApiIdentityService lists and cancels my identity claims',
+      () async {
+    final seenPaths = <String>[];
+    final client = MockClient((request) async {
+      seenPaths.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/v1/identity-claims/mine' &&
+          request.method == 'GET') {
+        return _jsonResponse({
+          'claims': [
+            {
+              'id': 'claim-mine-1',
+              'identityId': 'identity-1',
+              'personId': 'person-1',
+              'claimantUserId': 'user-1',
+              'status': 'pending',
+              'createdAt': '2026-06-01T10:00:00.000Z',
+              'personName': 'Иван Иванов',
+              'treeId': 'tree-1',
+              'treeName': 'Семья Ивановых',
+            },
+          ],
+        }, 200);
+      }
+      if (request.url.path == '/v1/identity-claims/claim-mine-1' &&
+          request.method == 'DELETE') {
+        return _jsonResponse({
+          'claim': {
+            'id': 'claim-mine-1',
+            'identityId': 'identity-1',
+            'personId': 'person-1',
+            'claimantUserId': 'user-1',
+            'status': 'canceled',
+            'createdAt': '2026-06-01T10:00:00.000Z',
+            'resolvedAt': '2026-06-02T10:00:00.000Z',
+            'personName': 'Иван Иванов',
+          },
+        }, 200);
+      }
+      return _jsonResponse({'message': 'Unexpected path'}, 404);
+    });
+
+    final authService = await _createAuthService(client);
+    final service = CustomApiIdentityService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final claims = await service.getMyIdentityClaims();
+    final canceled = await service.cancelIdentityClaim('claim-mine-1');
+
+    expect(claims.single.id, 'claim-mine-1');
+    expect(claims.single.personName, 'Иван Иванов');
+    expect(claims.single.treeName, 'Семья Ивановых');
+    expect(canceled?.isCanceled, isTrue);
+    expect(seenPaths, contains('GET /v1/identity-claims/mine'));
+    expect(seenPaths, contains('DELETE /v1/identity-claims/claim-mine-1'));
+  });
 }
 
 http.Response _jsonResponse(Map<String, dynamic> body, int statusCode) {

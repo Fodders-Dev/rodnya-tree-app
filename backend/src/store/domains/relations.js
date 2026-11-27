@@ -654,26 +654,36 @@ module.exports = {
 
   async syncUserPhotoToTreePersons(userId, photoUrl) {
     if (!userId || !photoUrl) return;
+    const normalizedUrl = String(photoUrl).trim();
+    if (!normalizedUrl) return;
     const db = await this._read();
     let changed = false;
     const timestamp = nowIso();
     for (const person of db.persons) {
       if (String(person.userId || "").trim() !== userId) continue;
-      // Only update if the person's primary photo differs.
-      if (String(person.primaryPhotoUrl || "").trim() === String(photoUrl).trim()) continue;
-      person.photoUrl = photoUrl;
-      person.primaryPhotoUrl = photoUrl;
-      // If the gallery doesn't include this URL yet, add it.
       const gallery = Array.isArray(person.photoGallery) ? person.photoGallery : [];
+      const alreadyPrimaryInGallery = gallery.some(
+        (entry) =>
+          String(entry?.url || "").trim() === normalizedUrl &&
+          entry?.isPrimary === true,
+      );
+      if (
+        String(person.primaryPhotoUrl || "").trim() === normalizedUrl &&
+        alreadyPrimaryInGallery
+      ) {
+        continue;
+      }
+      person.photoUrl = normalizedUrl;
+      person.primaryPhotoUrl = normalizedUrl;
       const alreadyInGallery = gallery.some(
-        (entry) => String(entry.url || "").trim() === String(photoUrl).trim(),
+        (entry) => String(entry?.url || "").trim() === normalizedUrl,
       );
       if (!alreadyInGallery) {
         const existing = gallery.map((e) => ({...e, isPrimary: false}));
         person.photoGallery = [
           {
             id: `profile-sync:${userId}:${timestamp}`,
-            url: photoUrl,
+            url: normalizedUrl,
             thumbnailUrl: null,
             type: "image",
             contentType: null,
@@ -685,10 +695,9 @@ module.exports = {
           ...existing,
         ];
       } else {
-        // Mark this entry as primary.
         person.photoGallery = gallery.map((e) => ({
           ...e,
-          isPrimary: String(e.url || "").trim() === String(photoUrl).trim(),
+          isPrimary: String(e?.url || "").trim() === normalizedUrl,
           updatedAt: timestamp,
         }));
       }
@@ -893,17 +902,23 @@ module.exports = {
   },
 
   async respondToRelationRequest(requestId, status) {
-    const db = await this._read();
-    const request = db.relationRequests.find((entry) => entry.id === requestId);
-    if (!request) {
-      return null;
-    }
+    return this._mutate((db, skip) => {
+      const request = (Array.isArray(db.relationRequests)
+        ? db.relationRequests
+        : []
+      ).find((entry) => entry.id === requestId);
+      if (!request) {
+        return skip(null);
+      }
+      if (request.status !== "pending") {
+        return skip({conflict: true, request: structuredClone(request)});
+      }
 
-    request.status = String(status || request.status || "pending");
-    request.respondedAt = nowIso();
-    request.updatedAt = request.respondedAt;
-    await this._write(db);
-    return structuredClone(request);
+      request.status = String(status || request.status || "pending");
+      request.respondedAt = nowIso();
+      request.updatedAt = request.respondedAt;
+      return {conflict: false, request: structuredClone(request)};
+    });
   },
 
   async createTreeInvitation({

@@ -899,28 +899,44 @@ module.exports = {
     return removed ? structuredClone(removed) : null;
   },
 
-  async deleteSessionsForUser(userId) {
+  async deleteSessionsForUser(userId, {exceptToken = null} = {}) {
     const normalizedUserId = String(userId || "").trim();
     if (!normalizedUserId) {
       return;
     }
+    const normalizedExceptToken = String(exceptToken || "").trim() || null;
 
     const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
       await this.initialize();
-      const result = await this._pool.query(
-        `SELECT token
-           FROM ${this._qualifiedAuthSessionsTableName}
-          WHERE user_id = $1`,
-        [normalizedUserId],
-      );
+      const result = normalizedExceptToken
+        ? await this._pool.query(
+            `SELECT token
+               FROM ${this._qualifiedAuthSessionsTableName}
+              WHERE user_id = $1 AND token <> $2`,
+            [normalizedUserId, normalizedExceptToken],
+          )
+        : await this._pool.query(
+            `SELECT token
+               FROM ${this._qualifiedAuthSessionsTableName}
+              WHERE user_id = $1`,
+            [normalizedUserId],
+          );
       const deletedTokens = result.rows
         .map((row) => String(row?.token || "").trim())
         .filter(Boolean);
       if (deletedTokens.length > 0) {
-        await this._pool.query(
-          `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE user_id = $1`,
-          [normalizedUserId],
-        );
+        if (normalizedExceptToken) {
+          await this._pool.query(
+            `DELETE FROM ${this._qualifiedAuthSessionsTableName}
+              WHERE user_id = $1 AND token <> $2`,
+            [normalizedUserId, normalizedExceptToken],
+          );
+        } else {
+          await this._pool.query(
+            `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE user_id = $1`,
+            [normalizedUserId],
+          );
+        }
       }
       return deletedTokens;
     });

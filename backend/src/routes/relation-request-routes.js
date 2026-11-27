@@ -33,11 +33,44 @@ function registerRelationRequestRoutes(
   );
 
   app.get("/v1/relation-requests/pending", requireAuth, async (req, res) => {
-    const requests = await store.listRelationRequests({
-      treeId: req.query.treeId ? String(req.query.treeId) : null,
-      recipientId: req.auth.user.id,
-      status: "pending",
-    });
+    const treeId = req.query.treeId ? String(req.query.treeId) : null;
+    const direction = String(req.query.direction || "incoming")
+      .trim()
+      .toLowerCase();
+    let requests;
+    if (direction === "outgoing") {
+      requests = await store.listRelationRequests({
+        treeId,
+        senderId: req.auth.user.id,
+        status: "pending",
+      });
+    } else if (direction === "all") {
+      const [incoming, outgoing] = await Promise.all([
+        store.listRelationRequests({
+          treeId,
+          recipientId: req.auth.user.id,
+          status: "pending",
+        }),
+        store.listRelationRequests({
+          treeId,
+          senderId: req.auth.user.id,
+          status: "pending",
+        }),
+      ]);
+      const byId = new Map();
+      for (const item of [...incoming, ...outgoing]) {
+        byId.set(item.id, item);
+      }
+      requests = Array.from(byId.values()).sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      );
+    } else {
+      requests = await store.listRelationRequests({
+        treeId,
+        recipientId: req.auth.user.id,
+        status: "pending",
+      });
+    }
 
     res.json({
       requests: requests.map(mapRelationRequest),
@@ -114,6 +147,57 @@ function registerRelationRequestRoutes(
     },
   );
 
+  async function handleCancelRelationRequest(request, req, res) {
+    if (request.senderId !== req.auth.user.id) {
+      res.status(403).json({message: "Отменить запрос может только отправитель"});
+      return;
+    }
+    if (request.status !== "pending") {
+      res.status(409).json({message: "Этот запрос уже обработан"});
+      return;
+    }
+
+    const result = await store.respondToRelationRequest(request.id, "canceled");
+    if (!result) {
+      res.status(404).json({message: "Запрос не найден"});
+      return;
+    }
+    if (result.conflict) {
+      res.status(409).json({message: "Этот запрос уже обработан"});
+      return;
+    }
+
+    await createAndDispatchNotification({
+      userId: request.recipientId,
+      type: "relation_request_canceled",
+      title: "Запрос на родство отменён",
+      body: "Отправитель отменил запрос на подтверждение родственной связи",
+      data: {
+        requestId: request.id,
+        treeId: request.treeId,
+        senderId: request.senderId,
+        recipientId: request.recipientId,
+        status: "canceled",
+      },
+    });
+
+    res.json({
+      ok: true,
+      request: mapRelationRequest(result.request),
+      person: null,
+      relation: null,
+    });
+  }
+
+  app.delete("/v1/relation-requests/:requestId", requireAuth, async (req, res) => {
+    const request = await store.findRelationRequest(req.params.requestId);
+    if (!request) {
+      res.status(404).json({message: "Запрос не найден"});
+      return;
+    }
+    await handleCancelRelationRequest(request, req, res);
+  });
+
   app.post(
     "/v1/relation-requests/:requestId/respond",
     requireAuth,
@@ -124,9 +208,19 @@ function registerRelationRequestRoutes(
         return;
       }
 
+      if (!["accepted", "rejected", "canceled"].includes(responseStatus)) {
+        res.status(400).json({message: "Недопустимый статус ответа"});
+        return;
+      }
+
       const request = await store.findRelationRequest(req.params.requestId);
       if (!request) {
         res.status(404).json({message: "Запрос не найден"});
+        return;
+      }
+
+      if (responseStatus === "canceled") {
+        await handleCancelRelationRequest(request, req, res);
         return;
       }
 
@@ -137,11 +231,6 @@ function registerRelationRequestRoutes(
 
       if (request.status !== "pending") {
         res.status(409).json({message: "Этот запрос уже обработан"});
-        return;
-      }
-
-      if (!["accepted", "rejected", "canceled"].includes(responseStatus)) {
-        res.status(400).json({message: "Недопустимый статус ответа"});
         return;
       }
 
@@ -200,10 +289,19 @@ function registerRelationRequestRoutes(
         });
       }
 
-      const updatedRequest = await store.respondToRelationRequest(
+      const result = await store.respondToRelationRequest(
         request.id,
         responseStatus,
       );
+      if (!result) {
+        res.status(404).json({message: "Запрос не найден"});
+        return;
+      }
+      if (result.conflict) {
+        res.status(409).json({message: "Этот запрос уже обработан"});
+        return;
+      }
+      const updatedRequest = result.request;
 
       await createAndDispatchNotification({
         userId: request.senderId,

@@ -639,6 +639,121 @@ function registerAuthSessionRoutes(
     }
   });
 
+  app.post("/v1/auth/change-password", requireAuth, async (req, res) => {
+    const currentPassword = req.body?.currentPassword;
+    const newPassword = String(req.body?.newPassword || "");
+
+    if (newPassword.length < 8) {
+      res
+        .status(400)
+        .json({message: "Пароль должен быть минимум 8 символов."});
+      return;
+    }
+    if (newPassword.length > 1024) {
+      res.status(400).json({message: "Пароль слишком длинный."});
+      return;
+    }
+
+    const beforeSessions =
+      typeof store.listSessionsForUser === "function"
+        ? await store.listSessionsForUser(req.auth.user.id)
+        : [];
+
+    const result = await store.changeUserPassword({
+      userId: req.auth.user.id,
+      currentPassword:
+        currentPassword !== undefined && currentPassword !== null
+          ? String(currentPassword)
+          : null,
+      newPassword,
+      exceptToken: req.auth.token || null,
+    });
+
+    if (result?.error === "USER_NOT_FOUND") {
+      res.status(404).json({message: "Пользователь не найден"});
+      return;
+    }
+    if (result?.error === "CURRENT_PASSWORD_REQUIRED") {
+      res.status(400).json({message: "Введите текущий пароль"});
+      return;
+    }
+    if (result?.error === "INVALID_CURRENT_PASSWORD") {
+      res.status(401).json({message: "Неверный текущий пароль"});
+      return;
+    }
+    if (result?.error === "SAME_PASSWORD") {
+      res
+        .status(400)
+        .json({message: "Новый пароль должен отличаться от текущего"});
+      return;
+    }
+    if (result?.error === "EMAIL_REQUIRED") {
+      res.status(400).json({message: "Сначала укажите email в профиле"});
+      return;
+    }
+    if (result?.error) {
+      res.status(500).json({message: "Не удалось обновить пароль"});
+      return;
+    }
+
+    if (
+      realtimeHub &&
+      typeof realtimeHub.disconnectSession === "function" &&
+      typeof deriveSessionPublicId === "function"
+    ) {
+      for (const session of beforeSessions) {
+        const publicId = deriveSessionPublicId(
+          session.token,
+          session.instanceId || "",
+        );
+        if (publicId && publicId !== req.auth.sessionPublicId) {
+          realtimeHub.disconnectSession(req.auth.user.id, publicId, {
+            reason: "password.changed",
+          });
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      hasPassword: true,
+      providerIds: result.providerIds,
+    });
+  });
+
+  app.delete("/v1/auth/providers/:provider", requireAuth, async (req, res) => {
+    const result = await store.unlinkAuthIdentity(
+      req.auth.user.id,
+      req.params.provider,
+    );
+    if (result?.error === "INVALID_PROVIDER") {
+      res.status(400).json({message: "Неизвестный провайдер входа"});
+      return;
+    }
+    if (
+      result?.error === "USER_NOT_FOUND" ||
+      result?.error === "PROVIDER_NOT_LINKED"
+    ) {
+      res.status(404).json({message: "Этот способ входа не привязан"});
+      return;
+    }
+    if (result?.error === "LAST_LOGIN_METHOD") {
+      res.status(409).json({
+        message:
+          "Нельзя отвязать единственный способ входа. Сначала задайте пароль или привяжите другой аккаунт.",
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      provider: result.provider,
+      providerIds: result.providerIds,
+      linkedProviderIds: result.linkedProviderIds,
+      primaryTrustedChannel: result.primaryTrustedChannel,
+    });
+  });
+
   app.delete("/v1/auth/account", requireAuth, async (req, res) => {
     const ownedMediaUrls = typeof store.listOwnedMediaUrls === "function"
       ? await store.listOwnedMediaUrls(req.auth.user.id)

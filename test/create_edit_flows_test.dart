@@ -158,6 +158,71 @@ class _FakeCircleService implements CircleServiceInterface {
           createdAt: DateTime(2026, 4, 15),
         ),
       ];
+
+  @override
+  Future<FamilyCircle> createCircle({
+    required String treeId,
+    required String name,
+    String? description,
+  }) async =>
+      FamilyCircle(
+        id: 'circle-new',
+        treeId: treeId,
+        kind: FamilyCircleKind.custom,
+        name: name,
+        description: description,
+        isSystem: false,
+        memberCount: 0,
+        createdAt: DateTime(2026, 4, 15),
+      );
+
+  @override
+  Future<FamilyCircle> updateCircle({
+    required String treeId,
+    required String circleId,
+    required String name,
+    String? description,
+  }) async =>
+      FamilyCircle(
+        id: circleId,
+        treeId: treeId,
+        kind: FamilyCircleKind.custom,
+        name: name,
+        description: description,
+        isSystem: false,
+        memberCount: 0,
+        createdAt: DateTime(2026, 4, 15),
+      );
+
+  @override
+  Future<List<String>> getCircleMemberIdentityIds({
+    required String treeId,
+    required String circleId,
+  }) async =>
+      const <String>[];
+
+  @override
+  Future<FamilyCircle> replaceCircleMembers({
+    required String treeId,
+    required String circleId,
+    List<String> identityIds = const <String>[],
+    List<String> personIds = const <String>[],
+  }) async =>
+      FamilyCircle(
+        id: circleId,
+        treeId: treeId,
+        kind: FamilyCircleKind.custom,
+        name: 'Близкие',
+        isSystem: false,
+        memberCount: identityIds.length + personIds.length,
+        createdAt: DateTime(2026, 4, 15),
+      );
+
+  @override
+  Future<void> deleteCircle({
+    required String treeId,
+    required String circleId,
+  }) async {}
 }
 
 class _FakeStoryService implements StoryServiceInterface {
@@ -192,6 +257,13 @@ class _FakeStoryService implements StoryServiceInterface {
 }
 
 class _FakeAuthService implements AuthServiceInterface {
+  List<String> providerIds = ['password'];
+  String? changedCurrentPassword;
+  String? changedNewPassword;
+  String? unlinkedProvider;
+  bool deleteCalled = false;
+  String? deletedWithPassword;
+
   @override
   String? get currentUserId => 'user-1';
 
@@ -205,7 +277,32 @@ class _FakeAuthService implements AuthServiceInterface {
   String? get currentUserPhotoUrl => null;
 
   @override
-  List<String> get currentProviderIds => const ['password'];
+  List<String> get currentProviderIds => providerIds;
+
+  @override
+  Future<void> changePassword({
+    String? currentPassword,
+    required String newPassword,
+  }) async {
+    changedCurrentPassword = currentPassword;
+    changedNewPassword = newPassword;
+    if (!providerIds.contains('password')) {
+      providerIds = [...providerIds, 'password'];
+    }
+  }
+
+  @override
+  Future<List<String>> unlinkProvider(String provider) async {
+    unlinkedProvider = provider;
+    providerIds = providerIds.where((item) => item != provider).toList();
+    return providerIds;
+  }
+
+  @override
+  Future<void> deleteAccount([String? password]) async {
+    deleteCalled = true;
+    deletedWithPassword = password;
+  }
 
   @override
   Stream<String?> get authStateChanges => const Stream<String?>.empty();
@@ -678,5 +775,99 @@ void main() {
     expect(find.text('Документы и поддержка'), findsOneWidget);
     expect(find.text('Аккаунт'), findsOneWidget);
     expect(find.text('Удалить аккаунт'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Wave B2b SettingsScreen supports changePassword, unlink gating, and passwordless delete',
+      (tester) async {
+    final authService = _FakeAuthService()..providerIds = ['vk'];
+    await getIt.unregister<AuthServiceInterface>();
+    getIt.registerSingleton<AuthServiceInterface>(authService);
+
+    await tester.pumpWidget(_withTheme(const SettingsScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Вход и безопасность'), findsOneWidget);
+
+    // Single OAuth method without password -> unlink tile is disabled with helper copy.
+    final unlinkTileWidget = tester.widget<ListTile>(
+      find.byKey(const Key('settings-unlink-vk')),
+    );
+    expect(unlinkTileWidget.enabled, isFalse);
+
+    // OAuth-only user sets initial password (no current password field shown).
+    final passwordTile = find.byKey(const Key('settings-change-password-tile'));
+    await tester.ensureVisible(passwordTile);
+    await tester.pumpAndSettle();
+    await tester.tap(passwordTile);
+    await tester.pumpAndSettle();
+
+    expect(
+        find.byKey(const Key('settings-current-password-input')), findsNothing);
+    await tester.enterText(
+      find.byKey(const Key('settings-new-password-input')),
+      'secret123',
+    );
+    await tester.enterText(
+      find.byKey(const Key('settings-confirm-password-input')),
+      'secret123',
+    );
+    await tester.tap(find.byKey(const Key('settings-change-password-submit')));
+    await tester.pumpAndSettle();
+
+    expect(authService.changedCurrentPassword, isNull);
+    expect(authService.changedNewPassword, 'secret123');
+    expect(authService.currentProviderIds, containsAll(['vk', 'password']));
+
+    // Now that password is set, unlinking VK becomes enabled and works.
+    final unlinkTile = find.byKey(const Key('settings-unlink-vk'));
+    await tester.ensureVisible(unlinkTile);
+    await tester.pumpAndSettle();
+    expect(tester.widget<ListTile>(unlinkTile).enabled, isTrue);
+    await tester.tap(unlinkTile);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settings-unlink-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(authService.unlinkedProvider, 'vk');
+    expect(find.byKey(const Key('settings-unlink-vk')), findsNothing);
+
+    // Passwordless OAuth-only delete account (without password input).
+    authService.providerIds = ['google'];
+    final router = GoRouter(
+      initialLocation: '/settings',
+      routes: [
+        GoRoute(
+          path: '/settings',
+          builder: (_, __) => const SettingsScreen(),
+        ),
+        GoRoute(
+          path: '/login',
+          builder: (_, __) => const Scaffold(body: Text('login-screen')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => ThemeProvider(),
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final deleteTile = find.byKey(const Key('settings-delete-account-tile'));
+    await tester.ensureVisible(deleteTile);
+    await tester.pumpAndSettle();
+    await tester.tap(deleteTile);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsNothing);
+    await tester.tap(find.byKey(const Key('settings-delete-account-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(authService.deleteCalled, isTrue);
+    expect(authService.deletedWithPassword, isNull);
+    expect(find.text('login-screen'), findsOneWidget);
   });
 }

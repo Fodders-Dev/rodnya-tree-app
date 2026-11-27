@@ -543,14 +543,20 @@ module.exports = {
   // Used by the password-reset confirm route. Async-hashes via
   // libuv thread pool — same scrypt cost as login verify, so the
   // event loop stays responsive under concurrent resets.
-  async updateUserPassword(userId, newPlaintextPassword) {
+  async updateUserPassword(
+    userId,
+    newPlaintextPassword,
+    {exceptToken = null} = {},
+  ) {
     const existingUser = await this.findUserById(userId);
     if (!existingUser) return false;
 
     const credentials = await hashPasswordAsync(
       String(newPlaintextPassword || ""),
     );
+    const normalizedExceptToken = String(exceptToken || "").trim() || null;
     let userSessionTokens = [];
+    let rememberedUser = null;
     const updated = await this._mutate((db, skip) => {
       const user = db.users.find((entry) => entry.id === userId);
       if (!user) return skip(false);
@@ -560,13 +566,26 @@ module.exports = {
       user.failedLoginCount = 0;
       user.lockedUntil = null;
       user.updatedAt = nowIso();
+      const identities = listAuthIdentitiesForUser(user);
+      if (!identities.some((entry) => entry.provider === "password")) {
+        identities.push(createPasswordAuthIdentity(user));
+      }
+      user.authIdentities = identities;
+      user.providerIds = deriveProviderIdsForUser(user);
+      rememberedUser = user;
 
       const currentSessions = Array.isArray(db.sessions) ? db.sessions : [];
       userSessionTokens = currentSessions
-        .filter((session) => session.userId === userId)
+        .filter(
+          (session) =>
+            session.userId === userId &&
+            (!normalizedExceptToken || session.token !== normalizedExceptToken),
+        )
         .map((session) => session.token);
       db.sessions = currentSessions.filter(
-        (session) => session.userId !== userId,
+        (session) =>
+          session.userId !== userId ||
+          (normalizedExceptToken && session.token === normalizedExceptToken),
       );
 
       if (Array.isArray(db.passwordResetTokens)) {
@@ -579,11 +598,59 @@ module.exports = {
       return true;
     });
     if (!updated) return false;
-    this._forgetUser(userId);
+    if (rememberedUser) {
+      this._rememberUser(rememberedUser);
+    } else {
+      this._forgetUser(userId);
+    }
     for (const token of userSessionTokens) {
       this._forgetSession(token);
     }
     return true;
+  },
+
+  async changeUserPassword({
+    userId,
+    currentPassword = null,
+    newPassword,
+    exceptToken = null,
+  }) {
+    const existingUser = await this.findUserById(userId);
+    if (!existingUser) {
+      return {error: "USER_NOT_FOUND"};
+    }
+    const hasPassword = Boolean(
+      existingUser.passwordHash && existingUser.passwordSalt,
+    );
+    if (hasPassword) {
+      if (!currentPassword) {
+        return {error: "CURRENT_PASSWORD_REQUIRED"};
+      }
+      const matches = await verifyPasswordAsync(
+        String(currentPassword),
+        existingUser,
+      );
+      if (!matches) {
+        return {error: "INVALID_CURRENT_PASSWORD"};
+      }
+      if (String(currentPassword) === String(newPassword)) {
+        return {error: "SAME_PASSWORD"};
+      }
+    } else if (!String(existingUser.email || "").trim()) {
+      return {error: "EMAIL_REQUIRED"};
+    }
+
+    const updated = await this.updateUserPassword(userId, newPassword, {
+      exceptToken,
+    });
+    if (!updated) {
+      return {error: "UPDATE_FAILED"};
+    }
+    const updatedUser = await this.findUserById(userId);
+    return {
+      hasPassword: true,
+      providerIds: deriveProviderIdsForUser(updatedUser || existingUser),
+    };
   },
 
   _cleanupExpiredAuthHandoffs(db) {

@@ -113,6 +113,123 @@ void main() {
       ),
     );
   });
+
+  test('CustomApiCircleService supports create, update, members and delete',
+      () async {
+    final seenRequests = <String>[];
+    final client = MockClient((request) async {
+      seenRequests.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/v1/trees/tree-1/circles' &&
+          request.method == 'POST') {
+        return http.Response(
+          jsonEncode({
+            'id': 'circle-new',
+            'treeId': 'tree-1',
+            'kind': 'custom',
+            'name': 'Тёплый круг',
+            'createdBy': 'user-1',
+            'isSystem': false,
+            'memberCount': 0,
+            'createdAt': '2026-06-01T00:00:00.000Z',
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/trees/tree-1/circles/circle-new' &&
+          request.method == 'PATCH') {
+        return http.Response(
+          jsonEncode({
+            'id': 'circle-new',
+            'treeId': 'tree-1',
+            'kind': 'custom',
+            'name': 'Свои',
+            'createdBy': 'user-1',
+            'isSystem': false,
+            'memberCount': 0,
+            'createdAt': '2026-06-01T00:00:00.000Z',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/trees/tree-1/circles/circle-new/members' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'members': [
+              {'id': 'cm-1', 'identityId': 'identity-1'},
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/trees/tree-1/circles/circle-new/members' &&
+          request.method == 'PUT') {
+        return http.Response(
+          jsonEncode({
+            'id': 'circle-new',
+            'treeId': 'tree-1',
+            'kind': 'custom',
+            'name': 'Свои',
+            'createdBy': 'user-1',
+            'isSystem': false,
+            'memberCount': 2,
+            'createdAt': '2026-06-01T00:00:00.000Z',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/trees/tree-1/circles/circle-new' &&
+          request.method == 'DELETE') {
+        return http.Response('', 204);
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final authService = await _createAuthService(client);
+    final service = CustomApiCircleService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final created = await service.createCircle(
+      treeId: 'tree-1',
+      name: 'Тёплый круг',
+    );
+    final updated = await service.updateCircle(
+      treeId: 'tree-1',
+      circleId: created.id,
+      name: 'Свои',
+    );
+    final members = await service.getCircleMemberIdentityIds(
+      treeId: 'tree-1',
+      circleId: created.id,
+    );
+    await service.replaceCircleMembers(
+      treeId: 'tree-1',
+      circleId: created.id,
+      identityIds: const ['identity-1', 'identity-2'],
+    );
+    await service.deleteCircle(treeId: 'tree-1', circleId: created.id);
+
+    expect(updated.name, 'Свои');
+    expect(members, ['identity-1']);
+    expect(
+        seenRequests,
+        containsAll([
+          'POST /v1/trees/tree-1/circles',
+          'PATCH /v1/trees/tree-1/circles/circle-new',
+          'GET /v1/trees/tree-1/circles/circle-new/members',
+          'PUT /v1/trees/tree-1/circles/circle-new/members',
+          'DELETE /v1/trees/tree-1/circles/circle-new',
+        ]));
+  });
 }
 
 Future<CustomApiAuthService> _createAuthService(http.Client client) async {

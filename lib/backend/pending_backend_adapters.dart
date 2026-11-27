@@ -136,6 +136,19 @@ class PendingBackendAuthService implements AuthServiceInterface {
   }
 
   @override
+  Future<void> changePassword({
+    String? currentPassword,
+    required String newPassword,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('auth'));
+  }
+
+  @override
+  Future<List<String>> unlinkProvider(String provider) {
+    throw UnsupportedError(_pendingProviderMessage('auth'));
+  }
+
+  @override
   Future<void> signOut() async {}
 
   @override
@@ -478,6 +491,13 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<List<RelationRequest>> getSentRelationRequests({
+    String? treeId,
+  }) async {
+    return const [];
+  }
+
+  @override
   Stream<List<TreeInvitation>> getPendingTreeInvitations() {
     return Stream<List<TreeInvitation>>.value(const []);
   }
@@ -555,6 +575,11 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
     required RelationType relationType,
     String? message,
   }) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
+  Future<void> cancelRelationRequest(String requestId) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
 
@@ -817,6 +842,51 @@ class PendingBackendCircleService implements CircleServiceInterface {
   Future<AudiencePresetsResponse> getAudiencePresets(String treeId) async {
     return AudiencePresetsResponse.empty;
   }
+
+  @override
+  Future<FamilyCircle> createCircle({
+    required String treeId,
+    required String name,
+    String? description,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('circles'));
+  }
+
+  @override
+  Future<FamilyCircle> updateCircle({
+    required String treeId,
+    required String circleId,
+    required String name,
+    String? description,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('circles'));
+  }
+
+  @override
+  Future<List<String>> getCircleMemberIdentityIds({
+    required String treeId,
+    required String circleId,
+  }) async {
+    return const <String>[];
+  }
+
+  @override
+  Future<FamilyCircle> replaceCircleMembers({
+    required String treeId,
+    required String circleId,
+    List<String> identityIds = const <String>[],
+    List<String> personIds = const <String>[],
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('circles'));
+  }
+
+  @override
+  Future<void> deleteCircle({
+    required String treeId,
+    required String circleId,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('circles'));
+  }
 }
 
 class PendingBackendIdentityService implements IdentityServiceInterface {
@@ -852,6 +922,16 @@ class PendingBackendIdentityService implements IdentityServiceInterface {
   @override
   Future<List<IdentityClaim>> getPendingIdentityClaims() async {
     return const <IdentityClaim>[];
+  }
+
+  @override
+  Future<List<IdentityClaim>> getMyIdentityClaims() async {
+    return const <IdentityClaim>[];
+  }
+
+  @override
+  Future<IdentityClaim?> cancelIdentityClaim(String claimId) {
+    throw UnsupportedError(_pendingProviderMessage('identity'));
   }
 
   @override

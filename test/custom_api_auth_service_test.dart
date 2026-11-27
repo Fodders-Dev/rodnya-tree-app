@@ -447,4 +447,83 @@ void main() {
 
     expect(service.currentProviderIds, ['password', 'vk']);
   });
+
+  test('CustomApiAuthService changePassword and unlinkProvider update session',
+      () async {
+    final seenPaths = <String>[];
+    final client = MockClient((request) async {
+      seenPaths.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/v1/auth/login') {
+        return http.Response(
+          jsonEncode({
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'user': {
+              'id': 'user-1',
+              'email': 'dev@rodnya.app',
+              'displayName': 'Dev User',
+              'providerIds': ['password', 'vk'],
+            },
+            'profileStatus': {
+              'isComplete': true,
+              'missingFields': <String>[],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/auth/change-password' &&
+          request.method == 'POST') {
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'user': {
+              'id': 'user-1',
+              'providerIds': ['password', 'vk'],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/auth/providers/vk' &&
+          request.method == 'DELETE') {
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'providerIds': ['password'],
+            'user': {
+              'id': 'user-1',
+              'providerIds': ['password'],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final service = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    await service.loginWithEmail('dev@rodnya.app', 'oldpass1');
+    await service.changePassword(
+      currentPassword: 'oldpass1',
+      newPassword: 'newpass2',
+    );
+    final providers = await service.unlinkProvider('vk');
+
+    expect(providers, ['password']);
+    expect(service.currentProviderIds, ['password']);
+    expect(seenPaths, contains('POST /v1/auth/change-password'));
+    expect(seenPaths, contains('DELETE /v1/auth/providers/vk'));
+  });
 }

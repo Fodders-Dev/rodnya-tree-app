@@ -381,8 +381,11 @@ function sanitizeProfileUpdatePayload(rawBody = {}) {
     }
   }
   for (const key of urlKeys) {
-    if (!(key in rawBody)) continue;
-    const val = rawBody[key];
+    const aliasKey = key === "photoUrl" ? "photoURL" : "coverPhotoURL";
+    const sourceKey =
+      key in rawBody ? key : aliasKey in rawBody ? aliasKey : null;
+    if (!sourceKey) continue;
+    const val = rawBody[sourceKey];
     if (val === null || val === "") {
       next[key] = null;
     } else if (typeof val === "string") {

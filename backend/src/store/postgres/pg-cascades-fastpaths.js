@@ -38,10 +38,15 @@ module.exports = {
     }
   },
 
-  async updateUserPassword(userId, newPlaintextPassword) {
-    const updated = await FileStore.prototype.updateUserPassword.call(this, userId, newPlaintextPassword);
+  async updateUserPassword(userId, newPlaintextPassword, options = {}) {
+    const updated = await FileStore.prototype.updateUserPassword.call(
+      this,
+      userId,
+      newPlaintextPassword,
+      options,
+    );
     if (updated) {
-      await this.deleteSessionsForUser(userId);
+      await this.deleteSessionsForUser(userId, options);
     }
     return updated;
   },

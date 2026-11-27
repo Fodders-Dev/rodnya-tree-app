@@ -139,6 +139,31 @@ function registerIdentityRoutes(
     res.json({claims});
   });
 
+  app.get("/v1/identity-claims/mine", requireAuth, async (req, res) => {
+    const claims = await store.listMyIdentityClaims(req.auth.user.id);
+    res.json({claims});
+  });
+
+  app.delete("/v1/identity-claims/:claimId", requireAuth, async (req, res) => {
+    const result = await store.cancelIdentityClaim({
+      claimId: req.params.claimId,
+      actorUserId: req.auth.user.id,
+    });
+    if (result === null) {
+      res.status(404).json({message: "Запрос не найден"});
+      return;
+    }
+    if (result?.error === "FORBIDDEN") {
+      res.status(403).json({message: "Отменить запрос может только его автор"});
+      return;
+    }
+    if (result?.error === "CONFLICT") {
+      res.status(409).json({message: "Этот запрос уже обработан"});
+      return;
+    }
+    res.json({ok: true, claim: result.claim});
+  });
+
   app.post(
     "/v1/identity-claims/:claimId/review",
     requireAuth,
@@ -155,6 +180,10 @@ function registerIdentityRoutes(
       }
       if (claim === false) {
         res.status(403).json({message: "Нет доступа к этому запросу"});
+        return;
+      }
+      if (claim?.error === "CONFLICT") {
+        res.status(409).json({message: "Запрос уже отменён автором"});
         return;
       }
       res.json({claim});

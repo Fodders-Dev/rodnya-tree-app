@@ -56,6 +56,11 @@ abstract class AuthServiceInterface {
     required String token,
     required String newPassword,
   });
+  Future<void> changePassword({
+    String? currentPassword,
+    required String newPassword,
+  });
+  Future<List<String>> unlinkProvider(String provider);
   Future<void> deleteAccount([String? password]);
   Future<Map<String, dynamic>> checkProfileCompleteness();
   Future<void> processPendingInvitation();

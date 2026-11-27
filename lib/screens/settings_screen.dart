@@ -21,8 +21,10 @@ import 'package:get_it/get_it.dart'; // Для доступа к RustoreService
 import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/interfaces/semya_manage_capable_family_tree_service.dart';
+import '../models/account_linking_status.dart';
 import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
 import '../screens/semya_details_screen.dart';
@@ -100,11 +102,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // --- Состояние для оценки приложения ---
   bool _hasRatedApp = false; // Изначально считаем, что не оценил
   bool _checkingRatingStatus = true; // Индикатор загрузки статуса оценки
+  AccountLinkingStatus? _linkingStatus;
+  bool _linkingStatusLoading = false;
+  bool _securityBusy = false;
+
+  ProfileServiceInterface? get _profileService =>
+      GetIt.I.isRegistered<ProfileServiceInterface>()
+          ? GetIt.I<ProfileServiceInterface>()
+          : null;
 
   @override
   void initState() {
     super.initState();
     _loadAppVersion();
+    unawaited(_loadLinkingStatus());
     if (kIsWeb) {
       unawaited(_loadLatestAndroidApk());
     }
@@ -1129,113 +1140,219 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // Функция для отображения диалога подтверждения удаления аккаунта
-  Future<void> _showDeleteAccountConfirmation() async {
-    final TextEditingController passwordController = TextEditingController();
-    bool isPasswordVisible = false;
-
+  Future<void> _loadLinkingStatus() async {
+    final profileService = _profileService;
+    if (profileService == null) {
+      return;
+    }
+    if (mounted) {
+      setState(() => _linkingStatusLoading = true);
+    }
     try {
-      await showGlassDialog<void>(
-        context: context,
-        builder: (dialogContext) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              final theme = Theme.of(context);
+      final status = await profileService.getCurrentAccountLinkingStatus();
+      if (!mounted) return;
+      setState(() {
+        _linkingStatus = status;
+        _linkingStatusLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _linkingStatusLoading = false);
+    }
+  }
 
-              return GlassDialogFrame(
-                icon: Icons.delete_forever,
-                tint: theme.colorScheme.error,
-                title: 'Удалить аккаунт',
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Это действие нельзя отменить.',
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Введите пароль для подтверждения.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerLowest
-                            .withValues(alpha: 0.9),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: TextField(
-                        controller: passwordController,
-                        obscureText: !isPasswordVisible,
-                        decoration: InputDecoration(
-                          hintText: 'Пароль',
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 16,
-                          ),
-                          suffixIcon: IconButton(
-                            tooltip: isPasswordVisible
-                                ? 'Скрыть пароль'
-                                : 'Показать пароль',
-                            icon: Icon(
-                              isPasswordVisible
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
-                            ),
-                            onPressed: () {
-                              setDialogState(() {
-                                isPasswordVisible = !isPasswordVisible;
-                              });
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: const Text('Отмена'),
-                  ),
-                  FilledButton.tonal(
-                    style: FilledButton.styleFrom(
-                      foregroundColor: theme.colorScheme.error,
-                    ),
-                    onPressed: () {
-                      final password = passwordController.text;
-                      Navigator.of(dialogContext).pop();
-                      if (password.isNotEmpty) {
-                        _deleteAccount(password);
-                      } else {
-                        _showMessage(
-                          'Введите пароль для удаления аккаунта.',
-                          backgroundColor: theme.colorScheme.error,
-                        );
-                      }
-                    },
-                    child: const Text('Удалить'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
+  String _providerLabel(String provider) {
+    switch (provider.toLowerCase()) {
+      case 'password':
+        return 'Пароль';
+      case 'google':
+        return 'Google';
+      case 'vk':
+        return 'ВКонтакте';
+      case 'yandex':
+        return 'Яндекс';
+      case 'mailru':
+        return 'Mail.ru';
+      case 'max':
+        return 'MAX';
+      default:
+        return provider;
+    }
+  }
+
+  Future<void> _openChangePasswordDialog() async {
+    final hasPassword = _authService.currentProviderIds.contains('password');
+    final draft = await showGlassDialog<_ChangePasswordDraft>(
+      context: context,
+      builder: (_) => _ChangePasswordDialog(hasPassword: hasPassword),
+    );
+    if (draft == null || !mounted) return;
+
+    final theme = Theme.of(context);
+    setState(() => _securityBusy = true);
+    try {
+      await _authService.changePassword(
+        currentPassword: hasPassword ? draft.currentPassword : null,
+        newPassword: draft.newPassword,
+      );
+      if (mounted) {
+        setState(() => _linkingStatus = null);
+      }
+      await _loadLinkingStatus();
+      if (!mounted) return;
+      _showMessage(
+        hasPassword
+            ? 'Пароль обновлён. Другие сессии завершены.'
+            : 'Пароль задан.',
+        backgroundColor: Colors.green,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(
+        describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: 'Не удалось обновить пароль.',
+        ),
+        backgroundColor: theme.colorScheme.error,
       );
     } finally {
-      passwordController.dispose();
+      if (mounted) {
+        setState(() => _securityBusy = false);
+      }
+    }
+  }
+
+  Future<void> _confirmUnlinkProvider(String provider) async {
+    final label = _providerLabel(provider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Отвязать $label?'),
+        content: Text(
+          'Вы больше не сможете входить в этот аккаунт через $label.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Оставить'),
+          ),
+          FilledButton(
+            key: const Key('settings-unlink-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Отвязать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _securityBusy = true);
+    try {
+      await _authService.unlinkProvider(provider);
+      if (mounted) {
+        setState(() => _linkingStatus = null);
+      }
+      await _loadLinkingStatus();
+      if (!mounted) return;
+      _showMessage(
+        'Способ входа «$label» отвязан.',
+        backgroundColor: Colors.green,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(
+        describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: 'Не удалось отвязать способ входа.',
+        ),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _securityBusy = false);
+      }
+    }
+  }
+
+  Widget _buildSecuritySection() {
+    final linked = _linkingStatus?.linkedProviderIds;
+    final rawProviders = (linked != null && linked.isNotEmpty)
+        ? linked
+        : _authService.currentProviderIds;
+    final providers = rawProviders
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList();
+    final hasPassword = providers.contains('password');
+    final oauthProviders =
+        providers.where((item) => item != 'password').toList();
+
+    return _buildSectionCard('Вход и безопасность', [
+      _buildActionRow(
+        key: const Key('settings-change-password-tile'),
+        icon: Icons.lock_reset_rounded,
+        title: hasPassword ? 'Сменить пароль' : 'Задать пароль',
+        subtitle: hasPassword
+            ? 'Обновить пароль и завершить другие сессии'
+            : 'Добавить вход по email и паролю',
+        enabled: !_securityBusy,
+        onTap: _securityBusy ? null : _openChangePasswordDialog,
+      ),
+      if (_linkingStatusLoading)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Center(
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      for (final provider in oauthProviders)
+        _buildActionRow(
+          key: Key('settings-unlink-$provider'),
+          icon: Icons.link_off_rounded,
+          title: 'Отвязать ${_providerLabel(provider)}',
+          subtitle: (hasPassword || oauthProviders.length > 1)
+              ? 'Отключить вход через ${_providerLabel(provider)}'
+              : 'Единственный способ входа — сначала задайте пароль',
+          enabled: !_securityBusy && (hasPassword || oauthProviders.length > 1),
+          onTap: (!_securityBusy && (hasPassword || oauthProviders.length > 1))
+              ? () => _confirmUnlinkProvider(provider)
+              : null,
+        ),
+    ]);
+  }
+
+  // Функция для отображения диалога подтверждения удаления аккаунта
+  Future<void> _showDeleteAccountConfirmation() async {
+    final requiresPassword =
+        _authService.currentProviderIds.contains('password');
+    final decision = await showGlassDialog<_DeleteAccountDecision>(
+      context: context,
+      builder: (_) =>
+          _DeleteAccountConfirmDialog(requiresPassword: requiresPassword),
+    );
+    if (decision == null || !mounted) return;
+
+    if (!requiresPassword) {
+      await _deleteAccount(null);
+    } else if ((decision.password ?? '').isNotEmpty) {
+      await _deleteAccount(decision.password);
+    } else {
+      _showMessage(
+        'Введите пароль для удаления аккаунта.',
+        backgroundColor: Theme.of(context).colorScheme.error,
+      );
     }
   }
 
   // Улучшенная функция для удаления аккаунта с надежным перенаправлением
-  Future<void> _deleteAccount(String password) async {
+  Future<void> _deleteAccount([String? password]) async {
     setState(() {
       _isLoading = true;
     });
@@ -1495,6 +1612,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 )
               : _buildReviewRow(),
         ]),
+      _buildSecuritySection(),
       _buildSectionCard('Аккаунт', [
         _buildActionRow(
           icon: Icons.logout_rounded,
@@ -1524,6 +1642,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         borderColor:
             Theme.of(context).colorScheme.error.withValues(alpha: 0.35),
         child: _buildActionRow(
+          key: const Key('settings-delete-account-tile'),
           icon: Icons.delete_forever,
           title: 'Удалить аккаунт',
           subtitle: 'Это действие нельзя отменить',
@@ -1727,6 +1846,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildActionRow({
+    Key? key,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -1736,6 +1856,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }) {
     final theme = Theme.of(context);
     return ListTile(
+      key: key,
       // Плотность −1 без dense: ~52dp и 16sp — планка для аудитории 50+.
       visualDensity: const VisualDensity(vertical: -1),
       contentPadding: const EdgeInsets.symmetric(horizontal: 4),
@@ -2071,6 +2192,267 @@ class _ThemePickerChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ChangePasswordDraft {
+  const _ChangePasswordDraft({
+    this.currentPassword,
+    required this.newPassword,
+  });
+
+  final String? currentPassword;
+  final String newPassword;
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog({required this.hasPassword});
+
+  final bool hasPassword;
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final TextEditingController _currentPasswordController =
+      TextEditingController();
+  final TextEditingController _newPasswordController = TextEditingController();
+  final TextEditingController _confirmPasswordController =
+      TextEditingController();
+  bool _showCurrent = false;
+  bool _showNew = false;
+  String? _validationError;
+
+  @override
+  void dispose() {
+    _currentPasswordController.dispose();
+    _newPasswordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GlassDialogFrame(
+      icon: Icons.lock_reset_rounded,
+      title: widget.hasPassword ? 'Сменить пароль' : 'Задать пароль',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.hasPassword
+                ? 'Введите текущий и новый пароль (минимум 6 символов). Другие сессии будут завершены.'
+                : 'Добавьте пароль, чтобы заходить по email и иметь возможность отвязать внешний способ входа.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (widget.hasPassword) ...[
+            TextField(
+              key: const Key('settings-current-password-input'),
+              controller: _currentPasswordController,
+              obscureText: !_showCurrent,
+              decoration: InputDecoration(
+                labelText: 'Текущий пароль',
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _showCurrent ? Icons.visibility_off : Icons.visibility,
+                  ),
+                  onPressed: () => setState(() => _showCurrent = !_showCurrent),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          TextField(
+            key: const Key('settings-new-password-input'),
+            controller: _newPasswordController,
+            obscureText: !_showNew,
+            decoration: InputDecoration(
+              labelText: 'Новый пароль',
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _showNew ? Icons.visibility_off : Icons.visibility,
+                ),
+                onPressed: () => setState(() => _showNew = !_showNew),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const Key('settings-confirm-password-input'),
+            controller: _confirmPasswordController,
+            obscureText: !_showNew,
+            decoration: const InputDecoration(
+              labelText: 'Повторите новый пароль',
+            ),
+          ),
+          if (_validationError != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _validationError!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('settings-change-password-submit'),
+          onPressed: () {
+            final currentPassword = _currentPasswordController.text;
+            final newPassword = _newPasswordController.text;
+            final confirmPassword = _confirmPasswordController.text;
+            if (widget.hasPassword && currentPassword.isEmpty) {
+              setState(() => _validationError = 'Введите текущий пароль.');
+              return;
+            }
+            if (newPassword.length < 6) {
+              setState(
+                () => _validationError =
+                    'Новый пароль должен содержать минимум 6 символов.',
+              );
+              return;
+            }
+            if (newPassword != confirmPassword) {
+              setState(() => _validationError = 'Пароли не совпадают.');
+              return;
+            }
+            Navigator.of(context).pop(
+              _ChangePasswordDraft(
+                currentPassword: widget.hasPassword ? currentPassword : null,
+                newPassword: newPassword,
+              ),
+            );
+          },
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteAccountDecision {
+  const _DeleteAccountDecision(this.password);
+
+  final String? password;
+}
+
+class _DeleteAccountConfirmDialog extends StatefulWidget {
+  const _DeleteAccountConfirmDialog({required this.requiresPassword});
+
+  final bool requiresPassword;
+
+  @override
+  State<_DeleteAccountConfirmDialog> createState() =>
+      _DeleteAccountConfirmDialogState();
+}
+
+class _DeleteAccountConfirmDialogState
+    extends State<_DeleteAccountConfirmDialog> {
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isPasswordVisible = false;
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GlassDialogFrame(
+      icon: Icons.delete_forever,
+      tint: theme.colorScheme.error,
+      title: 'Удалить аккаунт',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Это действие нельзя отменить.',
+            style: theme.textTheme.bodyLarge?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            widget.requiresPassword
+                ? 'Введите пароль для подтверждения.'
+                : 'Аккаунт и связанные с ним личные данные будут удалены безвозвратно.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          if (widget.requiresPassword) ...[
+            const SizedBox(height: 14),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerLowest
+                    .withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: TextField(
+                controller: _passwordController,
+                obscureText: !_isPasswordVisible,
+                decoration: InputDecoration(
+                  hintText: 'Пароль',
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 16,
+                  ),
+                  suffixIcon: IconButton(
+                    tooltip: _isPasswordVisible
+                        ? 'Скрыть пароль'
+                        : 'Показать пароль',
+                    icon: Icon(
+                      _isPasswordVisible
+                          ? Icons.visibility_off
+                          : Icons.visibility,
+                    ),
+                    onPressed: () {
+                      setState(() => _isPasswordVisible = !_isPasswordVisible);
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton.tonal(
+          key: const Key('settings-delete-account-confirm'),
+          style: FilledButton.styleFrom(
+            foregroundColor: theme.colorScheme.error,
+          ),
+          onPressed: () {
+            Navigator.of(context).pop(
+              _DeleteAccountDecision(
+                widget.requiresPassword ? _passwordController.text : null,
+              ),
+            );
+          },
+          child: const Text('Удалить'),
+        ),
+      ],
     );
   }
 }

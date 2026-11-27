@@ -315,6 +315,24 @@ extension _CreatePostAudience on _CreatePostScreenState {
           isUnavailable: _circlesUnavailable,
           isFriendsTree: _isFriendsTree,
           onRetry: _loadAudienceCircles,
+          onManageCircles: _currentTreeId == null
+              ? null
+              : () async {
+                  final changed = await showManageCirclesSheet(
+                    context,
+                    treeId: _currentTreeId!,
+                    viewerUserId: _authService.currentUserId ?? '',
+                    canCreate: true,
+                    isOwner: _currentTreeMeta?.creatorId ==
+                        _authService.currentUserId,
+                    circleService: _circleService,
+                    treeService: _familyTreeService,
+                  );
+                  if (changed == true && mounted) {
+                    await _loadAudienceCircles();
+                    sheetSetState?.call(() {});
+                  }
+                },
         ),
         const SizedBox(height: 16),
         _buildBranchAudienceSection(sheetSetState: sheetSetState),

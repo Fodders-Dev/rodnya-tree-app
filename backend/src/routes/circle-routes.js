@@ -86,13 +86,20 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
       circleId: req.params.circleId,
       name: req.body?.name,
       description: req.body?.description,
+      actorUserId: req.auth.user.id,
     });
     if (updated === null) {
       res.status(404).json({message: "Круг не найден"});
       return;
     }
-    if (updated === false) {
+    if (updated === false || updated?.error === "SYSTEM_CIRCLE") {
       res.status(403).json({message: "Системный круг нельзя изменить"});
+      return;
+    }
+    if (updated?.error === "FORBIDDEN") {
+      res.status(403).json({
+        message: "Изменять круг может только его создатель или владелец семьи",
+      });
       return;
     }
 
@@ -117,13 +124,20 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
           ? req.body.identityIds
           : [],
         personIds: Array.isArray(req.body?.personIds) ? req.body.personIds : [],
+        actorUserId: req.auth.user.id,
       });
       if (updated === null) {
         res.status(404).json({message: "Круг не найден"});
         return;
       }
-      if (updated === false) {
+      if (updated === false || updated?.error === "SYSTEM_CIRCLE") {
         res.status(403).json({message: "Состав системного круга нельзя изменить"});
+        return;
+      }
+      if (updated?.error === "FORBIDDEN") {
+        res.status(403).json({
+          message: "Изменять состав круга может только его создатель или владелец семьи",
+        });
         return;
       }
 
@@ -164,13 +178,20 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
       const deleted = await store.deleteCircle({
         treeId: tree.id,
         circleId: req.params.circleId,
+        actorUserId: req.auth.user.id,
       });
       if (deleted === null) {
         res.status(404).json({message: "Круг не найден"});
         return;
       }
-      if (deleted === false) {
+      if (deleted === false || deleted?.error === "SYSTEM_CIRCLE") {
         res.status(403).json({message: "Системный круг нельзя удалить"});
+        return;
+      }
+      if (deleted?.error === "FORBIDDEN") {
+        res.status(403).json({
+          message: "Удалять круг может только его создатель или владелец семьи",
+        });
         return;
       }
 
