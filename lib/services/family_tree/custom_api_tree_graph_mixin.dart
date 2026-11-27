@@ -403,6 +403,21 @@ mixin _CustomApiTreeGraphMixin on _CustomApiFamilyTreeHost {
         .toList(growable: false);
   }
 
+  @override
+  Future<EditGrant> relinquishMyEditGrant({required String grantId}) async {
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/me/edit-grants/$grantId',
+    );
+    final raw = response['grant'];
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Ожидался объект grant в ответе на DELETE my grant',
+      );
+    }
+    return EditGrant.fromJson(raw);
+  }
+
   // ── Phase 4 chunk 1: extended network slice ────────────────────
 
   @override

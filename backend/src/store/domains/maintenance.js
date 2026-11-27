@@ -28,6 +28,8 @@ module.exports = {
       notificationsUnread: 0,
       treeChangeDetailsStripped: 0,
       storyRequestsTerminal: 0,
+      storiesExpiredArchive: 0,
+      storyReactionsOrphan: 0,
     };
     const parseTs = (value) => {
       const t = value ? Date.parse(value) : NaN;
@@ -190,6 +192,40 @@ module.exports = {
       counts.storyRequestsTerminal = remove.size;
       if (!dryRun && remove.size) {
         db.storyRequests = db.storyRequests.filter((r) => !remove.has(r));
+      }
+    }
+
+    // ── db.stories & db.storyReactions: retain expired stories for author archive
+    //   up to 365d past expiresAt, and clean orphan reactions.
+    const storiesArchiveMs =
+      Math.max(0, Number(retention.storiesArchiveDays ?? 365)) * DAY;
+    if (storiesArchiveMs > 0 && Array.isArray(db.stories) && db.stories.length) {
+      const remove = new Set();
+      for (const story of db.stories) {
+        const expTs = parseTs(story.expiresAt);
+        if (expTs !== null && nowTs - expTs > storiesArchiveMs) {
+          remove.add(story);
+        }
+      }
+      counts.storiesExpiredArchive = remove.size;
+      if (!dryRun && remove.size) {
+        db.stories = db.stories.filter((s) => !remove.has(s));
+      }
+    }
+    if (Array.isArray(db.storyReactions) && db.storyReactions.length) {
+      const activeStoryIds = new Set(
+        (Array.isArray(db.stories) ? db.stories : [])
+          .map((s) => String(s?.id || "").trim())
+          .filter(Boolean),
+      );
+      const orphanReactions = db.storyReactions.filter(
+        (r) => !activeStoryIds.has(String(r?.storyId || "").trim()),
+      );
+      counts.storyReactionsOrphan = orphanReactions.length;
+      if (!dryRun && orphanReactions.length > 0) {
+        db.storyReactions = db.storyReactions.filter((r) =>
+          activeStoryIds.has(String(r?.storyId || "").trim()),
+        );
       }
     }
 

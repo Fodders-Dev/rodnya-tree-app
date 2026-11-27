@@ -68,16 +68,18 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
   String? _loadError;
   bool _textMode = false;
   final TextEditingController _textController = TextEditingController();
+  final TextEditingController _transcriptController = TextEditingController();
   final TextEditingController _photoCaptionController = TextEditingController();
   bool _submitting = false;
+  bool _uploadingAudio = false;
   String? _submitError;
   bool _notAddressee = false;
-  String? _pendingUploadedUrl;
-  String? _pendingKind;
-  int? _pendingDurationSec;
-  String? _pendingPhotoCaption;
+  String? _audioMediaUrl;
+  int? _audioDurationSec;
   XFile? _pickedPhotoFile;
   Uint8List? _pickedPhotoBytes;
+  String? _uploadedPhotoUrl;
+  StoryRequestAnswerInput? _pendingRetryInput;
 
   @override
   void initState() {
@@ -90,9 +92,21 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
   void dispose() {
     _textController.removeListener(_onTextChanged);
     _textController.dispose();
+    _transcriptController.dispose();
     _photoCaptionController.dispose();
     super.dispose();
   }
+
+  bool get _hasAnyDraft =>
+      _audioMediaUrl != null ||
+      _textController.text.trim().isNotEmpty ||
+      _pickedPhotoBytes != null;
+
+  bool get _hasSubmittableDraft =>
+      _audioMediaUrl != null ||
+      _textController.text.trim().isNotEmpty ||
+      _pickedPhotoBytes != null ||
+      _uploadedPhotoUrl != null;
 
   void _onTextChanged() {
     if (mounted) setState(() {});
@@ -208,10 +222,10 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       setState(() {
         _request = updated;
         _submitting = false;
-        _pendingUploadedUrl = null;
-        _pendingKind = null;
-        _pendingDurationSec = null;
-        _pendingPhotoCaption = null;
+        _pendingRetryInput = null;
+        _audioMediaUrl = null;
+        _audioDurationSec = null;
+        _uploadedPhotoUrl = null;
         _pickedPhotoFile = null;
         _pickedPhotoBytes = null;
         _state = _ScreenState.thankYou;
@@ -221,10 +235,10 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       if (e.statusCode == 409 || e.code == 'NOT_PENDING') {
         setState(() {
           _submitting = false;
-          _pendingUploadedUrl = null;
-          _pendingKind = null;
-          _pendingDurationSec = null;
-          _pendingPhotoCaption = null;
+          _pendingRetryInput = null;
+          _audioMediaUrl = null;
+          _audioDurationSec = null;
+          _uploadedPhotoUrl = null;
           _pickedPhotoFile = null;
           _pickedPhotoBytes = null;
           _state = _ScreenState.terminal;
@@ -233,39 +247,23 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
       }
       setState(() {
         _submitting = false;
+        _pendingRetryInput = input;
         _submitError = e.message;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _submitting = false;
+        _pendingRetryInput = input;
         _submitError = 'Не удалось отправить ответ. Попробуйте ещё раз.';
       });
     }
   }
 
   Future<void> _retryPendingUploadSubmit() async {
-    final url = _pendingUploadedUrl;
-    final kind = _pendingKind;
-    if (url == null || kind == null) return;
-    if (kind == 'audio') {
-      await _submitAnswer(
-        StoryRequestAnswerInput.audio(
-          mediaUrl: url,
-          durationSec: _pendingDurationSec ?? 1,
-        ),
-      );
-    } else if (kind == 'photo') {
-      _pendingUploadedUrl = url;
-      _pendingKind = 'photo';
-      _pendingDurationSec = null;
-      await _submitAnswer(
-        StoryRequestAnswerInput.photo(
-          mediaUrl: url,
-          caption: _pendingPhotoCaption,
-        ),
-      );
-    }
+    final retryInput = _pendingRetryInput;
+    if (retryInput == null) return;
+    await _submitAnswer(retryInput);
   }
 
   Future<void> _recordAudio() async {
@@ -277,45 +275,60 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
             );
     final result = await record(context);
     if (result == null || !mounted) return;
+    final service = _service();
     final storage = _storage();
-    if (storage == null) {
+    if (service == null && storage == null) {
       _snack('Загрузка записи недоступна');
       return;
     }
     setState(() {
-      _submitting = true;
+      _uploadingAudio = true;
       _submitError = null;
     });
     String? url;
+    String? transcript;
     try {
       final bytes = await result.file.readAsBytes();
-      final ts = DateTime.now().millisecondsSinceEpoch;
-      url = await storage.uploadBytes(
-        bucket: 'story-request-audio',
-        path: '${widget.requestId}/${ts}_${result.file.name}',
-        fileBytes: bytes,
-        fileOptions: FileOptions(contentType: result.mimeType),
-      );
+      if (service != null) {
+        final uploaded = await service.uploadStoryRequestMedia(
+          requestId: widget.requestId,
+          kind: 'audio',
+          bytes: bytes,
+          contentType: result.mimeType,
+        );
+        if (uploaded != null) {
+          url = uploaded.url;
+          transcript = uploaded.transcript;
+        }
+      }
+      if ((url == null || url.isEmpty) && storage != null) {
+        final ts = DateTime.now().millisecondsSinceEpoch;
+        url = await storage.uploadBytes(
+          bucket: 'story-request-audio',
+          path: '${widget.requestId}/${ts}_${result.file.name}',
+          fileBytes: bytes,
+          fileOptions: FileOptions(contentType: result.mimeType),
+        );
+      }
     } catch (_) {
       url = null;
     }
+    if (!mounted) return;
     if (url == null || url.isEmpty) {
-      if (!mounted) return;
       setState(() {
-        _submitting = false;
+        _uploadingAudio = false;
         _submitError = 'Не удалось сохранить запись. Попробуйте ещё раз.';
       });
       return;
     }
-    _pendingUploadedUrl = url;
-    _pendingKind = 'audio';
-    _pendingDurationSec = result.durationSec;
-    await _submitAnswer(
-      StoryRequestAnswerInput.audio(
-        mediaUrl: url,
-        durationSec: result.durationSec,
-      ),
-    );
+    setState(() {
+      _uploadingAudio = false;
+      _audioMediaUrl = url;
+      _audioDurationSec = result.durationSec;
+      if (transcript != null && transcript.isNotEmpty) {
+        _transcriptController.text = transcript;
+      }
+    });
   }
 
   Future<XFile?> _pickImage(ImageSource source) {
@@ -371,50 +384,102 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
     }
     if (file == null || bytes == null || !mounted) return;
     setState(() {
-      _textMode = false;
       _submitError = null;
       _pickedPhotoFile = file;
       _pickedPhotoBytes = bytes;
+      _uploadedPhotoUrl = null;
     });
   }
 
-  Future<void> _submitPickedPhoto() async {
-    final file = _pickedPhotoFile;
-    if (file == null) return;
+  Future<void> _submitCombinedAnswer() async {
+    if (!_hasSubmittableDraft || _submitting || _uploadingAudio) return;
+    final service = _service();
     final storage = _storage();
-    if (storage == null) {
-      _snack('Загрузка фото недоступна');
-      return;
-    }
-    setState(() {
-      _submitting = true;
-      _submitError = null;
-    });
-    String? url;
-    try {
-      url = await storage.uploadImage(file, 'story-request-photos');
-    } catch (_) {
-      url = null;
-    }
-    if (url == null || url.isEmpty) {
-      if (!mounted) return;
+
+    String? photoUrl = _uploadedPhotoUrl;
+    if (photoUrl == null && _pickedPhotoFile != null) {
+      if (service == null && storage == null) {
+        _snack('Загрузка фото недоступна');
+        return;
+      }
       setState(() {
-        _submitting = false;
-        _submitError = 'Не удалось загрузить фото. Попробуйте ещё раз.';
+        _submitting = true;
+        _submitError = null;
       });
-      return;
+      try {
+        if (service != null && _pickedPhotoBytes != null) {
+          final mime = _pickedPhotoFile!.mimeType?.trim();
+          final uploaded = await service.uploadStoryRequestMedia(
+            requestId: widget.requestId,
+            kind: 'photo',
+            bytes: _pickedPhotoBytes!,
+            contentType: mime != null && mime.isNotEmpty ? mime : 'image/jpeg',
+          );
+          photoUrl = uploaded?.url;
+        }
+        if ((photoUrl == null || photoUrl.isEmpty) && storage != null) {
+          photoUrl = await storage.uploadImage(
+            _pickedPhotoFile!,
+            'story-request-photos',
+          );
+        }
+      } catch (_) {
+        photoUrl = null;
+      }
+      if (!mounted) return;
+      if (photoUrl == null || photoUrl.isEmpty) {
+        setState(() {
+          _submitting = false;
+          _submitError = 'Не удалось загрузить фото. Попробуйте ещё раз.';
+        });
+        return;
+      }
+      _uploadedPhotoUrl = photoUrl;
     }
-    final caption = _photoCaptionController.text.trim();
-    _pendingUploadedUrl = url;
-    _pendingKind = 'photo';
-    _pendingDurationSec = null;
-    _pendingPhotoCaption = caption.isEmpty ? null : caption;
-    await _submitAnswer(
-      StoryRequestAnswerInput.photo(
-        mediaUrl: url,
-        caption: _pendingPhotoCaption,
-      ),
-    );
+
+    final cleanText = _textController.text.trim();
+    final cleanCaption = _photoCaptionController.text.trim();
+    final cleanTranscript = _transcriptController.text.trim();
+    final hasAudio = _audioMediaUrl != null;
+    final hasText = cleanText.isNotEmpty;
+    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
+    final partCount =
+        (hasAudio ? 1 : 0) + (hasText ? 1 : 0) + (hasPhoto ? 1 : 0);
+    if (partCount == 0) return;
+
+    late final StoryRequestAnswerInput input;
+    if (partCount >= 2) {
+      input = StoryRequestAnswerInput.combined(
+        audio: hasAudio
+            ? StoryAudioPart(
+                mediaUrl: _audioMediaUrl!,
+                durationSec: _audioDurationSec,
+                transcript: cleanTranscript.isEmpty ? null : cleanTranscript,
+              )
+            : null,
+        text: hasText ? cleanText : null,
+        photo: hasPhoto
+            ? StoryPhotoPart(
+                mediaUrl: photoUrl,
+                caption: cleanCaption.isEmpty ? null : cleanCaption,
+              )
+            : null,
+      );
+    } else if (hasAudio) {
+      input = StoryRequestAnswerInput.audio(
+        mediaUrl: _audioMediaUrl!,
+        durationSec: _audioDurationSec ?? 1,
+        transcript: cleanTranscript.isEmpty ? null : cleanTranscript,
+      );
+    } else if (hasText) {
+      input = StoryRequestAnswerInput.text(cleanText);
+    } else {
+      input = StoryRequestAnswerInput.photo(
+        mediaUrl: photoUrl!,
+        caption: cleanCaption.isEmpty ? null : cleanCaption,
+      );
+    }
+    await _submitAnswer(input);
   }
 
   Future<void> _confirmDecline() async {
@@ -681,16 +746,15 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
                 ),
               ),
               const SizedBox(height: 26),
-              if (_pickedPhotoBytes != null)
-                _buildPhotoPreviewForm(theme)
-              else if (!_textMode) ...[
+              if (!_hasAnyDraft && !_textMode) ...[
                 Material(
                   color: tokens.accent,
                   shape: const CircleBorder(),
                   elevation: 2,
                   child: InkWell(
                     key: const Key('story-answer-mic'),
-                    onTap: _submitting ? null : _recordAudio,
+                    onTap:
+                        (_submitting || _uploadingAudio) ? null : _recordAudio,
                     customBorder: const CircleBorder(),
                     child: const SizedBox(
                       width: 72,
@@ -732,13 +796,13 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
                   ),
                 ),
               ] else
-                _buildTextForm(theme),
+                _buildCombinedComposer(theme),
               const SizedBox(height: 12),
-              if (_submitting && !_textMode) ...[
+              if (_submitting || _uploadingAudio) ...[
                 const LinearProgressIndicator(),
                 const SizedBox(height: 8),
                 Text(
-                  'Сохраняем ответ…',
+                  _uploadingAudio ? 'Загружаем запись…' : 'Сохраняем ответ…',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -756,7 +820,7 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(color: theme.colorScheme.error),
                       ),
-                      if (_pendingUploadedUrl != null && !_submitting) ...[
+                      if (_pendingRetryInput != null && !_submitting) ...[
                         const SizedBox(height: 8),
                         FilledButton.tonal(
                           key: const Key('story-answer-retry-submit'),
@@ -791,113 +855,154 @@ class _StoryRequestAnswerScreenState extends State<StoryRequestAnswerScreen> {
     );
   }
 
-  Widget _buildPhotoPreviewForm(ThemeData theme) {
+  Widget _buildCombinedComposer(ThemeData theme) {
+    final busy = _submitting || _uploadingAudio;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Image.memory(
-            _pickedPhotoBytes!,
-            height: 220,
-            width: double.infinity,
-            fit: BoxFit.cover,
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          key: const Key('story-answer-photo-caption'),
-          controller: _photoCaptionController,
-          maxLength: 300,
-          decoration: const InputDecoration(
-            hintText: 'Подпись к фото (необязательно)…',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('story-answer-photo-cancel'),
-                onPressed: _submitting
-                    ? null
-                    : () => setState(() {
-                          _pickedPhotoFile = null;
-                          _pickedPhotoBytes = null;
-                          _photoCaptionController.clear();
-                        }),
-                child: const Text('Другое'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                key: const Key('story-answer-photo-submit'),
-                onPressed: _submitting ? null : _submitPickedPhoto,
-                child: _submitting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Сохранить'),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTextForm(ThemeData theme) {
-    final hasText = _textController.text.trim().isNotEmpty;
-    return Column(
-      children: [
-        TextField(
-          key: const Key('story-answer-text-field'),
-          controller: _textController,
-          autofocus: true,
-          minLines: 4,
-          maxLines: 8,
-          style: const TextStyle(fontSize: 16, height: 1.4),
-          decoration: const InputDecoration(
-            hintText: 'Напишите здесь свою историю…',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('story-answer-text-cancel'),
-                onPressed: _submitting
-                    ? null
-                    : () => setState(() => _textMode = false),
-                child: const Text('Назад'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                key: const Key('story-answer-text-submit'),
-                onPressed: (_submitting || !hasText)
-                    ? null
-                    : () => _submitAnswer(
-                          StoryRequestAnswerInput.text(
-                            _textController.text.trim(),
+        if (_audioMediaUrl != null) ...[
+          Card(
+            key: const Key('story-answer-audio-card'),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.graphic_eq_rounded),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Голосовой ответ · ${_audioDurationSec ?? 0} сек',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                child: _submitting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Сохранить'),
+                      ),
+                      TextButton(
+                        key: const Key('story-answer-audio-remove'),
+                        onPressed: busy
+                            ? null
+                            : () => setState(() {
+                                  _audioMediaUrl = null;
+                                  _audioDurationSec = null;
+                                  _transcriptController.clear();
+                                }),
+                        child: const Text('Удалить'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    key: const Key('story-answer-transcript-field'),
+                    controller: _transcriptController,
+                    minLines: 2,
+                    maxLines: 5,
+                    decoration: const InputDecoration(
+                      labelText: 'Расшифровка (можно поправить)',
+                      hintText: 'Добавьте или уточните текст записи…',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
               ),
             ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (_textMode || _textController.text.isNotEmpty) ...[
+          TextField(
+            key: const Key('story-answer-text-field'),
+            controller: _textController,
+            autofocus: _audioMediaUrl == null && _pickedPhotoBytes == null,
+            minLines: 3,
+            maxLines: 8,
+            style: const TextStyle(fontSize: 16, height: 1.4),
+            decoration: const InputDecoration(
+              labelText: 'Текст истории',
+              hintText: 'Напишите здесь свою историю…',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (_pickedPhotoBytes != null) ...[
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.memory(
+              _pickedPhotoBytes!,
+              height: 200,
+              width: double.infinity,
+              fit: BoxFit.cover,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('story-answer-photo-caption'),
+            controller: _photoCaptionController,
+            maxLength: 300,
+            decoration: const InputDecoration(
+              hintText: 'Подпись к фото (необязательно)…',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              key: const Key('story-answer-photo-cancel'),
+              onPressed: busy
+                  ? null
+                  : () => setState(() {
+                        _pickedPhotoFile = null;
+                        _pickedPhotoBytes = null;
+                        _uploadedPhotoUrl = null;
+                        _photoCaptionController.clear();
+                      }),
+              child: const Text('Убрать фото'),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (_audioMediaUrl == null)
+              OutlinedButton.icon(
+                key: const Key('story-answer-mic'),
+                onPressed: busy ? null : _recordAudio,
+                icon: const Icon(Icons.mic_rounded, size: 18),
+                label: const Text('Добавить голос'),
+              ),
+            if (!_textMode && _textController.text.isEmpty)
+              OutlinedButton.icon(
+                key: const Key('story-answer-text-mode'),
+                onPressed: busy ? null : () => setState(() => _textMode = true),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: const Text('Добавить текст'),
+              ),
+            if (_pickedPhotoBytes == null)
+              OutlinedButton.icon(
+                key: const Key('story-answer-photo'),
+                onPressed: busy ? null : _addPhoto,
+                icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                label: const Text('Добавить фото'),
+              ),
           ],
+        ),
+        const SizedBox(height: 14),
+        FilledButton(
+          key: const Key('story-answer-submit'),
+          onPressed:
+              (!busy && _hasSubmittableDraft) ? _submitCombinedAnswer : null,
+          child: busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Отправить ответ'),
         ),
       ],
     );

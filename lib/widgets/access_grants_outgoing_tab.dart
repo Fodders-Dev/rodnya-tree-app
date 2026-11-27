@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../backend/interfaces/graph_person_access_capable_family_tree_service.dart';
 import '../backend/models/edit_grant.dart';
+import 'grant_edit_access_sheet.dart';
 
 /// Phase 3.4 chunk 3 (PHASE-3.4-UI-PROPOSAL.md §2.3): outgoing-таб
 /// экрана «Доступы». Список grants выписанных текущим юзером —
@@ -156,7 +157,9 @@ class _AccessGrantsOutgoingTabState extends State<AccessGrantsOutgoingTab> {
             physics: const AlwaysScrollableScrollPhysics(),
             child: ConstrainedBox(
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: const Center(child: _EmptyOutgoingState()),
+              child: Center(
+                child: _EmptyOutgoingState(onGrantAccess: _openGrantSheet),
+              ),
             ),
           ),
         ),
@@ -168,9 +171,23 @@ class _AccessGrantsOutgoingTabState extends State<AccessGrantsOutgoingTab> {
       onRefresh: _load,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: groups.length,
+        itemCount: groups.length + 1,
         itemBuilder: (context, index) {
-          final group = groups[index];
+          if (index == 0) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.tonalIcon(
+                  key: const Key('outgoing-add-grant-btn'),
+                  onPressed: _openGrantSheet,
+                  icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                  label: const Text('Выдать доступ'),
+                ),
+              ),
+            );
+          }
+          final group = groups[index - 1];
           return _GraphPersonGroupCard(
             graphPersonPreview: group.preview,
             graphPersonId: group.graphPersonId,
@@ -181,6 +198,17 @@ class _AccessGrantsOutgoingTabState extends State<AccessGrantsOutgoingTab> {
         },
       ),
     );
+  }
+
+  Future<void> _openGrantSheet() async {
+    final changed = await showGrantEditAccessSheet(
+      context,
+      accessService: widget.accessService,
+      viewerUserId: widget.viewerUserId,
+    );
+    if (changed == true && mounted) {
+      await _load();
+    }
   }
 
   static List<_GraphPersonGroup> _groupByGraphPerson(List<EditGrant> grants) {
@@ -323,8 +351,7 @@ class _GrantRow extends StatelessWidget {
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: color,
-                    decoration:
-                        isRevoked ? TextDecoration.lineThrough : null,
+                    decoration: isRevoked ? TextDecoration.lineThrough : null,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -444,7 +471,9 @@ class _Avatar extends StatelessWidget {
 }
 
 class _EmptyOutgoingState extends StatelessWidget {
-  const _EmptyOutgoingState();
+  const _EmptyOutgoingState({required this.onGrantAccess});
+
+  final VoidCallback onGrantAccess;
 
   @override
   Widget build(BuildContext context) {
@@ -470,6 +499,13 @@ class _EmptyOutgoingState extends StatelessWidget {
             'удалять карточку, выписанные права появятся здесь.',
             style: theme.textTheme.bodyMedium,
             textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 14),
+          FilledButton.tonalIcon(
+            key: const Key('outgoing-empty-add-grant-btn'),
+            onPressed: onGrantAccess,
+            icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+            label: const Text('Выдать доступ'),
           ),
         ],
       ),

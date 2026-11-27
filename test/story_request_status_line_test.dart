@@ -2,6 +2,8 @@
 // StoryRequestStatusLine — the initiator-only «Ждём ответа: {имя} ·
 // Отозвать» line above «Семейные истории».
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
@@ -24,6 +26,8 @@ class _FakeService implements StoryRequestCapableFamilyTreeService {
   _FakeService(this._issued);
   final List<StoryRequest> _issued;
   String? revokedId;
+  String? updatedId;
+  String? updatedQuestionText;
 
   @override
   Future<List<StoryRequest>> listStoryRequests({
@@ -79,6 +83,45 @@ class _FakeService implements StoryRequestCapableFamilyTreeService {
   @override
   Future<StoryRequest?> declineStoryRequest(
           {required String requestId}) async =>
+      null;
+
+  @override
+  Future<StoryRequest?> updateStoryRequest({
+    required String requestId,
+    String? questionText,
+    String? targetName,
+  }) async {
+    updatedId = requestId;
+    updatedQuestionText = questionText;
+    final target = _issued.firstWhere((r) => r.id == requestId);
+    return StoryRequest(
+      id: target.id,
+      treeId: target.treeId,
+      personId: target.personId,
+      requesterUserId: target.requesterUserId,
+      targetUserId: target.targetUserId,
+      targetName: targetName ?? target.targetName,
+      deliveryMode: target.deliveryMode,
+      shareUrl: target.shareUrl,
+      question: StoryRequestQuestion(
+        text: questionText ?? target.question.text,
+        themeKey: target.question.themeKey,
+        sourceQuestionId: target.question.sourceQuestionId,
+      ),
+      status: target.status,
+      createdAt: target.createdAt,
+      expiresAt: target.expiresAt,
+      target: target.target,
+    );
+  }
+
+  @override
+  Future<StoryUploadedMedia?> uploadStoryRequestMedia({
+    required String requestId,
+    required String kind,
+    required Uint8List bytes,
+    required String contentType,
+  }) async =>
       null;
 }
 
@@ -200,5 +243,43 @@ void main() {
     expect(find.text('Ждём ответа по ссылке: Бабушка Лида'), findsOneWidget);
     expect(
         find.byKey(const Key('story-request-copy-sreq-pub')), findsOneWidget);
+  });
+
+  testWidgets('renders question snippet and «Изменить» updates text',
+      (tester) async {
+    final service = _FakeService([_pending(id: 'sreq-1', personId: 'p-1')]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StoryRequestStatusLine(
+            personId: 'p-1',
+            serviceOverride: service,
+            authServiceOverride: _FakeAuth('u-me'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('story-request-question-sreq-1')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Q'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('story-request-edit-sreq-1')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('story-request-edit-question-field')),
+      'Новый текст вопроса',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('story-request-edit-save')));
+    await tester.pumpAndSettle();
+
+    expect(service.updatedId, 'sreq-1');
+    expect(service.updatedQuestionText, 'Новый текст вопроса');
+    expect(find.textContaining('Новый текст вопроса'), findsOneWidget);
   });
 }

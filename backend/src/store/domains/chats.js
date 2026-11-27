@@ -36,6 +36,77 @@ module.exports = {
     return db.chats.find((entry) => entry.id === chatId) || null;
   },
 
+  _getChatMemberPrefs(chat, userId) {
+    const normalizedUserId = String(userId || "").trim();
+    const raw =
+      normalizedUserId &&
+      chat?.memberPrefs &&
+      typeof chat.memberPrefs === "object"
+        ? chat.memberPrefs[normalizedUserId] || {}
+        : {};
+    const notificationLevel = ["all", "silent", "muted"].includes(
+      raw.notificationLevel,
+    )
+      ? raw.notificationLevel
+      : "all";
+    return {
+      isArchived: Boolean(raw.isArchived),
+      notificationLevel,
+      hiddenAt: normalizeOptionalIsoTimestamp(raw.hiddenAt) || null,
+      clearedBefore: normalizeOptionalIsoTimestamp(raw.clearedBefore) || null,
+    };
+  },
+
+  _materializeStoredChat(db, chat) {
+    const existing = this._findStoredChat(db, chat.id);
+    if (existing) {
+      return existing;
+    }
+    const materialized = createChatRecord({
+      id: chat.id,
+      type: chat.type || "direct",
+      participantIds: chat.participantIds || [],
+      title: chat.title || null,
+      photoUrl: chat.photoUrl || null,
+      createdBy: chat.createdBy || null,
+      treeId: chat.treeId || null,
+      branchRootPersonIds: chat.branchRootPersonIds || [],
+      memberPrefs: chat.memberPrefs || {},
+    });
+    if (chat.createdAt) {
+      materialized.createdAt = chat.createdAt;
+    }
+    if (chat.updatedAt) {
+      materialized.updatedAt = chat.updatedAt;
+    }
+    db.chats.push(materialized);
+    return materialized;
+  },
+
+  _deleteChatArtifactsFromDb(db, relatedChatIds) {
+    const deletedMessageIds = new Set();
+    db.messages = (Array.isArray(db.messages) ? db.messages : []).filter((entry) => {
+      if (relatedChatIds.has(String(entry?.chatId || "").trim())) {
+        if (entry?.id) {
+          deletedMessageIds.add(String(entry.id).trim());
+        }
+        return false;
+      }
+      return true;
+    });
+    if (deletedMessageIds.size > 0) {
+      db.messageReactions = ensureMessageReactions(db).filter(
+        (entry) => !deletedMessageIds.has(String(entry?.messageId || "").trim()),
+      );
+    }
+    db.chatDrafts = (Array.isArray(db.chatDrafts) ? db.chatDrafts : []).filter(
+      (entry) => !relatedChatIds.has(String(entry?.chatId || "").trim()),
+    );
+    db.chatPins = ensureChatPins(db).filter(
+      (entry) => !relatedChatIds.has(String(entry?.chatId || "").trim()),
+    );
+  },
+
   _resolveChat(db, chatId) {
     const normalizedChatId = String(chatId || "").trim();
     const storedChat = this._findStoredChat(db, normalizedChatId);
@@ -516,11 +587,7 @@ module.exports = {
       chat.title = normalizedTitle;
     }
     if (hasPhotoPatch) {
-      const normalizedPhotoUrl = normalizeNullableString(photoUrl);
-      if (!normalizedPhotoUrl) {
-        return undefined;
-      }
-      chat.photoUrl = normalizedPhotoUrl;
+      chat.photoUrl = normalizeNullableString(photoUrl);
     }
 
     chat.updatedAt = nowIso();
@@ -528,39 +595,199 @@ module.exports = {
     return structuredClone(chat);
   },
 
-  // G2: самовыход из группового чата. Отдельный метод (не reuse
-  // removeGroupParticipant) намеренно: у remove есть пол в 3 участника
-  // — нельзя ужать группу ниже жизнеспособной. Но ПОКИНУТЬ юзер обязан
-  // мочь всегда (Telegram-паритет), поэтому здесь пола нет: убираем
-  // звонящего из любого размера. Возвращает: null — чат не найден,
-  // false — это не group-чат, undefined — звонящего нет в участниках,
-  // иначе обновлённый чат.
-  async leaveGroupChat(chatId, userId) {
-    const db = await this._read();
-    const chat = this._findStoredChat(db, chatId);
-    if (!chat) {
+  async updateChatPreferences(chatId, userId, {isArchived, notificationLevel} = {}) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
       return null;
     }
-    if (chat.type !== "group") {
-      return false;
+    if (notificationLevel !== undefined) {
+      const normalizedLevel = String(notificationLevel || "").trim();
+      if (!["all", "silent", "muted"].includes(normalizedLevel)) {
+        throw new Error("INVALID_NOTIFICATION_LEVEL");
+      }
     }
 
+    return this._mutate((db, skip) => {
+      const chat = this._resolveChat(db, chatId);
+      if (
+        !chat ||
+        !normalizeParticipantIds(chat.participantIds).includes(normalizedUserId)
+      ) {
+        return skip(null);
+      }
+
+      const storedChat = this._materializeStoredChat(db, chat);
+      const prev = this._getChatMemberPrefs(storedChat, normalizedUserId);
+      const nextLevel =
+        notificationLevel !== undefined
+          ? String(notificationLevel || "").trim()
+          : prev.notificationLevel;
+      const nextArchived =
+        isArchived !== undefined ? Boolean(isArchived) : prev.isArchived;
+
+      storedChat.memberPrefs =
+        storedChat.memberPrefs && typeof storedChat.memberPrefs === "object"
+          ? storedChat.memberPrefs
+          : {};
+      storedChat.memberPrefs[normalizedUserId] = {
+        ...prev,
+        isArchived: nextArchived,
+        notificationLevel: nextLevel,
+        updatedAt: nowIso(),
+      };
+
+      return {
+        chatId: storedChat.id,
+        isArchived: nextArchived,
+        notificationLevel: nextLevel,
+        chat: structuredClone(storedChat),
+      };
+    });
+  },
+
+  async deleteOrHideChatForUser(chatId, userId, {forAll = false} = {}) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+
+    return this._mutate((db, skip) => {
+      const chat = this._resolveChat(db, chatId);
+      if (!chat) {
+        return skip(null);
+      }
+      const participants = normalizeParticipantIds(chat.participantIds);
+      if (!participants.includes(normalizedUserId)) {
+        return skip(null);
+      }
+
+      if (chat.type === "branch") {
+        return skip({error: "BRANCH_DELETE_UNSUPPORTED"});
+      }
+
+      if (chat.type === "direct") {
+        const storedChat = this._materializeStoredChat(db, chat);
+        const prev = this._getChatMemberPrefs(storedChat, normalizedUserId);
+        const now = nowIso();
+        storedChat.memberPrefs =
+          storedChat.memberPrefs && typeof storedChat.memberPrefs === "object"
+            ? storedChat.memberPrefs
+            : {};
+        storedChat.memberPrefs[normalizedUserId] = {
+          ...prev,
+          isArchived: false,
+          hiddenAt: now,
+          clearedBefore: now,
+          updatedAt: now,
+        };
+        const relatedIds = this._resolveEquivalentChatIds(chatId, storedChat);
+        db.chatDrafts = (Array.isArray(db.chatDrafts) ? db.chatDrafts : []).filter(
+          (entry) =>
+            !(
+              entry.userId === normalizedUserId &&
+              relatedIds.has(String(entry?.chatId || "").trim())
+            ),
+        );
+        return {
+          action: "hidden",
+          chatId: storedChat.id,
+          chat: structuredClone(storedChat),
+        };
+      }
+
+      if (forAll && chat.createdBy && chat.createdBy !== normalizedUserId) {
+        return skip({error: "FORBIDDEN_NOT_CREATOR"});
+      }
+
+      const shouldHardDelete = Boolean(forAll) || participants.length <= 1;
+      const relatedIds = this._resolveEquivalentChatIds(chatId, chat);
+      if (shouldHardDelete) {
+        db.chats = db.chats.filter((entry) => entry.id !== chat.id);
+        this._deleteChatArtifactsFromDb(db, relatedIds);
+        return {
+          action: "deleted",
+          chatId: chat.id,
+          formerParticipantIds: participants,
+        };
+      }
+
+      chat.participantIds = participants.filter((entry) => entry !== normalizedUserId);
+      if (chat.memberPrefs && typeof chat.memberPrefs === "object") {
+        delete chat.memberPrefs[normalizedUserId];
+      }
+      if (chat.createdBy === normalizedUserId && chat.participantIds.length > 0) {
+        chat.createdBy = chat.participantIds[0];
+      }
+      chat.updatedAt = nowIso();
+      db.chatDrafts = (Array.isArray(db.chatDrafts) ? db.chatDrafts : []).filter(
+        (entry) =>
+          !(
+            entry.userId === normalizedUserId &&
+            relatedIds.has(String(entry?.chatId || "").trim())
+          ),
+      );
+      return {
+        action: "left",
+        chatId: chat.id,
+        chat: structuredClone(chat),
+        formerParticipantIds: participants,
+      };
+    });
+  },
+
+  // G2: самовыход из группового чата + передача createdBy и очистка пустых чатов.
+  async leaveGroupChat(chatId, userId) {
     const normalizedUserId = String(userId || "").trim();
     if (!normalizedUserId) {
       return undefined;
     }
 
-    const currentParticipantIds = normalizeParticipantIds(chat.participantIds || []);
-    if (!currentParticipantIds.includes(normalizedUserId)) {
-      return undefined;
-    }
+    return this._mutate((db, skip) => {
+      const chat = this._findStoredChat(db, chatId);
+      if (!chat) {
+        return skip(null);
+      }
+      if (chat.type !== "group") {
+        return skip(false);
+      }
 
-    chat.participantIds = currentParticipantIds.filter((entry) => {
-      return entry !== normalizedUserId;
+      const currentParticipantIds = normalizeParticipantIds(chat.participantIds || []);
+      if (!currentParticipantIds.includes(normalizedUserId)) {
+        return skip(undefined);
+      }
+
+      const relatedIds = this._resolveEquivalentChatIds(chatId, chat);
+      chat.participantIds = currentParticipantIds.filter(
+        (entry) => entry !== normalizedUserId,
+      );
+      if (chat.memberPrefs && typeof chat.memberPrefs === "object") {
+        delete chat.memberPrefs[normalizedUserId];
+      }
+      db.chatDrafts = (Array.isArray(db.chatDrafts) ? db.chatDrafts : []).filter(
+        (entry) =>
+          !(
+            entry.userId === normalizedUserId &&
+            relatedIds.has(String(entry?.chatId || "").trim())
+          ),
+      );
+
+      if (chat.createdBy === normalizedUserId && chat.participantIds.length > 0) {
+        chat.createdBy = chat.participantIds[0];
+      }
+
+      if (chat.participantIds.length === 0) {
+        db.chats = db.chats.filter((entry) => entry.id !== chat.id);
+        this._deleteChatArtifactsFromDb(db, relatedIds);
+        return {
+          ...structuredClone(chat),
+          deleted: true,
+          formerParticipantIds: currentParticipantIds,
+        };
+      }
+
+      chat.updatedAt = nowIso();
+      return structuredClone(chat);
     });
-    chat.updatedAt = nowIso();
-    await this._write(db);
-    return structuredClone(chat);
   },
 
   async createBranchChat({
@@ -648,7 +875,10 @@ module.exports = {
     return structuredClone(chat);
   },
 
-  async listChatMessages(chatId, {limit = null, beforeId = null, afterId = null} = {}) {
+  async listChatMessages(
+    chatId,
+    {limit = null, beforeId = null, afterId = null, clearedBefore = null} = {},
+  ) {
     const db = await this._read();
     const purgedChatIds = this._purgeExpiredMessages(db);
     if (purgedChatIds.size > 0) {
@@ -662,8 +892,20 @@ module.exports = {
       return [];
     }
     const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+    const normalizedClearedBefore = normalizeOptionalIsoTimestamp(clearedBefore);
     const sortedMessages = db.messages
-      .filter((message) => relatedChatIds.has(String(message.chatId || "").trim()))
+      .filter((message) => {
+        if (!relatedChatIds.has(String(message.chatId || "").trim())) {
+          return false;
+        }
+        if (
+          normalizedClearedBefore &&
+          String(message.timestamp || "").localeCompare(normalizedClearedBefore) <= 0
+        ) {
+          return false;
+        }
+        return true;
+      })
       .sort(compareChatMessagesDescending);
 
     const normalizedBeforeId = normalizeNullableString(beforeId);
@@ -749,6 +991,15 @@ module.exports = {
       const expiresAt = normalizeOptionalIsoTimestamp(message?.expiresAt);
       if (expiresAt && expiresAt <= nowIso()) {
         continue;
+      }
+      if (chat) {
+        const prefs = this._getChatMemberPrefs(chat, normalizedUserId);
+        if (
+          prefs.clearedBefore &&
+          String(message?.timestamp || "").localeCompare(prefs.clearedBefore) <= 0
+        ) {
+          continue;
+        }
       }
       const haystack = chatMessageSearchHaystack(message);
       if (!terms.every((term) => haystack.includes(term))) {
@@ -1185,8 +1436,13 @@ module.exports = {
       }
     }
 
+    const prefsByChatId = new Map();
+    const hasPostHideMessageByChatId = new Map();
+
     for (const chat of relatedChats.values()) {
       const participants = normalizeParticipantIds(chat.participantIds);
+      const prefs = this._getChatMemberPrefs(chat, userId);
+      prefsByChatId.set(chat.id, prefs);
       const isGroup = chat.type === "group" || chat.type === "branch";
       const otherUserId = isGroup
         ? ""
@@ -1205,6 +1461,8 @@ module.exports = {
         lastMessageTime: chat.updatedAt || chat.createdAt || "",
         unreadCount: 0,
         lastMessageSenderId: "",
+        isArchived: prefs.isArchived,
+        notificationLevel: prefs.notificationLevel,
       };
 
       if (isGroup) {
@@ -1292,7 +1550,21 @@ module.exports = {
         continue;
       }
 
+      const prefs = prefsByChatId.get(resolvedChatId);
       const messageTimestamp = String(message.timestamp || "").trim();
+      if (
+        prefs?.clearedBefore &&
+        messageTimestamp.localeCompare(prefs.clearedBefore) <= 0
+      ) {
+        continue;
+      }
+      if (
+        !prefs?.hiddenAt ||
+        messageTimestamp.localeCompare(prefs.hiddenAt) > 0
+      ) {
+        hasPostHideMessageByChatId.set(resolvedChatId, true);
+      }
+
       const lastMessageTimestamp = String(preview.lastMessageTime || "").trim();
       if (
         !preview.lastMessage ||
@@ -1310,6 +1582,13 @@ module.exports = {
     }
 
     return Array.from(previews.values())
+      .filter((preview) => {
+        const prefs = prefsByChatId.get(preview.chatId);
+        if (!prefs?.hiddenAt) {
+          return true;
+        }
+        return hasPostHideMessageByChatId.get(preview.chatId) === true;
+      })
       .sort((left, right) =>
         String(right.lastMessageTime || "").localeCompare(
           String(left.lastMessageTime || ""),

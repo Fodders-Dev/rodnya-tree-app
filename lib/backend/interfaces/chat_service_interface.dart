@@ -98,6 +98,18 @@ abstract class ChatServiceInterface {
     throw UnsupportedError('leaveGroup is not supported');
   }
 
+  Future<void> updateChatPreferences({
+    required String chatId,
+    bool? isArchived,
+    String? notificationLevel,
+  }) {
+    throw UnsupportedError('updateChatPreferences is not supported');
+  }
+
+  Future<bool> deleteChat(String chatId, {bool forAll = false}) {
+    throw UnsupportedError('deleteChat is not supported');
+  }
+
   Future<void> editChatMessage({
     required String chatId,
     required String messageId,

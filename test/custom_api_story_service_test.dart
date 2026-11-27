@@ -191,6 +191,36 @@ void main() {
       ),
     );
   });
+
+  test('CustomApiStoryService forwards includeArchive=true query param',
+      () async {
+    Uri? seenUri;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/stories' && request.method == 'GET') {
+        seenUri = request.url;
+        return http.Response(
+          jsonEncode({'stories': const []}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    final authService = await _createAuthService(client);
+    final service = CustomApiStoryService(
+      authService: authService,
+      storageService: _FakeStorageService(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await service.getStories(authorId: 'user-1', includeArchive: true);
+    expect(seenUri?.queryParameters['authorId'], 'user-1');
+    expect(seenUri?.queryParameters['includeArchive'], 'true');
+  });
 }
 
 Future<CustomApiAuthService> _createAuthService(http.Client client) async {

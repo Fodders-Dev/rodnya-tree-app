@@ -402,7 +402,7 @@ function registerChatRoutes(
     }
 
     res.json({
-      chat: mapChatRecord(details.chat),
+      chat: mapChatRecord(details.chat, req.auth.user.id),
       participants: details.participants.map(mapChatParticipant),
       branchRoots: details.branchRoots.map(mapChatBranchRoot),
     });
@@ -719,6 +719,119 @@ function registerChatRoutes(
     },
   );
 
+  app.patch("/v1/chats/:chatId/preferences", requireAuth, async (req, res) => {
+    const chat = await requireChatAccess(req, res, req.params.chatId);
+    if (!chat) {
+      return;
+    }
+
+    const hasArchived = req.body?.isArchived !== undefined;
+    const hasNotificationLevel = req.body?.notificationLevel !== undefined;
+    if (!hasArchived && !hasNotificationLevel) {
+      res.status(400).json({message: "Укажите isArchived или notificationLevel"});
+      return;
+    }
+
+    try {
+      const updated = await store.updateChatPreferences(
+        chat.id,
+        req.auth.user.id,
+        {
+          isArchived: req.body?.isArchived,
+          notificationLevel: req.body?.notificationLevel,
+        },
+      );
+      if (!updated) {
+        res.status(404).json({message: "Чат не найден"});
+        return;
+      }
+
+      const mappedChat = mapChatRecord(updated.chat, req.auth.user.id);
+      realtimeHub?.publishToUser(req.auth.user.id, {
+        type: "chat.updated",
+        chatId: updated.chatId,
+        chat: mappedChat,
+      });
+
+      res.json({
+        chatId: updated.chatId,
+        isArchived: updated.isArchived,
+        notificationLevel: updated.notificationLevel,
+      });
+    } catch (error) {
+      if (error?.message === "INVALID_NOTIFICATION_LEVEL") {
+        res.status(400).json({
+          message: "notificationLevel должен быть 'all', 'silent' или 'muted'",
+        });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/v1/chats/:chatId", requireAuth, async (req, res) => {
+    const chat = await requireChatAccess(req, res, req.params.chatId);
+    if (!chat) {
+      return;
+    }
+    const forAll =
+      String(req.query?.forAll || "").trim().toLowerCase() === "true";
+
+    const outcome = await store.deleteOrHideChatForUser(
+      chat.id,
+      req.auth.user.id,
+      {forAll},
+    );
+    if (!outcome) {
+      res.status(404).json({message: "Чат не найден"});
+      return;
+    }
+    if (outcome.error === "BRANCH_DELETE_UNSUPPORTED") {
+      res.status(400).json({message: "Чат ветки нельзя удалить"});
+      return;
+    }
+    if (outcome.error === "FORBIDDEN_NOT_CREATOR") {
+      res.status(403).json({
+        message: "Удалить групповой чат для всех может только его создатель",
+      });
+      return;
+    }
+
+    if (outcome.action === "hidden") {
+      realtimeHub?.publishToUser(req.auth.user.id, {
+        type: "chat.deleted",
+        chatId: outcome.chatId,
+      });
+    } else if (outcome.action === "deleted") {
+      for (const participantId of outcome.formerParticipantIds || []) {
+        if (!participantId) continue;
+        realtimeHub?.publishToUser(participantId, {
+          type: "chat.deleted",
+          chatId: outcome.chatId,
+        });
+      }
+    } else if (outcome.action === "left") {
+      const details = await store.getChatDetails(outcome.chatId);
+      if (details) {
+        const mappedChat = mapChatRecord(details.chat);
+        for (const participantId of outcome.formerParticipantIds || []) {
+          if (!participantId) continue;
+          realtimeHub?.publishToUser(participantId, {
+            type: "chat.updated",
+            chatId: details.chat.id,
+            chat: mappedChat,
+          });
+        }
+      }
+    }
+
+    res.json({
+      deleted: true,
+      action: outcome.action,
+      chatId: outcome.chatId,
+    });
+  });
+
   // G2: самовыход из группового чата. Участник убирает СЕБЯ — поэтому
   // POST (а не DELETE /participants/:id, который позволяет убрать любого);
   // звонящий берётся из auth, лишний путь-параметр не нужен, и это
@@ -746,6 +859,24 @@ function registerChatRoutes(
     }
     if (!updatedChat) {
       res.status(404).json({message: "Чат не найден"});
+      return;
+    }
+
+    if (updatedChat.deleted === true) {
+      const affectedParticipantIds = new Set([
+        ...(chat.participantIds || []).map((entry) => String(entry || "").trim()),
+        ...(updatedChat.formerParticipantIds || []).map((entry) =>
+          String(entry || "").trim(),
+        ),
+      ]);
+      for (const participantId of affectedParticipantIds) {
+        if (!participantId) continue;
+        realtimeHub?.publishToUser(participantId, {
+          type: "chat.deleted",
+          chatId: resolvedChatId,
+        });
+      }
+      res.json({deleted: true, chatId: resolvedChatId});
       return;
     }
 
@@ -793,15 +924,18 @@ function registerChatRoutes(
       return;
     }
 
+    const clearedBefore =
+      chat?.memberPrefs?.[req.auth.user.id]?.clearedBefore || null;
     const limit = normalizeMessagePageLimit(req.query);
     const page = await store.listChatMessages(resolvedChatId, {
       limit: limit + 1,
       beforeId,
       afterId,
+      clearedBefore,
     });
     const messages = page.slice(0, limit);
     res.json({
-      chat: mapChatRecord(chat),
+      chat: mapChatRecord(chat, req.auth.user.id),
       messages: messages.map(mapChatMessage),
       hasMore: page.length > limit,
     });
@@ -1057,6 +1191,9 @@ function registerChatRoutes(
         // устройстве — пуш не нужен, он уже видел сообщение через WS-доставку
         // выше.
         if (realtimeHub?.isUserActiveInChat?.(recipientId, message.chatId)) {
+          continue;
+        }
+        if (chat?.memberPrefs?.[recipientId]?.notificationLevel === "muted") {
           continue;
         }
         // FIX (латентность): медленный VKPNS-HTTP (AbortSignal.timeout 8с на

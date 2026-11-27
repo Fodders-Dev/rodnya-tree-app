@@ -5,6 +5,7 @@
 // pattern already used throughout custom_api_family_tree_service_test.dart.
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -365,5 +366,106 @@ void main() {
     });
     expect(result?.isPublicLink, isTrue);
     expect(result?.shareUrl, 'https://api.rodnya-tree.ru/story/abc123');
+  });
+
+  test('updateStoryRequest PATCHes questionText and targetName', () async {
+    Map<String, dynamic>? sentBody;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/story-requests/sreq-1' &&
+          request.method == 'PATCH') {
+        sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({'request': _requestJson()}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+    final service = await _buildService(client);
+    final updated = await service.updateStoryRequest(
+      requestId: 'sreq-1',
+      questionText: 'Обновлённый вопрос',
+      targetName: 'Тётя Нина',
+    );
+    expect(sentBody, {
+      'questionText': 'Обновлённый вопрос',
+      'targetName': 'Тётя Нина',
+    });
+    expect(updated?.id, 'sreq-1');
+  });
+
+  test('uploadStoryRequestMedia PUTs raw bytes with ?kind=audio', () async {
+    Uri? seenUri;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/story-requests/sreq-1/media' &&
+          request.method == 'PUT') {
+        seenUri = request.url;
+        return http.Response(
+          jsonEncode({
+            'url': 'https://cdn.example.ru/audio.m4a',
+            'contentType': 'audio/m4a',
+            'transcript': 'Привет',
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+    final service = await _buildService(client);
+    final media = await service.uploadStoryRequestMedia(
+      requestId: 'sreq-1',
+      kind: 'audio',
+      bytes: Uint8List.fromList(const [1, 2, 3]),
+      contentType: 'audio/m4a',
+    );
+    expect(seenUri?.queryParameters['kind'], 'audio');
+    expect(media?.url, 'https://cdn.example.ru/audio.m4a');
+    expect(media?.transcript, 'Привет');
+  });
+
+  test('answerStoryRequest serializes combined audio + text + photo', () async {
+    Map<String, dynamic>? sentBody;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/story-requests/sreq-1/answer' &&
+          request.method == 'POST') {
+        sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({'request': _requestJson(status: 'answered')}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+    final service = await _buildService(client);
+    await service.answerStoryRequest(
+      requestId: 'sreq-1',
+      answer: StoryRequestAnswerInput.combined(
+        audio: const StoryAudioPart(
+          mediaUrl: 'https://cdn.example.ru/a.m4a',
+          durationSec: 10,
+          transcript: 'Голос',
+        ),
+        text: 'Текст',
+        photo: const StoryPhotoPart(
+          mediaUrl: 'https://cdn.example.ru/p.jpg',
+          caption: 'Подпись',
+        ),
+      ),
+    );
+    expect(sentBody, {
+      'audio': {
+        'mediaUrl': 'https://cdn.example.ru/a.m4a',
+        'durationSec': 10,
+        'transcript': 'Голос',
+      },
+      'text': 'Текст',
+      'photo': {
+        'mediaUrl': 'https://cdn.example.ru/p.jpg',
+        'caption': 'Подпись',
+      },
+    });
   });
 }

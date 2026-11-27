@@ -675,6 +675,20 @@ extension _RelativeDetailsHero on _RelativeDetailsScreenState {
         label: 'Кто видит карточку',
         onTap: _openVisibilityScreen,
       ));
+      final currentUserId = _authService.currentUserId;
+      final isCardOwner = currentUserId != null &&
+          (person.userId == currentUserId ||
+              ((person.userId == null || person.userId!.isEmpty) &&
+                  _canDirectEditProfile()));
+      if (isCardOwner &&
+          _familyService is GraphPersonAccessCapableFamilyTreeService) {
+        tiles.add(_actionTile(
+          keyValue: 'action-coauthors',
+          icon: Icons.group_add_outlined,
+          label: 'Соавторы',
+          onTap: _openGrantAccessSheet,
+        ));
+      }
     }
     // Per-field visibility (name / photo / dates …) — kept as a separate
     // entry so nothing is lost.
@@ -776,6 +790,54 @@ extension _RelativeDetailsHero on _RelativeDetailsScreenState {
           familyTreeService: _familyService,
         ),
       ),
+    );
+  }
+
+  Future<void> _openGrantAccessSheet() async {
+    final person = _person;
+    final graphPersonId = person?.identityId?.trim();
+    final currentUserId = _authService.currentUserId ?? '';
+    final accessService =
+        _familyService is GraphPersonAccessCapableFamilyTreeService
+            ? _familyService as GraphPersonAccessCapableFamilyTreeService
+            : null;
+    if (person == null ||
+        graphPersonId == null ||
+        graphPersonId.isEmpty ||
+        accessService == null ||
+        currentUserId.isEmpty) {
+      return;
+    }
+    final candidatesById = <String, GrantPreviewSubject>{};
+    for (final p in _treePeople) {
+      final uid = p.userId?.trim();
+      if (uid != null && uid.isNotEmpty && uid != currentUserId) {
+        candidatesById[uid] = GrantPreviewSubject(
+          id: uid,
+          displayName: p.name.trim().isNotEmpty ? p.name.trim() : 'Родственник',
+          photoUrl: p.photoUrl,
+        );
+      }
+    }
+    for (final m in _semyaMembers) {
+      if (m.userId != currentUserId && !candidatesById.containsKey(m.userId)) {
+        candidatesById[m.userId] = GrantPreviewSubject(
+          id: m.userId,
+          displayName: (m.displayName ?? '').trim().isNotEmpty
+              ? m.displayName!.trim()
+              : 'Участник семьи',
+          photoUrl: m.avatarUrl,
+        );
+      }
+    }
+    await showGrantEditAccessSheet(
+      context,
+      accessService: accessService,
+      viewerUserId: currentUserId,
+      initialGraphPersonId: graphPersonId,
+      initialPersonName: person.name,
+      initialGranteeCandidates: candidatesById.values.toList(growable: false),
+      familyTreeService: _familyService,
     );
   }
 

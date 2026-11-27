@@ -8,7 +8,10 @@
 // случай «owner удалил аккаунт → права переходят к ближайшему
 // кровному родственнику» — out of scope, deferred к Phase 3.6.
 
-function registerGraphPersonRoutes(app, {store, requireAuth, requireGraphPersonRead}) {
+function registerGraphPersonRoutes(
+  app,
+  {store, requireAuth, requireGraphPersonRead, createAndDispatchNotification = null},
+) {
   // Phase 3.4 chunk 2: read-state endpoint для visibility toggle UI.
   // Visibility check переиспользует requireGraphPersonRead — владелец
   // / grantee / blood-graph viewer / public видят. Прочие — 403.
@@ -67,6 +70,39 @@ function registerGraphPersonRoutes(app, {store, requireAuth, requireGraphPersonR
           return;
         }
         const grantee = await store.findUserById(granteeUserId);
+        if (
+          result.created &&
+          typeof createAndDispatchNotification === "function"
+        ) {
+          try {
+            const previews = await store
+              .previewGraphPersonsByIds([req.params.graphPersonId], {
+                viewerUserId: granteeUserId,
+              })
+              .catch(() => []);
+            const personName = previews?.[0]?.name || "карточку";
+            const actorName =
+              req.auth.user?.profile?.displayName ||
+              req.auth.user?.email ||
+              "Владелец карточки";
+            await createAndDispatchNotification({
+              userId: granteeUserId,
+              type: "edit_grant_received",
+              title: "Вам открыт доступ к карточке",
+              body: `${actorName} разрешил редактировать: ${personName}`,
+              data: {
+                graphPersonId: req.params.graphPersonId,
+                grantId: result.grant.id,
+                scope: result.grant.scope,
+              },
+            });
+          } catch (notifyError) {
+            console.warn(
+              "[graph-persons] grant notification failed",
+              notifyError?.message || notifyError,
+            );
+          }
+        }
         res.status(result.created ? 201 : 200).json({
           grant: result.grant,
           grantee: grantee
@@ -79,6 +115,10 @@ function registerGraphPersonRoutes(app, {store, requireAuth, requireGraphPersonR
             : null,
         });
       } catch (error) {
+        if (error?.message === "GRANTEE_NOT_FOUND") {
+          res.status(404).json({message: "Пользователь не найден"});
+          return;
+        }
         if (error?.message === "INVALID_SCOPE") {
           res.status(400).json({
             message:
@@ -135,6 +175,28 @@ function registerGraphPersonRoutes(app, {store, requireAuth, requireGraphPersonR
     },
   );
 
+  app.delete("/v1/me/edit-grants/:grantId", requireAuth, async (req, res) => {
+    try {
+      const grant = await store.relinquishMyEditGrant({
+        grantId: req.params.grantId,
+        actorUserId: req.auth.user.id,
+      });
+      if (!grant) {
+        res.status(404).json({message: "Право не найдено"});
+        return;
+      }
+      res.json({grant});
+    } catch (error) {
+      if (error?.message === "NOT_GRANTEE") {
+        res.status(403).json({
+          message: "Отказаться можно только от выданного вам доступа",
+        });
+        return;
+      }
+      throw error;
+    }
+  });
+
   app.get(
     "/v1/graph-persons/:graphPersonId/grants",
     requireAuth,
@@ -148,7 +210,26 @@ function registerGraphPersonRoutes(app, {store, requireAuth, requireGraphPersonR
           res.status(404).json({message: "Карточка не найдена"});
           return;
         }
-        res.json({grants});
+        const granteeIds = Array.from(
+          new Set(grants.map((entry) => entry.granteeUserId).filter(Boolean)),
+        );
+        const granteeById = new Map();
+        for (const granteeId of granteeIds) {
+          const user = await store.findUserById(granteeId);
+          if (user) {
+            granteeById.set(granteeId, {
+              id: user.id,
+              displayName: user.profile?.displayName || user.email || "",
+              photoUrl: user.profile?.photoUrl || null,
+            });
+          }
+        }
+        res.json({
+          grants: grants.map((grant) => ({
+            ...grant,
+            grantee: granteeById.get(grant.granteeUserId) || null,
+          })),
+        });
       } catch (error) {
         if (error?.message === "NOT_OWNER") {
           res.status(403).json({

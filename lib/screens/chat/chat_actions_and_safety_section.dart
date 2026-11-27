@@ -560,6 +560,16 @@ extension _ChatScreenActionsAndSafety on _ChatScreenState {
           navigator.pop(); // закрыть шит
           router.go('/chats');
         },
+        onDeleteChat: ({required bool forAll}) async {
+          final navigator = Navigator.of(context);
+          final router = GoRouter.of(context);
+          await _chatService.deleteChat(details.chatId, forAll: forAll);
+          if (!mounted) {
+            return;
+          }
+          navigator.pop();
+          router.go('/chats');
+        },
         onOpenSearch: () {
           Navigator.of(context).pop();
           _openSearch();

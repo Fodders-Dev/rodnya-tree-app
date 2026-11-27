@@ -39,6 +39,7 @@ class _AccessGrantsIncomingTabState extends State<AccessGrantsIncomingTab> {
   List<EditGrant>? _grants;
   bool _isLoading = true;
   String? _error;
+  final Set<String> _relinquishingPersonIds = <String>{};
 
   @override
   void initState() {
@@ -64,6 +65,58 @@ class _AccessGrantsIncomingTabState extends State<AccessGrantsIncomingTab> {
         _isLoading = false;
         _error = '$error';
       });
+    }
+  }
+
+  Future<void> _confirmAndRelinquish(_IncomingGroup group) async {
+    final activeGrants =
+        group.grants.where((g) => !g.isRevoked).toList(growable: false);
+    if (activeGrants.isEmpty) return;
+    final headerName = group.preview?.displayName.trim().isNotEmpty == true
+        ? group.preview!.displayName
+        : 'эту карточку';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Отказаться от доступа?'),
+        content: Text(
+          'Вы больше не сможете изменять карточку «$headerName». '
+          'Владелец сможет выдать доступ повторно.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Отказаться'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _relinquishingPersonIds.add(group.graphPersonId));
+    try {
+      for (final grant in activeGrants) {
+        await widget.accessService.relinquishMyEditGrant(grantId: grant.id);
+      }
+      if (!mounted) return;
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Доступ отменён')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось отказаться: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _relinquishingPersonIds.remove(group.graphPersonId));
+      }
     }
   }
 
@@ -101,7 +154,12 @@ class _AccessGrantsIncomingTabState extends State<AccessGrantsIncomingTab> {
         itemCount: groups.length,
         itemBuilder: (context, index) {
           final group = groups[index];
-          return _IncomingCard(group: group);
+          return _IncomingCard(
+            group: group,
+            isRelinquishing:
+                _relinquishingPersonIds.contains(group.graphPersonId),
+            onRelinquish: () => _confirmAndRelinquish(group),
+          );
         },
       ),
     );
@@ -148,9 +206,15 @@ class _IncomingGroup {
 }
 
 class _IncomingCard extends StatelessWidget {
-  const _IncomingCard({required this.group});
+  const _IncomingCard({
+    required this.group,
+    required this.isRelinquishing,
+    required this.onRelinquish,
+  });
 
   final _IncomingGroup group;
+  final bool isRelinquishing;
+  final VoidCallback onRelinquish;
 
   @override
   Widget build(BuildContext context) {
@@ -204,6 +268,21 @@ class _IncomingCard extends StatelessWidget {
                       side: BorderSide.none,
                     ),
                 ],
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: isRelinquishing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : TextButton(
+                        key: Key('incoming-relinquish-${group.graphPersonId}'),
+                        onPressed: onRelinquish,
+                        child: const Text('Отказаться'),
+                      ),
               ),
             ],
             if (revokedGrants.isNotEmpty) ...[

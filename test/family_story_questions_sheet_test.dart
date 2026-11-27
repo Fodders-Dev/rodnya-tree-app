@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rodnya/backend/interfaces/story_request_capable_family_tree_service.dart';
@@ -71,6 +73,23 @@ class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
     StoryRequestStatus? status,
   }) async =>
       const <StoryRequest>[];
+
+  @override
+  Future<StoryRequest?> updateStoryRequest({
+    required String requestId,
+    String? questionText,
+    String? targetName,
+  }) async =>
+      null;
+
+  @override
+  Future<StoryUploadedMedia?> uploadStoryRequestMedia({
+    required String requestId,
+    required String kind,
+    required Uint8List bytes,
+    required String contentType,
+  }) async =>
+      null;
 }
 
 void main() {

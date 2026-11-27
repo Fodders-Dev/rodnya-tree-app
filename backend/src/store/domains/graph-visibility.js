@@ -720,85 +720,125 @@ module.exports = {
     if (normalizedGrantor === normalizedGrantee) {
       throw new Error("SELF_GRANT");
     }
-    const db = await this._read();
-    const graphPerson = (db.graphPersons || []).find(
-      (entry) => entry.id === normalizedGraphPersonId,
-    );
-    if (!graphPerson || graphPerson.deletedAt) return null;
+    return this._mutate((db, skip) => {
+      const graphPerson = (db.graphPersons || []).find(
+        (entry) => entry.id === normalizedGraphPersonId,
+      );
+      if (!graphPerson || graphPerson.deletedAt) return skip(null);
 
-    const owner = this._graphPersonOwnerUserId(graphPerson);
-    if (owner !== normalizedGrantor) {
-      throw new Error("NOT_OWNER");
-    }
+      const owner = this._graphPersonOwnerUserId(graphPerson);
+      if (owner !== normalizedGrantor) {
+        throw new Error("NOT_OWNER");
+      }
 
-    if (!Array.isArray(db.graphPersonEditGrants)) {
-      db.graphPersonEditGrants = [];
-    }
+      const granteeExists = (db.users || []).some(
+        (entry) => entry.id === normalizedGrantee,
+      );
+      if (!granteeExists) {
+        throw new Error("GRANTEE_NOT_FOUND");
+      }
 
-    // Idempotency: re-issuing an active grant on the same triple
-    // returns the existing row. A revoked row with the same triple
-    // is left alone (audit trail) and a fresh row gets pushed.
-    const activeExisting = db.graphPersonEditGrants.find(
-      (entry) =>
-        entry.graphPersonId === normalizedGraphPersonId &&
-        entry.granteeUserId === normalizedGrantee &&
-        entry.scope === normalizedScope &&
-        !entry.revokedAt,
-    );
-    if (activeExisting) {
-      return {grant: structuredClone(activeExisting), created: false};
-    }
+      if (!Array.isArray(db.graphPersonEditGrants)) {
+        db.graphPersonEditGrants = [];
+      }
 
-    const grant = {
-      id: crypto.randomUUID(),
-      graphPersonId: normalizedGraphPersonId,
-      grantorUserId: normalizedGrantor,
-      granteeUserId: normalizedGrantee,
-      scope: normalizedScope,
-      grantedAt: nowIso(),
-      revokedAt: null,
-      origin: "owner-grant",
-    };
-    db.graphPersonEditGrants.push(grant);
-    await this._write(db);
-    return {grant: structuredClone(grant), created: true};
+      // Idempotency: re-issuing an active grant on the same triple
+      // returns the existing row. A revoked row with the same triple
+      // is left alone (audit trail) and a fresh row gets pushed.
+      const activeExisting = db.graphPersonEditGrants.find(
+        (entry) =>
+          entry.graphPersonId === normalizedGraphPersonId &&
+          entry.granteeUserId === normalizedGrantee &&
+          entry.scope === normalizedScope &&
+          !entry.revokedAt,
+      );
+      if (activeExisting) {
+        return skip({grant: structuredClone(activeExisting), created: false});
+      }
+
+      const grant = {
+        id: crypto.randomUUID(),
+        graphPersonId: normalizedGraphPersonId,
+        grantorUserId: normalizedGrantor,
+        granteeUserId: normalizedGrantee,
+        scope: normalizedScope,
+        grantedAt: nowIso(),
+        revokedAt: null,
+        origin: "owner-grant",
+      };
+      db.graphPersonEditGrants.push(grant);
+      return {grant: structuredClone(grant), created: true};
+    });
   },
 
-  async revokeGraphPersonGrant({graphPersonId, grantId, actorUserId}) {
+  async revokeGraphPersonGrant({
+    graphPersonId,
+    grantId,
+    actorUserId,
+    allowGranteeSelfRevoke = false,
+  }) {
     const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
     const normalizedGrantId = normalizeNullableString(grantId);
     const normalizedActor = normalizeNullableString(actorUserId);
     if (!normalizedGraphPersonId || !normalizedGrantId || !normalizedActor) {
       return null;
     }
-    const db = await this._read();
-    const graphPerson = (db.graphPersons || []).find(
-      (entry) => entry.id === normalizedGraphPersonId,
-    );
-    if (!graphPerson) return null;
+    return this._mutate((db, skip) => {
+      const graphPerson = (db.graphPersons || []).find(
+        (entry) => entry.id === normalizedGraphPersonId,
+      );
+      if (!graphPerson) return skip(null);
 
-    const owner = this._graphPersonOwnerUserId(graphPerson);
-    if (owner !== normalizedActor) {
-      throw new Error("NOT_OWNER");
-    }
+      if (!Array.isArray(db.graphPersonEditGrants)) {
+        db.graphPersonEditGrants = [];
+      }
+      const grant = db.graphPersonEditGrants.find(
+        (entry) =>
+          entry.id === normalizedGrantId &&
+          entry.graphPersonId === normalizedGraphPersonId,
+      );
+      const owner = this._graphPersonOwnerUserId(graphPerson);
+      const isGranteeAllowed =
+        allowGranteeSelfRevoke &&
+        grant &&
+        grant.granteeUserId === normalizedActor;
+      if (owner !== normalizedActor && !isGranteeAllowed) {
+        throw new Error("NOT_OWNER");
+      }
+      if (!grant) return skip(null);
 
-    if (!Array.isArray(db.graphPersonEditGrants)) {
-      db.graphPersonEditGrants = [];
-    }
-    const grant = db.graphPersonEditGrants.find(
-      (entry) =>
-        entry.id === normalizedGrantId &&
-        entry.graphPersonId === normalizedGraphPersonId,
-    );
-    if (!grant) return null;
-
-    if (grant.revokedAt) {
-      // Idempotent — already revoked, no rewrite of the timestamp.
+      if (grant.revokedAt) {
+        // Idempotent — already revoked, no rewrite of the timestamp.
+        return skip(structuredClone(grant));
+      }
+      grant.revokedAt = nowIso();
       return structuredClone(grant);
+    });
+  },
+
+  async relinquishMyEditGrant({grantId, actorUserId}) {
+    const normalizedGrantId = normalizeNullableString(grantId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedGrantId || !normalizedActor) {
+      return null;
     }
-    grant.revokedAt = nowIso();
-    await this._write(db);
-    return structuredClone(grant);
+    return this._mutate((db, skip) => {
+      if (!Array.isArray(db.graphPersonEditGrants)) {
+        db.graphPersonEditGrants = [];
+      }
+      const grant = db.graphPersonEditGrants.find(
+        (entry) => entry.id === normalizedGrantId,
+      );
+      if (!grant) return skip(null);
+      if (grant.granteeUserId !== normalizedActor) {
+        throw new Error("NOT_GRANTEE");
+      }
+      if (grant.revokedAt) {
+        return skip(structuredClone(grant));
+      }
+      grant.revokedAt = nowIso();
+      return structuredClone(grant);
+    });
   },
 
   async listGraphPersonGrants({graphPersonId, viewerUserId}) {

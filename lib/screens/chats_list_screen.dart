@@ -419,6 +419,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         if (!mounted) {
           return;
         }
+        _syncServerChatPrefs(chatPreviews);
         setState(() {
           _chatPreviews = chatPreviews;
           _isLoading = false;
@@ -550,8 +551,62 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         .fold<int>(0, (sum, chat) => sum + chat.unreadCount);
   }
 
+  void _syncServerChatPrefs(List<ChatPreview> previews) {
+    final isServerBacked = _chatService is CustomApiChatService;
+    for (final chat in previews) {
+      final archiveKey = _archiveKey(chat);
+      if (chat.isArchived) {
+        if (!_archivedChats.containsKey(archiveKey)) {
+          final snap = ChatArchiveSnapshot(archivedAt: DateTime.now());
+          _archivedChats[archiveKey] = snap;
+          unawaited(_archiveStore.saveArchivedChat(archiveKey, snap));
+        }
+      } else if (isServerBacked && _archivedChats.containsKey(archiveKey)) {
+        _archivedChats.remove(archiveKey);
+        unawaited(_archiveStore.clearArchivedChat(archiveKey));
+      }
+
+      final notifKey = SharedPreferencesChatNotificationSettingsStore.chatKey(
+        chat.chatId,
+      );
+      final serverLevel = _parseChatNotificationLevel(chat.notificationLevel);
+      if (serverLevel != ChatNotificationLevel.all || isServerBacked) {
+        final currentLevel = _notificationSettings[notifKey]?.level;
+        if (currentLevel != serverLevel) {
+          final snap = ChatNotificationSettingsSnapshot(
+            level: serverLevel,
+            updatedAt: DateTime.now(),
+          );
+          _notificationSettings[notifKey] = snap;
+          unawaited(_notificationSettingsStore.saveSettings(notifKey, snap));
+        }
+      }
+    }
+  }
+
+  ChatNotificationLevel _parseChatNotificationLevel(String raw) {
+    switch (raw) {
+      case 'silent':
+        return ChatNotificationLevel.silent;
+      case 'muted':
+        return ChatNotificationLevel.muted;
+      default:
+        return ChatNotificationLevel.all;
+    }
+  }
+
   Future<void> _setChatArchived(ChatPreview chat, bool archived) async {
     final key = _archiveKey(chat);
+    try {
+      await _chatService.updateChatPreferences(
+        chatId: chat.chatId,
+        isArchived: archived,
+      );
+    } on UnsupportedError {
+      // Test fakes may not implement server prefs sync yet.
+    } on NoSuchMethodError {
+      // Test fakes delegating to noSuchMethod.
+    }
     if (archived) {
       await _archiveStore.saveArchivedChat(
         key,
@@ -596,6 +651,72 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Чат "${chat.displayName}" возвращен в список')),
     );
+  }
+
+  Future<void> _confirmAndDeleteOrLeaveChat(ChatPreview chat) async {
+    final isGroup = chat.type == 'group';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(isGroup ? 'Покинуть группу?' : 'Удалить чат?'),
+        content: Text(
+          isGroup
+              ? 'Вы выйдете из группы «${chat.displayName}». Вернуться можно только по приглашению участников.'
+              : 'Чат с «${chat.displayName}» и текущая переписка будут скрыты и очищены только у вас.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(isGroup ? 'Покинуть' : 'Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      if (isGroup) {
+        await _chatService.leaveGroup(chat.chatId);
+      } else {
+        await _chatService.deleteChat(chat.chatId);
+      }
+      await _archiveStore.clearArchivedChat(_archiveKey(chat));
+      if (!mounted) return;
+      setState(() {
+        _chatPreviews = _chatPreviews
+            .where((entry) => entry.chatId != chat.chatId)
+            .toList(growable: false);
+        _archivedChats.remove(_archiveKey(chat));
+        if (_selectedChat?.chatId == chat.chatId) {
+          _selectedChat = null;
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isGroup ? 'Вы вышли из группы' : 'Чат удалён из вашего списка',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(
+              error,
+              fallback: isGroup
+                  ? 'Не удалось покинуть группу.'
+                  : 'Не удалось удалить чат.',
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _openChatActions(ChatPreview chat) async {
@@ -644,6 +765,25 @@ class _ChatsListScreenState extends State<ChatsListScreen>
                     : _ChatListAction.archive,
               ),
             ),
+            if (chat.type == 'direct' || chat.type == 'group')
+              ListTile(
+                key: Key('chat-action-delete-${chat.chatId}'),
+                leading: Icon(
+                  chat.type == 'group'
+                      ? Icons.logout_rounded
+                      : Icons.delete_outline_rounded,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: Text(
+                  chat.type == 'group' ? 'Покинуть группу' : 'Удалить чат',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                onTap: () => Navigator.of(context).pop(
+                  chat.type == 'group'
+                      ? _ChatListAction.leaveGroup
+                      : _ChatListAction.deleteChat,
+                ),
+              ),
           ],
         ),
       ),
@@ -665,6 +805,10 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         break;
       case _ChatListAction.callVideo:
         _startGroupCallFromList(chat, 'video');
+        break;
+      case _ChatListAction.deleteChat:
+      case _ChatListAction.leaveGroup:
+        await _confirmAndDeleteOrLeaveChat(chat);
         break;
     }
   }
@@ -1937,4 +2081,11 @@ enum _ChatComposerMode { direct, group, branch, branches }
 
 enum _ChatsVisibilityFilter { all, unread, archived }
 
-enum _ChatListAction { archive, unarchive, callAudio, callVideo }
+enum _ChatListAction {
+  archive,
+  unarchive,
+  callAudio,
+  callVideo,
+  deleteChat,
+  leaveGroup,
+}

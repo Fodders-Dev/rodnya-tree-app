@@ -66,6 +66,7 @@ import '../utils/snackbar.dart';
 import '../utils/url_utils.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/offline_indicator.dart';
+import '../widgets/safe_delete_confirmation_dialog.dart';
 
 part 'chat/chat_models.dart';
 part 'chat/chat_inline_playback.dart';

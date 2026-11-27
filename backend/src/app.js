@@ -357,6 +357,7 @@ function createApp({
     store,
     requireAuth,
     requireGraphPersonRead,
+    createAndDispatchNotification,
   });
 
   // Phase 6 chunk 1 (PHASE-6-PROPOSAL.md §3.2).
@@ -377,6 +378,7 @@ function createApp({
   registerStoryRequestRoutes(app, {
     store,
     config,
+    mediaStorage: resolvedMediaStorage,
     requireAuth,
     requireTreeAccess,
     requireGraphPersonEdit,

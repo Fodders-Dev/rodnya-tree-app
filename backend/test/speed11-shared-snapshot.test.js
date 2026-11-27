@@ -453,9 +453,8 @@ test(
 );
 
 // ──────────────────────────────────────────────────────────────────
-// 6. listStories: уборка просроченных историй через _mutate, а не
-//    db.stories=...+_write(db) — не бросает на замороженном db, и
-//    результат уборки виден следующему чтению.
+// 6. listStories с замороженным db: фильтрует просроченные истории на чтении,
+//    не мутирует frozen db и сохраняет истёкшие для личного архива автора.
 // ──────────────────────────────────────────────────────────────────
 
 test(
@@ -476,27 +475,30 @@ test(
     assert.ok(ids.includes(story.id), "свежая история должна остаться в ответе");
     assert.ok(
       !ids.includes(expiredStory.id),
-      "просроченная история не должна попасть в ответ",
+      "просроченная история не должна попасть в активный ответ",
     );
   },
 );
 
 test(
-  "SPEED-11: уборка просроченных историй через _mutate видна следующему чтению",
+  "SPEED-11: просроченная история сохраняется для личного архива автора без мутации на read",
   async () => {
     const {store} = buildStore(SEED);
     await store.initialize();
-    const {tree, owner, expiredStory} = await seedFixture(store, "cleanup-persist");
+    const {tree, owner, expiredStory} = await seedFixture(store, "cleanup-archive");
 
     const snapshot = await store.readSharedSnapshot();
     await store.listStories({treeId: tree.id, viewerUserId: owner.id, db: snapshot});
 
-    // Версия должна была измениться (_mutate — реальный UPSERT), так что
-    // readSharedSnapshot() честно перечитывает, а не отдаёт старый кэш.
-    const after = await store.readSharedSnapshot();
+    const archive = await store.listStories({
+      treeId: tree.id,
+      authorId: owner.id,
+      viewerUserId: owner.id,
+      includeArchive: true,
+    });
     assert.ok(
-      !after.stories.some((entry) => entry.id === expiredStory.id),
-      "просроченная история должна реально исчезнуть из персистентного состояния, не только из ответа",
+      archive.some((entry) => entry.id === expiredStory.id),
+      "просроченная история должна сохраняться в архиве автора",
     );
   },
 );

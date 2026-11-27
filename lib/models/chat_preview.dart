@@ -16,6 +16,8 @@ class ChatPreview {
   final DateTime lastMessageTime;
   final int unreadCount;
   final String lastMessageSenderId;
+  final bool isArchived;
+  final String notificationLevel;
 
   ChatPreview({
     required this.id,
@@ -32,6 +34,8 @@ class ChatPreview {
     required this.lastMessageTime,
     required this.unreadCount,
     required this.lastMessageSenderId,
+    this.isArchived = false,
+    this.notificationLevel = 'all',
   });
 
   bool get isGroup => type == 'group' || type == 'branch';
@@ -71,6 +75,11 @@ class ChatPreview {
       lastMessageTime: parseDateTimeRequired(map['lastMessageTime']),
       unreadCount: map['unreadCount'] ?? 0,
       lastMessageSenderId: map['lastMessageSenderId'] ?? '',
+      isArchived: map['isArchived'] == true,
+      notificationLevel:
+          map['notificationLevel']?.toString().trim().isNotEmpty == true
+              ? map['notificationLevel'].toString().trim()
+              : 'all',
     );
   }
 
@@ -91,6 +100,8 @@ class ChatPreview {
       'lastMessageTime': lastMessageTime.toIso8601String(),
       'unreadCount': unreadCount,
       'lastMessageSenderId': lastMessageSenderId,
+      'isArchived': isArchived,
+      'notificationLevel': notificationLevel,
     };
   }
 }

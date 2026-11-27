@@ -24,6 +24,26 @@ class _FakeStoryRequestService implements StoryRequestCapableFamilyTreeService {
   StoryRequest request;
   final List<String> calls = [];
   StoryRequestAnswerInput? lastAnswer;
+  StoryUploadedMedia? uploadMediaResult;
+
+  @override
+  Future<StoryRequest?> updateStoryRequest({
+    required String requestId,
+    String? questionText,
+    String? targetName,
+  }) async =>
+      request;
+
+  @override
+  Future<StoryUploadedMedia?> uploadStoryRequestMedia({
+    required String requestId,
+    required String kind,
+    required Uint8List bytes,
+    required String contentType,
+  }) async {
+    calls.add('uploadMedia:$kind');
+    return uploadMediaResult;
+  }
 
   @override
   Future<StoryRequest?> getStoryRequest({required String requestId}) async {
@@ -210,7 +230,10 @@ void main() {
 
   testWidgets('mic → record → upload → answerStoryRequest(audio) → thank you',
       (tester) async {
-    final service = _FakeStoryRequestService(_pendingRequest());
+    final service = _FakeStoryRequestService(_pendingRequest())
+      ..uploadMediaResult = const StoryUploadedMedia(
+        url: 'https://audio/story-answer.m4a',
+      );
     final storage = _FakeStorage();
     await _pumpScreen(
       tester,
@@ -233,11 +256,25 @@ void main() {
     }
     await tester.pumpAndSettle();
 
-    expect(storage.uploadBytesCalls, 1);
-    expect(storage.lastBucket, 'story-request-audio');
+    expect(find.byKey(const Key('story-answer-audio-card')), findsOneWidget);
+    expect(
+      find.byKey(const Key('story-answer-transcript-field')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('story-answer-submit')));
+    await tester.pumpAndSettle();
+
+    expect(service.calls.contains('uploadMedia:audio'), true);
     expect(service.calls.contains('answer:audio'), true);
-    expect(service.lastAnswer?.mediaUrl, 'https://audio/story-answer.m4a');
-    expect(service.lastAnswer?.durationSec, 12);
+    expect(
+      service.lastAnswer?.audio?.mediaUrl ?? service.lastAnswer?.mediaUrl,
+      'https://audio/story-answer.m4a',
+    );
+    expect(
+      service.lastAnswer?.audio?.durationSec ?? service.lastAnswer?.durationSec,
+      12,
+    );
     expect(
         find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
     expect(find.textContaining('Артём'), findsWidgets);
@@ -246,7 +283,10 @@ void main() {
   testWidgets(
       '«Прислать фото» → pick → preview+caption → upload → answerStoryRequest(photo)',
       (tester) async {
-    final service = _FakeStoryRequestService(_pendingRequest());
+    final service = _FakeStoryRequestService(_pendingRequest())
+      ..uploadMediaResult = const StoryUploadedMedia(
+        url: 'https://img/story-photo.jpg',
+      );
     final storage = _FakeStorage();
     await _pumpScreen(
       tester,
@@ -337,19 +377,28 @@ void main() {
       find.byKey(const Key('story-answer-photo-caption')),
       'Лето 1982 года',
     );
-    await tester.tap(find.byKey(const Key('story-answer-photo-submit')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('story-answer-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('story-answer-submit')));
     await tester.pumpAndSettle();
 
-    expect(storage.uploadImageCalls, 1);
+    expect(service.calls.contains('uploadMedia:photo'), true);
     expect(service.calls.contains('answer:photo'), true);
-    expect(service.lastAnswer?.mediaUrl, 'https://img/story-photo.jpg');
-    expect(service.lastAnswer?.caption, 'Лето 1982 года');
+    expect(
+      service.lastAnswer?.photo?.mediaUrl ?? service.lastAnswer?.mediaUrl,
+      'https://img/story-photo.jpg',
+    );
+    expect(
+      service.lastAnswer?.photo?.caption ?? service.lastAnswer?.caption,
+      'Лето 1982 года',
+    );
     expect(
         find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
   });
 
   testWidgets(
-      '«Написать текстом» → type → «Сохранить» → answerStoryRequest(text)',
+      '«Написать текстом» → type → «Отправить» → answerStoryRequest(text)',
       (tester) async {
     final service = _FakeStoryRequestService(_pendingRequest());
     await _pumpScreen(tester, service: service);
@@ -357,7 +406,7 @@ void main() {
     await tester.tap(find.byKey(const Key('story-answer-text-mode')));
     await tester.pumpAndSettle();
 
-    final submitFinder = find.byKey(const Key('story-answer-text-submit'));
+    final submitFinder = find.byKey(const Key('story-answer-submit'));
     expect(tester.widget<FilledButton>(submitFinder).onPressed, isNull);
 
     await tester.enterText(
@@ -372,6 +421,145 @@ void main() {
 
     expect(service.calls.contains('answer:text'), true);
     expect(service.lastAnswer?.text, 'Это моя история.');
+    expect(
+        find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
+  });
+
+  testWidgets(
+      'combined audio + transcript + text + photo submits together in one request',
+      (tester) async {
+    final service = _FakeStoryRequestService(_pendingRequest())
+      ..uploadMediaResult = const StoryUploadedMedia(
+        url: 'https://cdn.example.ru/uploaded.bin',
+        transcript: 'Авто-транскрипт',
+      );
+    final storage = _FakeStorage();
+    await _pumpScreen(
+      tester,
+      service: service,
+      storage: storage,
+      audioRecordOverride: (_) async => AudioRecordResult(
+        file: XFile.fromData(
+          Uint8List.fromList(const [1, 2, 3]),
+          name: 'rec.m4a',
+          mimeType: 'audio/m4a',
+        ),
+        mimeType: 'audio/m4a',
+        durationSec: 8,
+      ),
+      pickImageOverride: (_) async => XFile.fromData(
+        Uint8List.fromList(const [
+          0x89,
+          0x50,
+          0x4E,
+          0x47,
+          0x0D,
+          0x0A,
+          0x1A,
+          0x0A,
+          0x00,
+          0x00,
+          0x00,
+          0x0D,
+          0x49,
+          0x48,
+          0x44,
+          0x52,
+          0x00,
+          0x00,
+          0x00,
+          0x01,
+          0x00,
+          0x00,
+          0x00,
+          0x01,
+          0x08,
+          0x06,
+          0x00,
+          0x00,
+          0x00,
+          0x1F,
+          0x15,
+          0xC4,
+          0x89,
+          0x00,
+          0x00,
+          0x00,
+          0x0A,
+          0x49,
+          0x44,
+          0x41,
+          0x54,
+          0x78,
+          0x9C,
+          0x63,
+          0x00,
+          0x01,
+          0x00,
+          0x00,
+          0x05,
+          0x00,
+          0x01,
+          0x0D,
+          0x0A,
+          0x2D,
+          0xB4,
+          0x00,
+          0x00,
+          0x00,
+          0x00,
+          0x49,
+          0x45,
+          0x4E,
+          0x44,
+          0xAE,
+          0x42,
+          0x60,
+          0x82,
+        ]),
+        name: 'photo.png',
+        mimeType: 'image/png',
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('story-answer-mic')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('story-answer-transcript-field')),
+      'Проверенный транскрипт',
+    );
+    await tester.tap(find.byKey(const Key('story-answer-text-mode')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('story-answer-text-field')),
+      'Дополнительный рассказ.',
+    );
+
+    await tester.tap(find.byKey(const Key('story-answer-photo')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('story-answer-photo-gallery')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('story-answer-photo-caption')),
+      'Семейный снимок',
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(const Key('story-answer-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('story-answer-submit')));
+    await tester.pumpAndSettle();
+
+    expect(
+        service.calls, containsAll(['uploadMedia:audio', 'uploadMedia:photo']));
+    expect(service.lastAnswer?.audio?.mediaUrl,
+        'https://cdn.example.ru/uploaded.bin');
+    expect(service.lastAnswer?.audio?.transcript, 'Проверенный транскрипт');
+    expect(service.lastAnswer?.text, 'Дополнительный рассказ.');
+    expect(service.lastAnswer?.photo?.mediaUrl,
+        'https://cdn.example.ru/uploaded.bin');
+    expect(service.lastAnswer?.photo?.caption, 'Семейный снимок');
     expect(
         find.byKey(const Key('story-answer-thankyou-message')), findsOneWidget);
   });

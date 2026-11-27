@@ -1500,7 +1500,8 @@ void main() {
           headers: {'content-type': 'application/json'},
         );
       }
-      return http.Response('{}', 200, headers: {'content-type': 'application/json'});
+      return http.Response('{}', 200,
+          headers: {'content-type': 'application/json'});
     });
 
     final prefs = await SharedPreferences.getInstance();
@@ -3504,6 +3505,74 @@ void main() {
       await realtimeController.close();
     },
   );
+
+  test('CustomApiChatService updateChatPreferences and deleteChat send HTTP',
+      () async {
+    Map<String, dynamic>? prefsBody;
+    Uri? deleteUri;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/preferences' &&
+          request.method == 'PATCH') {
+        prefsBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode(
+              {'ok': true, 'isArchived': true, 'notificationLevel': 'muted'}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/chats/chat-1' &&
+          request.method == 'DELETE') {
+        deleteUri = request.url;
+        return http.Response(
+          jsonEncode({'ok': true, 'deleted': true}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'custom_api_session_v1': jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    });
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+      pollInterval: const Duration(milliseconds: 10),
+    );
+
+    await chatService.updateChatPreferences(
+      chatId: 'chat-1',
+      isArchived: true,
+      notificationLevel: 'muted',
+    );
+    expect(prefsBody, {'isArchived': true, 'notificationLevel': 'muted'});
+
+    final ok = await chatService.deleteChat('chat-1', forAll: true);
+    expect(ok, isTrue);
+    expect(deleteUri?.queryParameters['forAll'], 'true');
+  });
 }
 
 Future<void> _waitFor(

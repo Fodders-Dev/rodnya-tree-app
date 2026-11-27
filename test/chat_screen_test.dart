@@ -469,9 +469,36 @@ class _FakeChatService implements ChatServiceInterface {
   }) async =>
       details;
 
+  String? lastUpdatedPreferencesChatId;
+  bool? lastUpdatedPreferencesIsArchived;
+  String? lastUpdatedPreferencesNotificationLevel;
+  String? lastDeletedChatId;
+  bool? lastDeletedChatForAll;
+
   @override
   Future<void> leaveGroup(String chatId) async {
     leftChatId = chatId;
+  }
+
+  @override
+  Future<void> updateChatPreferences({
+    required String chatId,
+    bool? isArchived,
+    String? notificationLevel,
+  }) async {
+    lastUpdatedPreferencesChatId = chatId;
+    lastUpdatedPreferencesIsArchived = isArchived;
+    lastUpdatedPreferencesNotificationLevel = notificationLevel;
+  }
+
+  @override
+  Future<bool> deleteChat(
+    String chatId, {
+    bool forAll = false,
+  }) async {
+    lastDeletedChatId = chatId;
+    lastDeletedChatForAll = forAll;
+    return true;
   }
 
   @override
@@ -2204,12 +2231,14 @@ void main() {
     await tester.tap(find.text('Закрепить'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey<String>('pinned-message-banner')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('pinned-message-banner')),
+        findsOneWidget);
     expect(find.text('Собеседник'), findsWidgets);
 
     await pumpChat();
 
-    expect(find.byKey(const ValueKey<String>('pinned-message-banner')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('pinned-message-banner')),
+        findsOneWidget);
     expect(find.text('Сохрани это сообщение сверху'), findsWidgets);
   });
 
@@ -2250,14 +2279,16 @@ void main() {
     await tester.tap(find.text('Закрепить'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey<String>('pinned-message-banner')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('pinned-message-banner')),
+        findsOneWidget);
 
     await tester.longPress(find.text('Временный pin').last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Открепить'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey<String>('pinned-message-banner')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('pinned-message-banner')),
+        findsNothing);
   });
 
   testWidgets('ChatScreen jumps to original message from reply quote',

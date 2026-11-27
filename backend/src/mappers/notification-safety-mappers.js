@@ -109,6 +109,9 @@ function sanitizeNotificationData(data) {
     "kind",
     "blockId",
     "callState",
+    "graphPersonId",
+    "grantId",
+    "scope",
   ];
 
   // Array-valued data fields. Sanitized member-by-member as

@@ -999,4 +999,7 @@ module.exports = {
   registerPublicStoryRoutes,
   buildPublicStoryUrl,
   MAX_GUEST_STORY_MEDIA_BYTES,
+  ALLOWED_AUDIO_MIME_TO_EXT,
+  ALLOWED_PHOTO_MIME_TO_EXT,
+  readBinaryStreamWithLimit,
 };

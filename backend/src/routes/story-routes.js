@@ -12,6 +12,8 @@ function registerStoryRoutes(
   app.get("/v1/stories", requireAuth, async (req, res) => {
     const treeId = String(req.query.treeId || "").trim() || null;
     const authorId = String(req.query.authorId || "").trim() || null;
+    const includeArchive =
+      String(req.query.includeArchive || "").trim().toLowerCase() === "true";
 
     if (treeId) {
       const tree = await requireTreeAccess(req, res, treeId);
@@ -28,10 +30,13 @@ function registerStoryRoutes(
       treeId,
       authorId,
       viewerUserId: req.auth.user.id,
+      includeArchive,
       db: req.storeSnapshot || null,
     });
-    const visibleStories = stories.filter((story) =>
-      accessibleTreeIds.has(story.treeId),
+    const visibleStories = stories.filter(
+      (story) =>
+        accessibleTreeIds.has(story.treeId) ||
+        (includeArchive && story.authorId === req.auth.user.id),
     );
 
     res.json(visibleStories.map(mapStory));
@@ -206,15 +211,19 @@ function registerStoryRoutes(
   });
 
   app.delete("/v1/stories/:storyId", requireAuth, async (req, res) => {
-    const story = await store.findStory(req.params.storyId);
+    const story = await store.findStory(req.params.storyId, {
+      includeExpired: true,
+    });
     if (!story) {
       res.status(404).json({message: "Story не найдена"});
       return;
     }
 
-    const tree = await requireTreeAccess(req, res, story.treeId);
-    if (!tree) {
-      return;
+    if (story.authorId !== req.auth.user.id) {
+      const tree = await requireTreeAccess(req, res, story.treeId);
+      if (!tree) {
+        return;
+      }
     }
 
     const deletedStory = await store.deleteStory(req.params.storyId, req.auth.user.id);

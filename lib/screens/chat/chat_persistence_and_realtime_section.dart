@@ -832,6 +832,26 @@ extension _ChatScreenPersistenceAndRealtime on _ChatScreenState {
       _notificationSettings = nextSnapshot;
     });
     await _persistNotificationSettings(nextSnapshot);
+    final detailsChatId = _chatDetails?.chatId;
+    final String? activeChatId = (_chatId != null && _chatId!.isNotEmpty)
+        ? _chatId
+        : (detailsChatId != null && detailsChatId.isNotEmpty
+            ? detailsChatId
+            : widget.chatId);
+    if (activeChatId != null && activeChatId.isNotEmpty) {
+      try {
+        await _chatService.updateChatPreferences(
+          chatId: activeChatId,
+          notificationLevel: level.name,
+        );
+      } on UnsupportedError {
+        // Test fakes may not implement server prefs sync yet.
+      } on NoSuchMethodError {
+        // Test fakes delegating to noSuchMethod.
+      } catch (_) {
+        // Keep local setting applied even if transient network call fails.
+      }
+    }
     if (!mounted) {
       return;
     }

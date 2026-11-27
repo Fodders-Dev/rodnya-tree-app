@@ -962,19 +962,109 @@ module.exports = {
     });
   },
 
-  /// Target answers a pending request: appends a block to the hero's
+  /// Requester edits own pending story request question text / guest targetName.
+  async updateStoryRequest({
+    requestId,
+    actorUserId,
+    questionText,
+    targetName,
+  }) {
+    const normalizedId = normalizeNullableString(requestId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedId || !normalizedActor) {
+      return {error: "INVALID_INPUT"};
+    }
+
+    const hasQuestion = questionText !== undefined;
+    const hasTargetName = targetName !== undefined;
+    if (!hasQuestion && !hasTargetName) {
+      return {error: "INVALID_INPUT"};
+    }
+
+    let cleanedQuestion = null;
+    if (hasQuestion) {
+      cleanedQuestion = String(questionText ?? "").trim();
+      if (cleanedQuestion.length < 3 || cleanedQuestion.length > 500) {
+        return {error: "INVALID_QUESTION"};
+      }
+    }
+    const cleanedTargetName = hasTargetName
+      ? normalizeNullableString(targetName)?.slice(0, 120) || null
+      : undefined;
+
+    return this._mutate((db, skip) => {
+      const newlyExpired = this._sweepExpiredStoryRequests(db);
+      const fail = (error) => {
+        const payload = {
+          error,
+          newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+        };
+        return newlyExpired.length > 0 ? payload : skip(payload);
+      };
+
+      const request = (db.storyRequests || []).find((r) => r.id === normalizedId);
+      if (!request) return fail("NOT_FOUND");
+      if (request.requesterUserId !== normalizedActor) {
+        return fail("NOT_INITIATOR");
+      }
+      if (request.status !== "pending") return fail("NOT_PENDING");
+
+      const nextQuestionText = hasQuestion
+        ? cleanedQuestion
+        : request.question?.text || "";
+      const nextQuestionKey = _normalizeStoryQuestionKey(nextQuestionText);
+      const entryMode =
+        request.deliveryMode === "public_link" ? "public_link" : "in_app";
+      const nextTargetName =
+        entryMode === "public_link" && hasTargetName
+          ? cleanedTargetName
+          : request.targetName;
+      const targetNameKey = _normalizeStoryQuestionKey(nextTargetName);
+
+      const duplicate = (db.storyRequests || []).find((r) => {
+        if (r.id === request.id || r.status !== "pending") return false;
+        const rMode =
+          r.deliveryMode === "public_link" ? "public_link" : "in_app";
+        if (
+          r.treeId !== request.treeId ||
+          r.personId !== request.personId ||
+          r.requesterUserId !== request.requesterUserId ||
+          rMode !== entryMode ||
+          _normalizeStoryQuestionKey(r.question?.text) !== nextQuestionKey
+        ) {
+          return false;
+        }
+        if (entryMode === "in_app") {
+          return r.targetUserId === request.targetUserId;
+        }
+        return _normalizeStoryQuestionKey(r.targetName) === targetNameKey;
+      });
+      if (duplicate) {
+        return fail("DUPLICATE_PENDING");
+      }
+
+      if (hasQuestion) {
+        request.question = {
+          ...(request.question || {}),
+          text: nextQuestionText,
+        };
+      }
+      if (hasTargetName && entryMode === "public_link") {
+        request.targetName = cleanedTargetName;
+      }
+      request.updatedAt = nowIso();
+
+      return {
+        request: structuredClone(request),
+        newlyExpired: newlyExpired.map((r) => structuredClone(r)),
+      };
+    });
+  },
+
+  /// Target answers a pending request: appends 1..3 blocks to the hero's
   /// article AND flips the request to 'answered' in the SAME _mutate
-  /// transaction (no nested store calls — inlines the equivalent of
-  /// appendArticleBlock's body using the same pure helpers it uses:
-  /// _resolveArticleContext / _ensureProfileArticle / createArticleBlockRecord).
-  ///
-  /// Permission note (§1, deliberate): the REQUESTER needed edit rights on
-  /// the person at creation time (checked at the route layer); the TARGET
-  /// does NOT need their own edit grant to answer — the pending request
-  /// itself IS the one-time permission slip Артём approved to write this
-  /// one block. Don't add a requireGraphPersonEdit check here for the
-  /// target; that would break the whole feature for anonymous-card /
-  /// no-grant addressees the request is specifically meant to reach.
+  /// transaction. Supports both legacy single-kind payloads and combined v2
+  /// payloads ({ audio: {mediaUrl, durationSec, transcript}, text, photo }).
   ///
   /// Errors: INVALID_INPUT, NOT_FOUND, NOT_TARGET, NOT_PENDING, INVALID_ANSWER.
   async answerStoryRequest({requestId, actorUserId, answer}) {
@@ -984,8 +1074,38 @@ module.exports = {
       return {error: "INVALID_INPUT"};
     }
     const kind = String(answer?.kind || "").trim();
-    if (!["audio", "text", "photo"].includes(kind)) {
+    if (kind && !["audio", "text", "photo"].includes(kind)) {
       return {error: "INVALID_ANSWER"};
+    }
+    const explicitAudio =
+      answer?.audio && typeof answer.audio === "object"
+        ? answer.audio
+        : kind === "audio"
+          ? {
+              mediaUrl: answer?.mediaUrl,
+              durationSec: answer?.durationSec,
+              transcript: answer?.transcript,
+            }
+          : null;
+    const explicitText =
+      answer?.text !== undefined &&
+      answer?.text !== null &&
+      (!kind || kind === "text" || Boolean(answer?.audio) || Boolean(answer?.photo))
+        ? answer.text
+        : null;
+    const explicitPhoto =
+      answer?.photo && typeof answer.photo === "object"
+        ? answer.photo
+        : kind === "photo"
+          ? {mediaUrl: answer?.mediaUrl, caption: answer?.caption}
+          : null;
+    const built = _buildAnswerBlockPayloads({
+      audio: explicitAudio,
+      text: explicitText,
+      photo: explicitPhoto,
+    });
+    if (built.error) {
+      return {error: built.error};
     }
 
     return this._mutate((db, skip) => {
@@ -1015,59 +1135,56 @@ module.exports = {
         return fail("FORBIDDEN_BLOCKED");
       }
 
-      const built = _buildAnswerBlockPayloads({
-        audio:
-          kind === "audio"
-            ? {mediaUrl: answer?.mediaUrl, durationSec: answer?.durationSec, transcript: answer?.transcript}
-            : null,
-        text: kind === "text" ? answer?.text : null,
-        photo: kind === "photo" ? {mediaUrl: answer?.mediaUrl, caption: answer?.caption} : null,
-      });
-      if (built.error) {
-        return fail(built.error);
-      }
-
-      const spec = built.blocks[0];
-      let block;
       let ctx;
+      const createdBlocks = [];
       try {
         ctx = this._resolveArticleContext(db, request.personId);
-        block = createArticleBlockRecord({
-          type: spec.blockType,
-          content: spec.content,
-          actorUserId: normalizedActor,
-        });
+        for (const spec of built.blocks) {
+          const block = createArticleBlockRecord({
+            type: spec.blockType,
+            content: spec.content,
+            actorUserId: normalizedActor,
+          });
+          // Additive, sits NEXT TO `content` (not inside it) — §1:
+          // normalizeArticleBlockContent stays untouched.
+          block.source = {
+            requestId: request.id,
+            question: structuredClone(request.question),
+            askedByUserId: request.requesterUserId,
+            askedAt: request.createdAt,
+            channel: "in_app",
+          };
+          createdBlocks.push(block);
+        }
       } catch (error) {
         if (error?.message === "PERSON_NOT_FOUND") return fail("NOT_FOUND");
         return fail("INVALID_ANSWER");
       }
-      // Additive, sits NEXT TO `content` (not inside it) — §1: normalizeArticleBlockContent
-      // stays untouched, existing blocks without `source` are unaffected.
-      // Lets the «Истории» section sign the block «На вопрос {Имя}, {дата}».
-      block.source = {
-        requestId: request.id,
-        question: structuredClone(request.question),
-        askedByUserId: request.requesterUserId,
-        askedAt: request.createdAt,
-        channel: "in_app",
-      };
 
       const article = this._ensureProfileArticle(db, request.personId, ctx);
-      article.blocks.push(block);
-      article.updatedAt = block.createdAt;
+      for (const block of createdBlocks) {
+        article.blocks.push(block);
+      }
+      const now = nowIso();
+      article.updatedAt = now;
       this._appendTreeChangeRecord(db, {
         treeId: ctx.treeId,
         actorId: normalizedActor,
         type: "article.block-added",
         personId: request.personId,
-        details: {blockId: block.id, blockType: block.type, storyRequestId: request.id},
+        details: {
+          blockId: createdBlocks[0].id,
+          blockIds: createdBlocks.map((b) => b.id),
+          blockType: createdBlocks[0].type,
+          storyRequestId: request.id,
+        },
       });
 
-      const now = nowIso();
       request.status = "answered";
       request.answer = {
-        articleBlockId: block.id,
-        kind,
+        articleBlockId: createdBlocks[0].id,
+        articleBlockIds: createdBlocks.map((b) => b.id),
+        kind: built.blocks[0].kind,
         answeredByUserId: normalizedActor,
         answeredAt: now,
       };
@@ -1076,7 +1193,8 @@ module.exports = {
 
       return {
         request: structuredClone(request),
-        block: structuredClone(block),
+        block: structuredClone(createdBlocks[0]),
+        blocks: createdBlocks.map((b) => structuredClone(b)),
         newlyExpired: newlyExpired.map((r) => structuredClone(r)),
       };
     });

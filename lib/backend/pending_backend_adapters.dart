@@ -720,6 +720,20 @@ class PendingBackendChatService implements ChatServiceInterface {
   }
 
   @override
+  Future<void> updateChatPreferences({
+    required String chatId,
+    bool? isArchived,
+    String? notificationLevel,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+
+  @override
+  Future<bool> deleteChat(String chatId, {bool forAll = false}) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+
+  @override
   Future<List<ChatMessageSearchResult>> searchMessages({
     required String query,
     String? chatId,

@@ -100,6 +100,8 @@ class ChatDetails {
     this.treeId,
     this.createdAt,
     this.updatedAt,
+    this.isArchived = false,
+    this.notificationLevel = 'all',
   });
 
   final String chatId;
@@ -111,6 +113,8 @@ class ChatDetails {
   final String? treeId;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+  final bool isArchived;
+  final String notificationLevel;
   final List<ChatParticipantSummary> participants;
   final List<ChatBranchRootSummary> branchRoots;
 
@@ -166,6 +170,11 @@ class ChatDetails {
       treeId: map['treeId']?.toString(),
       createdAt: parseTimestamp(map['createdAt']),
       updatedAt: parseTimestamp(map['updatedAt']),
+      isArchived: map['isArchived'] == true,
+      notificationLevel:
+          map['notificationLevel']?.toString().trim().isNotEmpty == true
+              ? map['notificationLevel'].toString().trim()
+              : 'all',
       participants: (map['participants'] as List<dynamic>? ?? const [])
           .whereType<Map>()
           .map((entry) => Map<String, dynamic>.from(entry))

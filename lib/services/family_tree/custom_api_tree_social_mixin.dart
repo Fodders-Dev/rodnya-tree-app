@@ -193,6 +193,70 @@ mixin _CustomApiTreeSocialMixin on _CustomApiFamilyTreeHost {
     }
   }
 
+  @override
+  Future<StoryRequest?> updateStoryRequest({
+    required String requestId,
+    String? questionText,
+    String? targetName,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'PATCH',
+        path: '/v1/story-requests/$requestId',
+        body: <String, dynamic>{
+          if (questionText != null) 'questionText': questionText.trim(),
+          if (targetName != null) 'targetName': targetName.trim(),
+        },
+      );
+      final requestRaw = response['request'];
+      if (requestRaw is! Map) return null;
+      return StoryRequest.fromJson(Map<String, dynamic>.from(requestRaw));
+    } on CustomApiException catch (e) {
+      throw _mapStoryRequestException(e, endpoint: 'update');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<StoryUploadedMedia?> uploadStoryRequestMedia({
+    required String requestId,
+    required String kind,
+    required Uint8List bytes,
+    required String contentType,
+  }) async {
+    try {
+      final uri = _buildUri(
+        _buildPathWithQuery(
+          '/v1/story-requests/$requestId/media',
+          {'kind': kind},
+        ),
+      );
+      final response = await _httpClient.put(
+        uri,
+        headers: <String, String>{
+          ..._headers(),
+          'Content-Type': contentType,
+        },
+        body: bytes,
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      final payload = tryDecodeJsonMap(response.body);
+      final url = payload?['url']?.toString().trim();
+      if (url == null || url.isEmpty) return null;
+      final transcript = payload?['transcript']?.toString().trim();
+      return StoryUploadedMedia(
+        url: url,
+        transcript:
+            transcript != null && transcript.isNotEmpty ? transcript : null,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Map [CustomApiException.statusCode] к [StoryRequestError]. Verified
   /// 2026-09-13 against the merged backend (story-request-routes.js) —
   /// it sends only `{message}` on error (no machine `error` field, same
@@ -295,6 +359,29 @@ mixin _CustomApiTreeSocialMixin on _CustomApiFamilyTreeHost {
           default:
             code = 'UNKNOWN';
             fallback = 'Не получилось отозвать вопрос. Попробуйте позже.';
+        }
+        break;
+      case 'update':
+        switch (status) {
+          case 400:
+            code = 'INVALID_QUESTION';
+            fallback = 'Вопрос должен содержать от 3 до 500 символов.';
+            break;
+          case 403:
+            code = 'NOT_INITIATOR';
+            fallback = 'Редактировать вопрос может только тот, кто его задал.';
+            break;
+          case 404:
+            code = 'NOT_FOUND';
+            fallback = 'Запрос не найден — возможно, его уже удалили.';
+            break;
+          case 409:
+            code = 'NOT_PENDING';
+            fallback = 'Вопрос уже обработан или такой же вопрос уже открыт.';
+            break;
+          default:
+            code = 'UNKNOWN';
+            fallback = 'Не получилось обновить вопрос. Попробуйте позже.';
         }
         break;
       default: // 'get'

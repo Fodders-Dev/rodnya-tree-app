@@ -25,18 +25,30 @@
 //     atomic one-shot claim that makes this safe under concurrency).
 //   story_request_revoked   — target gets on initiator revoke.
 
+const crypto = require("node:crypto");
 const {
   composeDisplayName,
   sanitizeUserProfilePreview,
   normalizePublicUrl,
 } = require("../profile-utils");
-const {buildPublicStoryUrl} = require("./public-story-routes");
+const {
+  normalizeStoryAudio,
+  transcribeStoryAudio,
+} = require("../services/story-audio-service");
+const {
+  buildPublicStoryUrl,
+  MAX_GUEST_STORY_MEDIA_BYTES,
+  ALLOWED_AUDIO_MIME_TO_EXT,
+  ALLOWED_PHOTO_MIME_TO_EXT,
+  readBinaryStreamWithLimit,
+} = require("./public-story-routes");
 
 function registerStoryRequestRoutes(
   app,
   {
     store,
     config,
+    mediaStorage = null,
     requireAuth,
     requireTreeAccess,
     requireGraphPersonEdit,
@@ -295,11 +307,170 @@ function registerStoryRequestRoutes(
     });
   });
 
-  // POST /v1/story-requests/:id/answer — target answers with audio, text
-  // or photo. Video is out of scope for MVP-1 (decision §0.4).
+  // PATCH /v1/story-requests/:id — initiator updates questionText/targetName
+  // while pending.
+  app.patch("/v1/story-requests/:id", requireAuth, async (req, res) => {
+    const questionText =
+      req.body?.questionText !== undefined
+        ? req.body.questionText
+        : req.body?.question?.text;
+    const outcome = await store.updateStoryRequest({
+      requestId: req.params.id,
+      actorUserId: req.auth.user.id,
+      questionText,
+      targetName: req.body?.targetName,
+    });
+    await notifyExpired(outcome.newlyExpired);
+
+    if (outcome.error === "NOT_FOUND") {
+      res.status(404).json({message: "Запрос не найден"});
+      return;
+    }
+    if (outcome.error === "NOT_INITIATOR") {
+      res.status(403).json({message: "Редактировать можно только свой запрос"});
+      return;
+    }
+    if (outcome.error === "NOT_PENDING") {
+      res.status(409).json({
+        message: "Нельзя изменить запрос после ответа или отзыва",
+      });
+      return;
+    }
+    if (outcome.error === "DUPLICATE_PENDING") {
+      res.status(409).json({
+        message: "Такой открытый вопрос уже есть",
+      });
+      return;
+    }
+    if (outcome.error === "INVALID_QUESTION" || outcome.error === "INVALID_INPUT") {
+      res.status(400).json({message: "Вопрос должен содержать от 3 до 500 символов"});
+      return;
+    }
+    if (outcome.error) {
+      res.status(500).json({message: "Не удалось обновить вопрос"});
+      return;
+    }
+
+    res.json({
+      request: await attachViewerContext(
+        sanitizeRequestForRequester(outcome.request, req),
+        req,
+        req.auth.user.id,
+      ),
+    });
+  });
+
+  // PUT /v1/story-requests/:id/media?kind=audio|photo — authenticated target
+  // uploads answer media with ffmpeg normalization + STT transcription parity
+  // alongside guest /story/:token/media.
+  app.put("/v1/story-requests/:id/media", requireAuth, async (req, res) => {
+    if (!mediaStorage) {
+      res.status(503).json({message: "Загрузка медиа недоступна"});
+      return;
+    }
+    const kind = String(req.query?.kind || "").trim().toLowerCase();
+    if (kind !== "audio" && kind !== "photo") {
+      res.status(400).json({message: "kind должен быть 'audio' или 'photo'"});
+      return;
+    }
+
+    const lookup = await store.findStoryRequest({
+      requestId: req.params.id,
+      viewerUserId: req.auth.user.id,
+    });
+    await notifyExpired(lookup.newlyExpired);
+    if (!lookup.request) {
+      res.status(404).json({message: "Запрос не найден"});
+      return;
+    }
+    if (lookup.request.targetUserId !== req.auth.user.id) {
+      res.status(403).json({message: "Отвечать может только адресат вопроса"});
+      return;
+    }
+    if (lookup.request.status !== "pending") {
+      res.status(409).json({message: "На этот вопрос уже ответили или его отозвали"});
+      return;
+    }
+
+    const rawContentType = String(req.headers["content-type"] || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    const allowMap =
+      kind === "audio" ? ALLOWED_AUDIO_MIME_TO_EXT : ALLOWED_PHOTO_MIME_TO_EXT;
+    const ext = allowMap.get(rawContentType);
+    if (!ext) {
+      res.status(400).json({message: "Неподдерживаемый формат файла"});
+      return;
+    }
+
+    const readResult = await readBinaryStreamWithLimit(
+      req,
+      res,
+      MAX_GUEST_STORY_MEDIA_BYTES,
+    );
+    if (readResult.tooLarge) {
+      res.status(413).json({message: "Файл не должен превышать 20 МБ"});
+      return;
+    }
+    const rawBuffer = readResult.buffer;
+    if (!rawBuffer || rawBuffer.length === 0) {
+      res.status(400).json({message: "Файл пустой"});
+      return;
+    }
+
+    let finalBuffer = rawBuffer;
+    let finalContentType = rawContentType;
+    let finalExt = ext;
+    if (kind === "audio") {
+      const normalized = await normalizeStoryAudio({
+        buffer: rawBuffer,
+        contentType: rawContentType,
+        originalExt: ext,
+      });
+      finalBuffer = normalized.buffer;
+      finalContentType = normalized.contentType;
+      finalExt = normalized.ext;
+    }
+
+    const relativePath = `${lookup.request.id}/${crypto.randomUUID()}.${finalExt}`;
+    const saved = await mediaStorage.saveObject({
+      req,
+      bucket: "story-answers",
+      relativePath,
+      contentType: finalContentType,
+      fileBuffer: finalBuffer,
+      uploaderUserId: req.auth.user.id,
+    });
+
+    let transcript = null;
+    if (kind === "audio" && config?.sttEnabled) {
+      transcript = await transcribeStoryAudio({
+        buffer: finalBuffer,
+        contentType: finalContentType,
+        filename: `story.${finalExt}`,
+        config,
+      });
+    }
+
+    res.status(201).json({
+      url: saved.url,
+      contentType: finalContentType,
+      size: saved.size,
+      kind,
+      transcript,
+    });
+  });
+
+  // POST /v1/story-requests/:id/answer — target answers with legacy
+  // single-kind OR combined v2 ({audio, text, photo}).
   app.post("/v1/story-requests/:id/answer", requireAuth, async (req, res) => {
-    const kind = String(req.body?.kind || "").trim();
-    if (!["audio", "text", "photo"].includes(kind)) {
+    const rawKind = String(req.body?.kind || "").trim();
+    const hasCombinedPayload =
+      (req.body?.audio && typeof req.body.audio === "object") ||
+      (req.body?.photo && typeof req.body.photo === "object") ||
+      (!rawKind && req.body?.text !== undefined);
+    if (!hasCombinedPayload && !["audio", "text", "photo"].includes(rawKind)) {
       res.status(400).json({message: "kind должен быть 'audio', 'text' либо 'photo'"});
       return;
     }
@@ -323,11 +494,14 @@ function registerStoryRequestRoutes(
       requestId: req.params.id,
       actorUserId: req.auth.user.id,
       answer: {
-        kind,
+        kind: rawKind || null,
         mediaUrl: mediaUrlRaw,
         durationSec,
+        transcript: req.body?.transcript ?? req.body?.audio?.transcript,
         text: req.body?.text,
         caption: req.body?.caption,
+        audio: req.body?.audio,
+        photo: req.body?.photo,
       },
     });
     await notifyExpired(outcome.newlyExpired);
@@ -351,7 +525,7 @@ function registerStoryRequestRoutes(
       res.status(409).json({message: "На этот вопрос уже ответили или его отозвали"});
       return;
     }
-    if (outcome.error === "INVALID_ANSWER") {
+    if (outcome.error === "INVALID_ANSWER" || outcome.error === "INVALID_INPUT") {
       res.status(400).json({message: "Некорректный ответ"});
       return;
     }
@@ -376,7 +550,11 @@ function registerStoryRequestRoutes(
       },
     });
 
-    res.json({request: outcome.request, block: outcome.block});
+    res.json({
+      request: outcome.request,
+      block: outcome.block,
+      blocks: outcome.blocks || [outcome.block],
+    });
   });
 
   // POST /v1/story-requests/:id/decline — target declines.

@@ -15,6 +15,7 @@ class _ChatInfoSheet extends StatefulWidget {
     required this.onRemoveParticipant,
     required this.onOpenDirectChat,
     required this.onLeaveGroup,
+    this.onDeleteChat,
     required this.onOpenSearch,
     required this.onNotificationLevelChanged,
     required this.onAutoDeleteChanged,
@@ -41,6 +42,7 @@ class _ChatInfoSheet extends StatefulWidget {
   final Future<ChatDetails> Function(String participantId) onRemoveParticipant;
   final void Function(ChatParticipantSummary participant) onOpenDirectChat;
   final Future<void> Function() onLeaveGroup;
+  final Future<void> Function({required bool forAll})? onDeleteChat;
   final VoidCallback onOpenSearch;
   final Future<void> Function(ChatNotificationLevel level)
       onNotificationLevelChanged;
@@ -424,6 +426,43 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                     minimumSize: const Size.fromHeight(48),
                   ),
                 ),
+                if (widget.onDeleteChat != null &&
+                    _details.createdBy == widget.currentUserId) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    key: const Key('chat-info-delete-group-all'),
+                    onPressed: _isSaving
+                        ? null
+                        : () => _confirmAndDeleteChat(forAll: true),
+                    icon: const Icon(Icons.delete_forever_outlined),
+                    label: const Text('Удалить группу для всех'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                      side: BorderSide(
+                        color: theme.colorScheme.error.withValues(alpha: 0.5),
+                      ),
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                  ),
+                ],
+              ],
+              if (_details.isDirect && widget.onDeleteChat != null) ...[
+                const SizedBox(height: 18),
+                OutlinedButton.icon(
+                  key: const Key('chat-info-delete-direct'),
+                  onPressed: _isSaving
+                      ? null
+                      : () => _confirmAndDeleteChat(forAll: false),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  label: const Text('Удалить чат'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: theme.colorScheme.error,
+                    side: BorderSide(
+                      color: theme.colorScheme.error.withValues(alpha: 0.5),
+                    ),
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                ),
               ],
             ],
           ),
@@ -646,6 +685,60 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
           _isSaving = false;
         });
       }
+    }
+  }
+
+  Future<void> _confirmAndDeleteChat({required bool forAll}) async {
+    final onDeleteChat = widget.onDeleteChat;
+    if (onDeleteChat == null) return;
+    bool confirmed = false;
+    if (forAll) {
+      confirmed = await showSafeDeleteConfirmation(
+        context,
+        title: 'Удалить группу для всех?',
+        body: 'Чат и вся переписка будут удалены навсегда у всех участников. '
+            'Это действие нельзя отменить.',
+        confirmLabel: 'Удалить',
+      );
+    } else {
+      confirmed = (await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Удалить чат?'),
+              content: const Text(
+                'Чат и текущая переписка будут скрыты и очищены только у вас.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Отмена'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Удалить'),
+                ),
+              ],
+            ),
+          )) ==
+          true;
+    }
+    if (!mounted || !confirmed) return;
+
+    setState(() {
+      _isSaving = true;
+    });
+    try {
+      await onDeleteChat(forAll: forAll);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+      });
+      showAppSnackBar(
+        context,
+        humanizeError(error, fallback: 'Не удалось удалить чат.'),
+        isError: true,
+      );
     }
   }
 

@@ -284,27 +284,76 @@ class StoryRequestPersonSummary {
   }
 }
 
-/// Payload для `POST /v1/story-requests/:id/answer` (контракт §1: три
-/// формы тела запроса по `kind`). Именованные фабрики вместо Dart 3
-/// sealed-иерархии — SDK floor ≥2.17 <4.0 (CLAUDE.md запрещает records/
-/// patterns/sealed для этого клиента).
+/// Результат `PUT /v1/story-requests/:id/media?kind=audio|photo`.
+class StoryUploadedMedia {
+  const StoryUploadedMedia({
+    required this.url,
+    this.transcript,
+  });
+
+  final String url;
+  final String? transcript;
+}
+
+class StoryAudioPart {
+  const StoryAudioPart({
+    required this.mediaUrl,
+    this.durationSec,
+    this.transcript,
+  });
+
+  final String mediaUrl;
+  final int? durationSec;
+  final String? transcript;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'mediaUrl': mediaUrl,
+        if (durationSec != null) 'durationSec': durationSec,
+        if (transcript != null && transcript!.trim().isNotEmpty)
+          'transcript': transcript!.trim(),
+      };
+}
+
+class StoryPhotoPart {
+  const StoryPhotoPart({
+    required this.mediaUrl,
+    this.caption,
+  });
+
+  final String mediaUrl;
+  final String? caption;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'mediaUrl': mediaUrl,
+        if (caption != null && caption!.trim().isNotEmpty)
+          'caption': caption!.trim(),
+      };
+}
+
+/// Payload для `POST /v1/story-requests/:id/answer`: три legacy-формы по
+/// `kind` и комбинированный формат v2 (`{audio, text, photo}`).
 class StoryRequestAnswerInput {
   const StoryRequestAnswerInput._({
     required this.kind,
     this.mediaUrl,
     this.durationSec,
+    this.transcript,
     this.text,
     this.caption,
+    this.audio,
+    this.photo,
   });
 
   factory StoryRequestAnswerInput.audio({
     required String mediaUrl,
     required int durationSec,
+    String? transcript,
   }) {
     return StoryRequestAnswerInput._(
       kind: StoryRequestAnswerKind.audio,
       mediaUrl: mediaUrl,
       durationSec: durationSec,
+      transcript: transcript,
     );
   }
 
@@ -326,19 +375,54 @@ class StoryRequestAnswerInput {
     );
   }
 
+  factory StoryRequestAnswerInput.combined({
+    StoryAudioPart? audio,
+    String? text,
+    StoryPhotoPart? photo,
+  }) {
+    final cleanText = text?.trim();
+    final primaryKind = audio != null
+        ? StoryRequestAnswerKind.audio
+        : (cleanText != null && cleanText.isNotEmpty
+            ? StoryRequestAnswerKind.text
+            : StoryRequestAnswerKind.photo);
+    return StoryRequestAnswerInput._(
+      kind: primaryKind,
+      audio: audio,
+      text: cleanText != null && cleanText.isNotEmpty ? cleanText : null,
+      photo: photo,
+      mediaUrl: audio?.mediaUrl ?? photo?.mediaUrl,
+      durationSec: audio?.durationSec,
+      transcript: audio?.transcript,
+      caption: photo?.caption,
+    );
+  }
+
   final StoryRequestAnswerKind kind;
   final String? mediaUrl;
   final int? durationSec;
+  final String? transcript;
   final String? text;
   final String? caption;
+  final StoryAudioPart? audio;
+  final StoryPhotoPart? photo;
 
   Map<String, dynamic> toJson() {
+    if (audio != null || photo != null) {
+      return <String, dynamic>{
+        if (audio != null) 'audio': audio!.toJson(),
+        if (text != null && text!.trim().isNotEmpty) 'text': text!.trim(),
+        if (photo != null) 'photo': photo!.toJson(),
+      };
+    }
     switch (kind) {
       case StoryRequestAnswerKind.audio:
         return {
           'kind': 'audio',
           'mediaUrl': mediaUrl,
           'durationSec': durationSec,
+          if (transcript != null && transcript!.trim().isNotEmpty)
+            'transcript': transcript!.trim(),
         };
       case StoryRequestAnswerKind.text:
         return {'kind': 'text', 'text': text};

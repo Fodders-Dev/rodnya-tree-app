@@ -63,4 +63,8 @@ abstract class GraphPersonAccessCapableFamilyTreeService {
   /// GET /v1/me/issued-grants. Active + revoked-since-30d grants
   /// выписанные viewer'ом (outgoing side, Phase 3.4-prep).
   Future<List<EditGrant>> listMyIssuedGrants();
+
+  /// DELETE /v1/me/edit-grants/:grantId. Позволяет получателю доступа
+  /// самостоятельно отказаться от выданного ему права.
+  Future<EditGrant> relinquishMyEditGrant({required String grantId});
 }

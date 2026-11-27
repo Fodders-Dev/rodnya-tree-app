@@ -26,20 +26,20 @@ flowchart LR
 
     subgraph sgMemory ["Память и истории"]
         profileArticle["ProfileArticle (блоки биографии)"]
-        storyRequest["StoryRequest (нет PATCH, асимметрия ответов)"]
-        trashEntity["Trash: DeletedPerson и Post (RBAC viewer дыра)"]
+        storyRequest["StoryRequest (v2 parity + PATCH + /story/:token)"]
+        trashEntity["Trash: DeletedPerson и Post (RBAC закрыт в Wave A)"]
     end
 
     subgraph sgFeedEntities ["Лента и социальное"]
-        postEntity["Post + Comment (нет PATCH и delete Comment UI)"]
-        pollEntity["Poll (нет PATCH и нет delete UI)"]
-        gatheringEntity["Gathering (нет PATCH и нет delete UI)"]
-        story24h["Story 24h (архив пуст на бэке)"]
+        postEntity["Post + Comment (полный CRUD)"]
+        pollEntity["Poll (PATCH + closeNow + unvote + delete UI)"]
+        gatheringEntity["Gathering (PATCH + delete UI)"]
+        story24h["Story 24h (архив + delete, 365д)"]
         circleEntity["Circle (в UI read-only, нет owner check)"]
     end
 
     subgraph sgCommEntities ["Общение"]
-        chatEntity["Chat (нет DELETE и mute, сирота-админ)"]
+        chatEntity["Chat (archive/mute/delete + передача createdBy)"]
         chatMessage["ChatMessage (полный CRUD)"]
         callEntity["Call LiveKit (история только в чате)"]
     end
@@ -47,8 +47,8 @@ flowchart LR
     subgraph sgAccess ["Приглашения и права"]
         semyaInvite["SemyaInvitation (нет decline и preview)"]
         browseToken["SemyaBrowseToken (гостевой просмотр)"]
-        editGrant["EditGrant (нет UI выдачи права)"]
-        legacyInvite["Legacy TreeInvite + Claim (RBAC дыры)"]
+        editGrant["EditGrant (UI выдачи + отзыв + отказ)"]
+        legacyInvite["Legacy TreeInvite + Claim (RBAC усилен)"]
         mergeIdentity["MergeProposal + IdentityClaim"]
     end
 
@@ -85,9 +85,9 @@ flowchart LR
     classDef warn fill:#FFECBD,stroke:#FFC943
     classDef crit fill:#FFCDC2,stroke:#FF7556
 
-    class familyPerson,familyRelation,profileArticle,chatMessage,semyaInvite,browseToken ok
-    class semyaEntity,familyTree,storyRequest,postEntity,story24h,circleEntity,chatEntity,editGrant warn
-    class trashEntity,pollEntity,gatheringEntity,legacyInvite crit
+    class familyPerson,familyRelation,profileArticle,storyRequest,postEntity,pollEntity,gatheringEntity,story24h,chatEntity,chatMessage,editGrant,semyaInvite,browseToken ok
+    class semyaEntity,familyTree,circleEntity,trashEntity warn
+    class legacyInvite crit
 
     style sgCore fill:#C2E5FF,stroke:#3DADFF
     style sgMemory fill:#DCCCFF,stroke:#874FFF
@@ -103,7 +103,7 @@ flowchart LR
 | **Owner (`owner`)** | `SemyaMember.role === 'owner'` (ранг 3 в дереве / 2 в семье); либо владелец ресурса (`userId`, `creatorId`, `authorId`) | Управление семьёй, ролями, `hasInviteGrant`, отзыв любых инвайтов/токенов, удаление дерева, управление привязанными персонами | В legacy-пути (`!tree.semyaId` или `RODNYA_FEDERATED_SEMYI_ENABLED=false`) `requireTreeAccess` игнорирует `requiredRole`. `include-rules` проверяет только `tree.creatorId`. Владелец семьи не может модерировать чужие посты/опросы/встречи. |
 | **Editor (`editor`)** | `SemyaMember.role === 'editor'`; опционально флаг `hasInviteGrant` | Добавление/правка неклеймленных персон, связей, кругов, мердж (с грантами), публикация в ленте | С `hasInviteGrant` может приглашать и создавать browse/claim-токены. *(Исправлено в Wave A: legacy `TreeInvitation` теперь тоже проверяет `hasInviteGrant` и не позволяет редактору разбанить кикнутого.)* |
 | **Viewer (`viewer`)** | `SemyaMember.role === 'viewer'` | Чтение дерева, ленты, биографий, карточек, чатов; правка **только своей** привязанной персоны; реакции, комментарии, голоса в опросах и RSVP во встречах | *(Исправлено в Wave A: `viewer` больше НЕ может публиковать посты/истории/опросы/встречи и НЕ может восстанавливать/чистить чужих людей в `DeletedPerson`.)* |
-| **Person Steward / Grantee** | `graphPerson.userId || createdBy` или активный `GraphPersonEditGrant` (`edit`, `soft-delete`, `merge-consent`) | Правка, удаление или склейка конкретной клеймленной персоны | `PUT /persons/:id/attributes` дополнительно требует `_isPersonSteward` даже при наличии `EditGrant`. В UI нет точки выдачи `addGraphPersonGrant`. |
+| **Person Steward / Grantee** | `graphPerson.userId || createdBy` или активный `GraphPersonEditGrant` (`edit`, `soft-delete`, `merge-consent`) | Правка, удаление или склейка конкретной клеймленной персоны | `PUT /persons/:id/attributes` дополнительно требует `_isPersonSteward` даже при наличии `EditGrant`. Выдача и отзыв прав — через `GrantEditAccessSheet` на карточке персоны («Соавторы») и в `/profile/access`; отказ получателя — через `DELETE /v1/me/edit-grants/:grantId` *(Wave B2a)*. |
 | **Guest (Anonymous)** | Capability-токен `/story/:token`, `/browse/:token`, публичное дерево `/public/tree/:id` | Ответ на «Спросить историю v2» (аудио/текст/фото), чтение урезанного дерева (`browse`) или публичного дерева (`public`) | У `/public/trees/*` нет переключения приватности после создания дерева. |
 | **Admin** | `RODNYA_BACKEND_ADMIN_EMAILS` (`requireAdmin`) | Просмотр и резолв жалоб (`/v1/admin/reports*`), диагностика (`/v1/admin/runtime`, `client-diagnostics`) | Только серверная модерация жалоб; системный доступ. |
 
@@ -158,7 +158,7 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
   1. **Рассинхрон `Semya` ↔ `FamilyTree`:** переименование семьи (`PATCH /v1/semya/:id`) не меняет `tree.name`; удаление дерева бьёт всё хардом + soft-delete семьи, а удаление семьи оставляет дерево без владельца; переименовать дерево нельзя вообще.
   2. **Claimed vs Anonymous `FamilyPerson`:** привязанная к реальному аккаунту карточка защищена `owner` + `EditGrant`, но обходы через legacy `pending/process` или `DeletedPerson` (viewer!) ломают эту защиту.
   3. **Удаление аккаунта (`deleteUser`):** удаление последнего `owner` оставляет бесхозную `Semya`, куда никто не может войти как владелец.
-  4. **Выход создателя из группового чата:** `createdBy` может уйти через `/leave`, но права кикать зашиты на `chat.createdBy === caller` и не передаются.
+  4. **Выход создателя из группового чата:** *(Закрыто в Wave B2a)* при `leave` / `DELETE` создатель передаёт `createdBy` следующему активному участнику либо пустая группа удаляется.
   5. **Двойной источник правды в приглашениях/онбординге:** старые роуты `/onboarding`, `/complete_profile`, `/invite?treeId=&personId=`, `TreeInvitation` и `/public/tree/*` всё ещё смонтированы и конкурируют с `/setup`, `/invite/:token` и `/browse/:token`.
 
 ---
@@ -178,16 +178,16 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 | **7. `FamilyPerson` & `GraphPerson`** | Back ✓ (`POST /persons`, `import`, `pull-person`)<br>UI ✓ (`/relatives/add`, quick-add, pull) | Back ✓ (`persons`, `dossier`, `search`, `graph-persons/:id`)<br>UI ✓ (`/tree`, `/family`, `/relative/details/:id`) | Back ✓ (`PATCH`, медиа, атрибуты, visibility)<br>UI ✓ (полная правка) | Back ✓ (гранты, visibility, pull)<br>UI ⚠️ (нет UI выдачи `EditGrant`) | Back ✓ (soft-delete 30d + `hide-filter`)<br>UI ✓ (скрыть в семье + корзина) | Back ✓ (soft-delete + `unlink`)<br>UI ✓ | Anon: `editor+`; Claimed: owner или `EditGrant` | `GET /persons/:id` не проверяет `hide-filter`; `PUT /attributes` требует `_isPersonSteward` *(Wave A починил отзыв `semyaMembers` при `unlinkUserFromPerson`)* |
 | **8. `FamilyRelation` & `KinshipCheck`** | Back ✓ (`POST /relations`, `kinship-checks`)<br>UI ✓ (`AddRelative`, `Tree`, `Discover`) | Back ✓ (`GET /relations`, `graph/relation`)<br>UI ✓ (`RelativeDetails`, `Discover`) | Back ⚠️ (upsert по паре, нет `PATCH /:id`)<br>UI ✓ (смена типа связи) | — | ❌ (нет архива) | Back ✓ (`DELETE /relations/:id` hard; `kinship/revoke`)<br>UI ✓ | `editor+` для связей; инициатор/цель для `KinshipCheck` | В UI нельзя изменить даты брака/развода без пересоздания; `DELETE` сразу hard-delete |
 | **9. `ProfileArticle` (Биография)** | Back ✓ (авто при 1-м блоке)<br>UI ✓ (`ProfileArticleEditorScreen`) | Back ✓ (`article`, `article/history`)<br>UI ✓ (`ArticleReadView`, `AllPhotos`, `Voice`, `History`) | Back ✓ (`POST/PATCH/PUT order`)<br>UI ✓ (полный редактор блоков) | ❌ (наследует доступ дерева) | ❌ (история read-only, нет rollback) | Back ⚠️ (удаление только по блоку, не всей статьи)<br>UI ✓ (блок) | `requireGraphPersonEdit(..., "edit")` (LWW) | История изменений без кнопки «Откатить»; при purge персоны `profileArticle` остаётся в БД |
-| **10. `StoryRequest` («Спросить историю v2»)** | Back ✓ (`POST /story-requests`)<br>UI ✓ (`FamilyStoryQuestionsSheet`) | Back ✓ (`me/story-requests`, `:id`, `/story/:token`)<br>UI ✓ (строка статуса, `Notifications`) | **❌ нет `PATCH`** (нельзя поправить вопрос/срок) | Back ✓ (`shareToken` / `/story/:token`)<br>UI ✓ (копия/шаринг) | ❌ (нельзя скрыть завершённые) | Back ⚠️ (`revoke`/`decline`, нет `DELETE` истории)<br>UI ✓ (`Отозвать`/`Отклонить`) | Инициатор (`edit` персоны или свой вопрос) и адресат / гость с токеном | Гость на `/story/:token` может прислать audio+text+photo+STT вместе, а in-app ответ принимает только 1 тип за раз без транскрипта |
+| **10. `StoryRequest` («Спросить историю v2»)** | Back ✓ (`POST /story-requests`)<br>UI ✓ (`FamilyStoryQuestionsSheet`) | Back ✓ (`me/story-requests`, `:id`, `/story/:token`)<br>UI ✓ (строка статуса + текст вопроса, `Notifications`) | **Back ✓ (`PATCH /story-requests/:id`)**<br>**UI ✓ («Изменить» в `StoryRequestStatusLine`)** | Back ✓ (`shareToken` / `/story/:token`)<br>UI ✓ (копия/шаринг) | ❌ (нельзя скрыть завершённые) | Back ⚠️ (`revoke`/`decline`, без hard `DELETE`)<br>UI ✓ (`Отозвать`/`Отклонить`) | Инициатор (`edit` персоны или свой вопрос) и адресат / гость с токеном | Комбинированный ответ (`audio+STT+text+photo`) и `PUT /media` выровнены между `/story/:token` и in-app `StoryRequestAnswerScreen` *(Wave B2a)* |
 | **11. `Post`** | Back ✓ (`POST /posts`)<br>UI ✓ (`/post/create`, `/post/album`) | **Back ✓ (`GET /posts/:id`)**<br>**UI ✓ (`PostDetailScreen` `/post/:postId`)** | **Back ✓ (`PATCH /posts/:id`)**<br>**UI ✓ (`PostCard` «Редактировать»)** | Back ✓ (permalink `/post/:id`)<br>UI ✓ | Back ✓ (soft-delete 30d `deletedPosts`)<br>UI ✓ (`TrashScreen`) | Back ✓ (`DELETE` автор / `Semya owner`)<br>UI ✓ | Публикация: `editor+` *(Wave A)*; правка: автор; удаление: автор / `Semya owner` | Полный CRUD закрыт *(Wave B1)* |
 | **12. `Comment`** | Back ✓ (`POST /comments`)<br>UI ✓ (`CommentSheet`) | Back ✓ (`GET /comments`)<br>UI ✓ (`CommentSheet`) | **Back ✓ (`PATCH /comments/:id`)**<br>**UI ✓ (inline edit в `CommentSheet`)** | — | ❌ | Back ✓ (`DELETE` автор / пост / `Semya owner`)<br>**UI ✓ (`CommentSheet` меню `⋮`)** | Создание: `viewer+`; правка: автор; удаление: автор коммента/поста или `Semya owner` | Полный CRUD закрыт *(Wave B1)* |
-| **13. `Story` (24h)** | Back ✓ (`POST /stories`)<br>UI ✓ (`/stories/create`) | Back ✓ (`GET /stories`, view, reactions)<br>UI ✓ (`StoryViewerScreen`) | **❌ нет `PATCH`**<br>UI ❌ | ❌ | Back **❌ не отдаёт истёкшие**<br>UI ⚠️ (`StoryArchiveScreen` всегда пуст) | Back ✓ (`DELETE` hard, автор / `Semya owner`)<br>UI ✓ (в просмотрщике) | Публикация: `editor+` *(Wave A)*; удаление: автор или `Semya owner` | **Экран «Архив историй» в профиле всегда пустой** (бэкенд чистит/не возвращает истёкшие истории) |
+| **13. `Story` (24h)** | Back ✓ (`POST /stories`)<br>UI ✓ (`/stories/create`) | Back ✓ (`GET /stories`, `?includeArchive=true` автору, view, reactions)<br>UI ✓ (`StoryViewerScreen`, `StoryArchiveScreen`) | ❌ нет `PATCH` *(для 24h сторис не требуется)* | Back ✓ (круг / дерево)<br>UI ✓ | **Back ✓ (истёкшие хранятся 365д в архиве автора)**<br>**UI ✓ (`StoryArchiveScreen` + CTA)** | Back ✓ (`DELETE` активные и истёкшие, автор / `Semya owner`)<br>**UI ✓ (просмотрщик + `StoryArchiveScreen`)** | Публикация: `editor+` *(Wave A)*; архив: только автор; удаление: автор или `Semya owner` | Полный цикл архива историй закрыт *(Wave B2a)* |
 | **14. `Poll` (Опросы)** | Back ✓ (`POST /polls`)<br>UI ✓ (`/poll/create`) | Back ✓ (`GET /polls`, `:id`, `respond`)<br>UI ✓ (`PollCard` в ленте) | **Back ✓ (`PATCH /polls/:id` + `DELETE /respond`)**<br>**UI ✓ (правка / досрочное закрытие / «Снять голос»)** | — | ❌ | Back ✓ (`DELETE` hard, автор / `Semya owner`)<br>**UI ✓ (`PollCard` меню `⋮`)** | Создание: `editor+` *(Wave A)*; правка: автор; закрытие/удаление: автор / `Semya owner` | Полный CRUD + закрытие + отзыв голоса закрыты *(Wave B1)* |
 | **15. `Gathering` (Встречи)** | Back ✓ (`POST /gatherings`)<br>UI ✓ (`/gathering/create`) | **Back ✓ (`GET /gatherings` с опциональным `treeId`)**<br>UI ✓ (`GatheringCard`, `/calendar`) | **Back ✓ (`PATCH /gatherings/:id`)**<br>**UI ✓ (`CreateGatheringScreen` edit mode)** | — | ❌ | Back ✓ (`DELETE` hard, автор / `Semya owner`)<br>**UI ✓ (`GatheringCard` меню `⋮`)** | Создание: `editor+` *(Wave A)*; правка: автор; удаление: автор / `Semya owner` | Полный CRUD + audience mode «Все» закрыты *(Wave B1)* |
-| **16. `Chat` & `ChatMessage`** | Back ✓ (`direct`, `groups`, `branches`, `messages`)<br>UI ✓ (`ChatsList`, `ChatScreen`) | Back ✓ (`chats`, `search`, `messages`)<br>UI ✓ (`/chats`, `/chats/view/:id`) | Back ✓ (только группа title/photo, свои сообщения)<br>UI ✓ (`ChatInfoSheet`, правка сообщения) | Back ❌ (сообщения без forward endpoint)<br>UI ⚠️ (forward как пересылка) | Back **❌ нет archive/mute**<br>UI ⚠️ (**локальный** архив/mute в SharedPrefs) | Back ⚠️ (только `leave` группы и delete message; **нет `DELETE /chats/:id`**)<br>UI ⚠️ (только `Leave`) | Любой участник переименовывает группу и добавляет людей; кикает только `createdBy` | **Нельзя удалить/очистить личный чат**, нет серверного mute/архива; уход `createdBy` делает группу навсегда без админа; 2 лишних роута |
+| **16. `Chat` & `ChatMessage`** | Back ✓ (`direct`, `groups`, `branches`, `messages`)<br>UI ✓ (`ChatsList`, `ChatScreen`) | Back ✓ (`chats`, `search`, `messages` с `hiddenAt`/`clearedBefore`)<br>UI ✓ (`/chats`, `/chats/view/:id`) | Back ✓ (`title/photo` + **серверные `PATCH /preferences` mute/archive**)<br>**UI ✓ (`ChatsListScreen`, `ChatScreen`, `ChatInfoSheet`)** | Back ⚠️ (пересылка вложениями)<br>UI ✓ | **Back ✓ (`memberPrefs.isArchived`, `notificationLevel`)**<br>**UI ✓ (синхронизация с сервером)** | **Back ✓ (`DELETE /chats/:id` + передача `createdBy` при `leave`)**<br>**UI ✓ (`Удалить чат` / `Удалить у всех` / `Покинуть группу`)** | Группа: участники меняют тему/участников, `createdBy` передаётся при выходе; личный чат: per-user hide/clear | Жизненный цикл и серверные настройки чатов закрыты *(Wave B2a; 2 лишних роута вынесем в Wave C)* |
 | **17. `Call` (LiveKit)** | Back ✓ (`POST /calls`)<br>UI ✓ (`ChatScreen`, `ChatsList`) | Back ✓ (`active`, `:callId`)<br>UI ✓ (`CallScreen`) | Back ✓ (`nudge`, `add`)<br>UI ✓ (добавление в звонок) | ❌ | — | Back ✓ (`reject`, `cancel`, `hangup`)<br>UI ✓ | Участники чата/звонка | Отдельного списка истории звонков нет (история в чате — ОК для текущей версии) |
 | **18. `Circle` (Аудитории)** | Back ✓ (`POST /circles`)<br>**UI ❌** | Back ✓ (`circles`, `audience-presets`, `members`)<br>UI ✓ (только выбор аудитории) | Back ✓ (`PATCH`, `PUT members`)<br>**UI ❌** | — | ❌ | Back ✓ (`DELETE custom`)<br>**UI ❌** | Любой `editor+` (нет проверки автора круга!) | **В UI 100% read-only**; на бэке при удалении круга `stories/gatherings/polls` не перепривязываются к `all_tree` |
-| **19. `EditGrant`, `Trash`, `MergeProposal`, `Notification`** | Back ✓ (`grants`, soft-delete, `identity-claims`)<br>UI ⚠️ (**нет UI создания `EditGrant`**) | Back ✓ (`issued/edit-grants`, `deleted-persons/posts`, `merge-proposals`, `notifications`)<br>UI ✓ (`/profile/access`, 2 корзины, `/identity/review`, `/notifications`) | Back ✓ (`review`, `conflicts/resolve`, `notifications/read`)<br>UI ✓ | — | Back ✓ (`restore`, `unmerge`)<br>UI ✓ | Back ⚠️ (`grants DELETE`, `trash DELETE`; нет delete у `Notification` и cancel у `IdentityClaim`) | `EditGrant`: владелец; `Trash` posts: автор/owner; `Trash` persons: `editor+` (anon) / owner или grant (claimed) *(Wave A)* | 2 дубля корзин в UI; нет UI выдачи `EditGrant` *(Wave A закрыл P0 дыру с правами `viewer` на `DeletedPerson`)* |
+| **19. `EditGrant`, `Trash`, `MergeProposal`, `Notification`** | **Back ✓ (`POST grants` + push)**<br>**UI ✓ (`GrantEditAccessSheet`)** | Back ✓ (`issued/edit-grants`, `deleted-persons/posts`, `merge-proposals`, `notifications`)<br>UI ✓ (`/profile/access`, 2 корзины, `/identity/review`, `/notifications`) | Back ✓ (`review`, `conflicts/resolve`, `notifications/read`)<br>UI ✓ | — | Back ✓ (`restore`, `unmerge`)<br>UI ✓ | **Back ✓ (`DELETE grants`, `DELETE /me/edit-grants/:grantId`, `trash DELETE`)**<br>**UI ✓ («Отозвать» + «Отказаться»)** | `EditGrant`: владелец + отказ получателя; `Trash` posts: автор/owner; `Trash` persons: `editor+` / owner / grant *(Wave A)* | `EditGrant` UI закрыт *(Wave B2a)*; 2 дубля корзин в UI и cancel `IdentityClaim` — в следующих волнах |
 
 ---
 
@@ -254,7 +254,7 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 | `create_poll_screen.dart` | `/poll/create` | `Новый опрос` | Вопрос, варианты, дедлайн, аудитория → `/` | `[ОСТАВЛЯЕМ]` (+ edit/delete) |
 | `create_story_screen.dart` | `/stories/create` | `История` | 24ч фото/видео/кружок/текст → `/` | `[ОСТАВЛЯЕМ]` |
 | `story_viewer_screen.dart` | `/stories/view/:treeId/:authorId` | Имя автора (полный экран) | Просмотр, реакции, удаление своей истории | `[ОСТАВЛЯЕМ]` |
-| `story_archive_screen.dart` | `/profile/stories/archive` | `Архив историй` | Фильтр истёкших историй (**бэкенд не отдаёт → всегда пусто**) | `[ДОЧИНИТЬ ИЛИ СНЕСТИ]` |
+| `story_archive_screen.dart` | `/profile/stories/archive` | `Архив историй` | Архив истёкших историй автора (`includeArchive=true`), удаление, лайтбокс, CTA «Создать историю» *(Wave B2a)* | `[ОСТАВЛЯЕМ]` |
 | `notifications_screen.dart` | `/notifications` | `Активность` | Уведомления + блок «Мне задали вопрос» → `/story-requests/:id/answer`, дерево, чат, инвайт | `[ОСТАВЛЯЕМ]` |
 
 #### D. Дерево, публичный просмотр и поиск родных (11)
@@ -309,7 +309,7 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 | Экран | Маршрут / Вход | UI-название | Ключевые действия и выходы | Вердикт |
 |---|---|---|---|---|
 | `settings_screen.dart` | `/profile/settings` (`/settings`) | `Настройки` | Тема, уведомления, `Моя семья`, скрытые, корзина, доступы, сеансы, блокировки, звонки, APK, выход, удаление аккаунта | `[ОСТАВЛЯЕМ]` |
-| `access_grants_screen.dart` | `/profile/access` | `Доступы` | Вкладки «Кому я разрешил» / «Что мне разрешено», отзыв | `[ОСТАВЛЯЕМ]` (+ добавить создание гранта!) |
+| `access_grants_screen.dart` | `/profile/access` | `Доступы` | Вкладки «Кому я разрешил» / «Что мне разрешено», выдача (`GrantEditAccessSheet`), отзыв и «Отказаться» *(Wave B2a)* | `[ОСТАВЛЯЕМ]` |
 | `blocked_users_screen.dart` | `/profile/blocks` | `Заблокированные пользователи` | Просмотр и разблокировка | `[ОСТАВЛЯЕМ]` |
 | `sessions_screen.dart` | `/profile/sessions` | `Активные сеансы` | Переименование устройства, отзыв сеанса, вход в QR-сканер | `[ОСТАВЛЯЕМ]` |
 | `qr_login_scan_screen.dart` | `/profile/sessions/scan` | `Сканировать QR` | Подтверждение QR-входа на десктопе/вебе | `[ОСТАВЛЯЕМ]` |
@@ -344,11 +344,11 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
    - Добавлены `GET /v1/trees/:treeId` и `PATCH /v1/trees/:treeId` (переименование, описание, `isPrivate`, `publicSlug`) + диалог редактирования дерева в `TreeSelectorScreen`; `semya.name/description ↔ tree.name/description` синхронизируются в обе стороны.
    - Заменён хардкод `tree.creatorId` в `updateBranchIncludeRules` (`graph-visibility.js`) и `restoreSemya` (`semyi.js`) на проверку активного `Semya owner`; `_userCanAccessTreeRecord` больше не раскрывает дерево мягко удалённой `Semya`.
    - Добавлены `POST /v1/semya/:id/restore` (90 дней), sweep `db.semyi` (90д) в `hardDeleteExpired` (`FileStore` + `PostgresStore` `_deletedPersonsTable`), и UI-кнопка «Удалить семью» для `owner` на `SemyaDetailsScreen`.
-3. **Права, чаты и память:**
-   - Сделать UI выдачи `EditGrant` (`addGraphPersonGrant`) из карточки человека или экрана `/profile/access`.
-   - Чаты: `DELETE /v1/chats/:chatId` (удалить/скрыть у себя для direct), серверный mute/archive, передача прав `createdBy` при `leave` группы.
-   - «Архив историй» (`/profile/stories/archive`): либо отдавать истёкшие истории с бэкенда, либо убрать пустой пункт до реализации (Delete-first).
-   - «Спросить историю v2»: выровнять in-app ответ с гостевым `/story/:token` (комбинированный audio+text+photo+STT), добавить редактирование вопроса.
+3. **Права, чаты и память — ✅ Закрыто в Wave B2a (2026-11-27):**
+   - Добавлен `GrantEditAccessSheet` + кнопка «Соавторы» на карточке человека и «Выдать доступ» в `/profile/access`, уведомление `edit_grant_received`, а также `DELETE /v1/me/edit-grants/:grantId` и кнопка «Отказаться» для получателя гранта (при сохранении owner-only запрета на `DELETE /v1/graph-persons/:id/grants/:grantId`).
+   - Добавлены серверные `memberPrefs` (`PATCH /v1/chats/:chatId/preferences`: `isArchived`, `notificationLevel` с подавлением пушей для `muted`), `DELETE /v1/chats/:chatId` (скрытие/очистка `direct`, выход/удаление группы с передачей `createdBy` следующему участнику) и синхронизация во Flutter (`ChatsListScreen`, `ChatScreen`, `ChatInfoSheet`).
+   - Включён реальный «Архив историй» (`GET /v1/stories?includeArchive=true` только для автора, ретеншн 365 дней в maintenance sweep, удаление истёкших историй в `StoryArchiveScreen` + CTA «Создать историю»).
+   - Выровнен in-app ответ «Спросить историю v2» с гостевым `/story/:token`: комбинированный ответ `audio + STT + text + photo` через `PUT /v1/story-requests/:id/media` + `POST /answer`, а также редактирование вопроса `PATCH /v1/story-requests/:id` (`_EditStoryRequestDialog` в `StoryRequestStatusLine`).
 4. **Прочие точечные пробелы владения:**
    - Разрешить инициатору отменять свой `RelationRequest` (`canceled` сейчас даёт 403) и просматривать/отменять свой pending `IdentityClaim`.
    - Проверять владельца `Circle` при правке/удалении + перепривязывать `stories`/`gatherings`/`polls` при удалении круга (сейчас перепривязываются только `posts`), либо убрать `Circle` из CRUD-плана, оставив системные пресеты.

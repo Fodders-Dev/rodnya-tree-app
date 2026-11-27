@@ -1967,48 +1967,23 @@ module.exports = {
     treeId = null,
     authorId = null,
     viewerUserId = null,
+    includeArchive = false,
     db: prefetchedDb = null,
   } = {}) {
     const db = prefetchedDb || (await this._read());
     const now = Date.now();
-    const activeStories = [];
-    let removedExpiredStories = false;
+    const visibleStories = [];
 
     for (const story of db.stories) {
-      if (isExpiredAt(story.expiresAt, now)) {
-        removedExpiredStories = true;
+      const expired = isExpiredAt(story.expiresAt, now);
+      if (expired && (!includeArchive || !viewerUserId || story.authorId !== viewerUserId)) {
         continue;
       }
-      activeStories.push(story);
-    }
-
-    if (removedExpiredStories) {
-      // SPEED-11: used to reassign db.stories and _write(db) directly — with
-      // prefetchedDb possibly being the frozen, cross-request shared
-      // readSharedSnapshot() (SPEED-11), that reassignment would silently
-      // no-op (frozen object, sloppy-mode assignment) and the _write would
-      // persist a snapshot that could already be stale relative to what
-      // other requests wrote meanwhile — an actual lost-update risk even
-      // on the old private-clone path (fixed here as a side effect, not
-      // just worked around). The response below is already computed from
-      // `activeStories` (a fresh in-memory filter, independent of db.stories)
-      // so it doesn't depend on this write landing before we return. Pruning
-      // itself moves to _mutate — an atomic read-modify-write that re-reads
-      // fresh state instead of persisting a snapshot we merely observed.
-      await this._mutate((freshDb, skip) => {
-        const stillActive = freshDb.stories.filter(
-          (entry) => !isExpiredAt(entry.expiresAt, now),
-        );
-        if (stillActive.length === freshDb.stories.length) {
-          return skip(null);
-        }
-        freshDb.stories = stillActive;
-        return null;
-      });
+      visibleStories.push(story);
     }
 
     const circleCache = this._createCircleVisibilityCache();
-    return activeStories
+    return visibleStories
       .filter((entry) => {
         if (treeId && entry.treeId !== treeId) {
           return false;

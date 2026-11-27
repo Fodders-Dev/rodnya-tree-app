@@ -13,6 +13,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/story_service_interface.dart';
@@ -43,6 +44,7 @@ class _FakeStoryService implements StoryServiceInterface {
   Object? error;
   Completer<List<Story>>? completer;
   int callCount = 0;
+  final List<String> deletedStoryIds = <String>[];
 
   @override
   Future<List<Story>> getStories({
@@ -54,6 +56,12 @@ class _FakeStoryService implements StoryServiceInterface {
     if (completer != null) return completer!.future;
     if (error != null) return Future.error(error!);
     return Future.value(stories);
+  }
+
+  @override
+  Future<void> deleteStory(String storyId) async {
+    deletedStoryIds.add(storyId);
+    stories = stories.where((s) => s.id != storyId).toList(growable: false);
   }
 
   @override
@@ -140,7 +148,8 @@ void main() {
     );
   });
 
-  testWidgets('ошибка загрузки — сообщение и «Повторить» вызывает сервис ещё раз',
+  testWidgets(
+      'ошибка загрузки — сообщение и «Повторить» вызывает сервис ещё раз',
       (tester) async {
     final service = _FakeStoryService(error: Exception('network down'));
     await pumpArchive(tester, storyService: service);
@@ -188,5 +197,55 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('удаление истории из архива вызывает deleteStory',
+      (tester) async {
+    final service = _FakeStoryService(
+      stories: [_textStory(id: 's-1', text: 'Удаляемая история')],
+    );
+    await pumpArchive(tester, storyService: service);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('story-archive-delete-s-1')));
+    await tester.pumpAndSettle();
+
+    final confirmBtn = find.text('Удалить');
+    if (confirmBtn.evaluate().isNotEmpty) {
+      await tester.tap(confirmBtn.last);
+      await tester.pumpAndSettle();
+    }
+
+    expect(service.deletedStoryIds, ['s-1']);
+    expect(find.text('Удаляемая история'), findsNothing);
+  });
+
+  testWidgets('CTA «Создать историю» в пустом архиве ведёт на /stories/create',
+      (tester) async {
+    final service = _FakeStoryService(stories: const <Story>[]);
+    getIt.registerSingleton<StoryServiceInterface>(service);
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    final router = GoRouter(
+      initialLocation: '/profile/stories/archive',
+      routes: [
+        GoRoute(
+          path: '/profile/stories/archive',
+          builder: (_, __) => const StoryArchiveScreen(),
+        ),
+        GoRoute(
+          path: '/stories/create',
+          builder: (_, __) => const Scaffold(body: Text('create-story-route')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    final cta = find.byKey(const Key('story-archive-create-cta'));
+    expect(cta, findsOneWidget);
+    await tester.tap(cta);
+    await tester.pumpAndSettle();
+
+    expect(find.text('create-story-route'), findsOneWidget);
   });
 }

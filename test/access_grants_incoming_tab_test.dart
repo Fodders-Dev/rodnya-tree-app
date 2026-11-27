@@ -14,11 +14,36 @@ class _FakeAccessService
 
   List<EditGrant> editGrants;
   bool throwOnList = false;
+  final List<String> relinquishedIds = <String>[];
 
   @override
   Future<List<EditGrant>> listMyEditGrants() async {
     if (throwOnList) throw StateError('boom');
     return List<EditGrant>.from(editGrants);
+  }
+
+  @override
+  Future<EditGrant> relinquishMyEditGrant({required String grantId}) async {
+    relinquishedIds.add(grantId);
+    final updated = <EditGrant>[];
+    for (final grant in editGrants) {
+      if (grant.id == grantId) {
+        updated.add(EditGrant(
+          id: grant.id,
+          graphPersonId: grant.graphPersonId,
+          grantorUserId: grant.grantorUserId,
+          granteeUserId: grant.granteeUserId,
+          scope: grant.scope,
+          grantedAt: grant.grantedAt,
+          revokedAt: DateTime.now().toIso8601String(),
+          graphPerson: grant.graphPerson,
+        ));
+      } else {
+        updated.add(grant);
+      }
+    }
+    editGrants = updated;
+    return updated.firstWhere((g) => g.id == grantId);
   }
 
   @override
@@ -65,8 +90,7 @@ class _FakeAccessService
       const [];
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 EditGrant _grant({
@@ -220,5 +244,40 @@ void main() {
 
     expect(find.text('Не удалось загрузить доступы'), findsOneWidget);
     expect(find.text('Повторить'), findsOneWidget);
+  });
+
+  testWidgets('incoming: кнопка «Отказаться» вызывает relinquishMyEditGrant',
+      (tester) async {
+    final service = _FakeAccessService(editGrants: [
+      _grant(
+        id: 'g-rel-1',
+        graphPersonId: 'gp-1',
+        scope: EditGrantScope.edit,
+        graphPersonName: 'Иван Петров',
+      ),
+    ]);
+    await tester.pumpWidget(
+      _wrap(
+        AccessGrantsIncomingTab(
+          accessService: service,
+          viewerUserId: 'me',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final relinquishBtn = find.byKey(const Key('incoming-relinquish-gp-1'));
+    expect(relinquishBtn, findsOneWidget);
+    expect(find.byIcon(Icons.close_rounded), findsNothing);
+
+    await tester.tap(relinquishBtn);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Отказаться от доступа?'), findsOneWidget);
+    await tester.tap(find.text('Отказаться').last);
+    await tester.pumpAndSettle();
+
+    expect(service.relinquishedIds, ['g-rel-1']);
+    expect(find.textContaining('отозван'), findsOneWidget);
   });
 }

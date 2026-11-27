@@ -95,6 +95,58 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
     }
   }
 
+  Future<void> _edit(StoryRequest request) async {
+    final service = _service();
+    if (service == null || _revoking.contains(request.id)) return;
+    final edited = await showDialog<_EditedStoryRequestValues>(
+      context: context,
+      builder: (_) => _EditStoryRequestDialog(
+        initialQuestionText: request.question.text,
+        showTargetName: request.isPublicLink,
+        initialTargetName: request.targetName ?? '',
+      ),
+    );
+    if (edited == null || !mounted) return;
+    setState(() => _revoking.add(request.id));
+    try {
+      final updated = await service.updateStoryRequest(
+        requestId: request.id,
+        questionText: edited.questionText,
+        targetName: request.isPublicLink ? edited.targetName : null,
+      );
+      if (!mounted) return;
+      if (updated == null) {
+        setState(() => _revoking.remove(request.id));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось обновить вопрос. Попробуйте ещё раз.'),
+          ),
+        );
+        return;
+      }
+      setState(() {
+        _revoking.remove(request.id);
+        _pendingForPerson = _pendingForPerson
+            .map((r) => r.id == request.id ? updated : r)
+            .toList(growable: false);
+      });
+    } on StoryRequestError catch (e) {
+      if (!mounted) return;
+      setState(() => _revoking.remove(request.id));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _revoking.remove(request.id));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось обновить вопрос. Попробуйте ещё раз.'),
+        ),
+      );
+    }
+  }
+
   Future<void> _revoke(StoryRequest request) async {
     final service = _service();
     if (service == null || _revoking.contains(request.id)) return;
@@ -147,57 +199,82 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
         children: [
           for (final request in _pendingForPerson)
             Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    Icons.hourglass_top_rounded,
-                    size: 16,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      request.isPublicLink
-                          ? _publicLinkStatusText(request)
-                          : 'Ждём ответа: ${_targetName(request)}',
-                      style: theme.textTheme.bodyMedium?.copyWith(
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.hourglass_top_rounded,
+                        size: 16,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
-                    ),
-                  ),
-                  if (request.isPublicLink &&
-                      (request.shareUrl ?? '').isNotEmpty &&
-                      !_revoking.contains(request.id))
-                    TextButton(
-                      key: Key('story-request-copy-${request.id}'),
-                      onPressed: () async {
-                        await Clipboard.setData(
-                          ClipboardData(text: request.shareUrl!),
-                        );
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Ссылка скопирована'),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          request.isPublicLink
+                              ? _publicLinkStatusText(request)
+                              : 'Ждём ответа: ${_targetName(request)}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
-                        );
-                      },
-                      child: const Text('Скопировать'),
-                    ),
-                  _revoking.contains(request.id)
-                      ? const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : TextButton(
-                          key: Key('story-request-revoke-${request.id}'),
-                          onPressed: () => _revoke(request),
-                          child: const Text('Отозвать'),
                         ),
+                      ),
+                      if (request.isPublicLink &&
+                          (request.shareUrl ?? '').isNotEmpty &&
+                          !_revoking.contains(request.id))
+                        TextButton(
+                          key: Key('story-request-copy-${request.id}'),
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: request.shareUrl!),
+                            );
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Ссылка скопирована'),
+                              ),
+                            );
+                          },
+                          child: const Text('Скопировать'),
+                        ),
+                      if (!_revoking.contains(request.id))
+                        TextButton(
+                          key: Key('story-request-edit-${request.id}'),
+                          onPressed: () => _edit(request),
+                          child: const Text('Изменить'),
+                        ),
+                      _revoking.contains(request.id)
+                          ? const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 12),
+                              child: SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          : TextButton(
+                              key: Key('story-request-revoke-${request.id}'),
+                              onPressed: () => _revoke(request),
+                              child: const Text('Отозвать'),
+                            ),
+                    ],
+                  ),
+                  if (request.question.text.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 22),
+                      child: Text(
+                        '«${request.question.text.trim()}»',
+                        key: Key('story-request-question-${request.id}'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -217,5 +294,109 @@ class _StoryRequestStatusLineState extends State<StoryRequestStatusLine> {
       return 'Ждём ответа по ссылке: $name';
     }
     return 'Ждём ответа по ссылке';
+  }
+}
+
+class _EditedStoryRequestValues {
+  const _EditedStoryRequestValues({
+    required this.questionText,
+    this.targetName,
+  });
+
+  final String questionText;
+  final String? targetName;
+}
+
+class _EditStoryRequestDialog extends StatefulWidget {
+  const _EditStoryRequestDialog({
+    required this.initialQuestionText,
+    required this.showTargetName,
+    required this.initialTargetName,
+  });
+
+  final String initialQuestionText;
+  final bool showTargetName;
+  final String initialTargetName;
+
+  @override
+  State<_EditStoryRequestDialog> createState() =>
+      _EditStoryRequestDialogState();
+}
+
+class _EditStoryRequestDialogState extends State<_EditStoryRequestDialog> {
+  late final TextEditingController _questionController;
+  late final TextEditingController _targetController;
+
+  @override
+  void initState() {
+    super.initState();
+    _questionController =
+        TextEditingController(text: widget.initialQuestionText);
+    _targetController = TextEditingController(text: widget.initialTargetName);
+  }
+
+  @override
+  void dispose() {
+    _questionController.dispose();
+    _targetController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedLen = _questionController.text.trim().length;
+    final canSave = trimmedLen >= 3 && trimmedLen <= 500;
+    return AlertDialog(
+      title: const Text('Изменить вопрос'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            key: const Key('story-request-edit-question-field'),
+            controller: _questionController,
+            minLines: 2,
+            maxLines: 4,
+            maxLength: 500,
+            decoration: const InputDecoration(
+              labelText: 'Текст вопроса',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          if (widget.showTargetName) ...[
+            const SizedBox(height: 10),
+            TextField(
+              key: const Key('story-request-edit-target-field'),
+              controller: _targetController,
+              maxLength: 120,
+              decoration: const InputDecoration(
+                labelText: 'Кому ссылка (необязательно)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('story-request-edit-save'),
+          onPressed: canSave
+              ? () => Navigator.of(context).pop(
+                    _EditedStoryRequestValues(
+                      questionText: _questionController.text.trim(),
+                      targetName: widget.showTargetName
+                          ? _targetController.text.trim()
+                          : null,
+                    ),
+                  )
+              : null,
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
   }
 }

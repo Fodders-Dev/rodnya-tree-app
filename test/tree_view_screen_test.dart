@@ -223,6 +223,16 @@ class _FakeChatService implements ChatServiceInterface {
   Future<void> leaveGroup(String chatId) async {}
 
   @override
+  Future<void> updateChatPreferences({
+    required String chatId,
+    bool? isArchived,
+    String? notificationLevel,
+  }) async {}
+
+  @override
+  Future<bool> deleteChat(String chatId, {bool forAll = false}) async => true;
+
+  @override
   Future<void> editChatMessage({
     required String chatId,
     required String messageId,

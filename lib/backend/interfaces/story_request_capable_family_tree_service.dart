@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../models/story_request.dart';
 
 /// «Спросить историю» MVP-1 (STORY-REQUEST-MVP1-BRIEF.md §1 + §3.2):
@@ -81,4 +83,22 @@ abstract class StoryRequestCapableFamilyTreeService {
   ///
   /// Throws [StoryRequestError] for NOT_INITIATOR / NOT_PENDING.
   Future<StoryRequest?> revokeStoryRequest({required String requestId});
+
+  /// `PATCH /v1/story-requests/:id`. Initiator edits question text or public
+  /// guest targetName while request is still `pending`.
+  Future<StoryRequest?> updateStoryRequest({
+    required String requestId,
+    String? questionText,
+    String? targetName,
+  });
+
+  /// `PUT /v1/story-requests/:id/media?kind=audio|photo`. Uploads audio/photo
+  /// for an active in-app answer and returns URL + optional Whisper STT
+  /// transcript for `kind == 'audio'`.
+  Future<StoryUploadedMedia?> uploadStoryRequestMedia({
+    required String requestId,
+    required String kind,
+    required Uint8List bytes,
+    required String contentType,
+  });
 }

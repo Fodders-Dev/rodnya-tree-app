@@ -1034,7 +1034,10 @@ module.exports = {
     return result;
   },
 
-  async listChatMessages(chatId, {limit = null, beforeId = null, afterId = null} = {}) {
+  async listChatMessages(
+    chatId,
+    {limit = null, beforeId = null, afterId = null, clearedBefore = null} = {},
+  ) {
     await this.initialize();
     // Барьер write-queue тут не нужен: данные живут в чат-таблицах, чьи
     // писатели — прямой SQL, а не блоб-очередь; HTTP-порядок запросов даёт
@@ -1048,8 +1051,13 @@ module.exports = {
     const nowTimestamp = nowIso();
     const placeholders = equivalentIds.map((_, index) => `$${index + 1}`);
     const baseParams = [...equivalentIds, nowTimestamp];
-    const scopeSql = `chat_id IN (${placeholders.join(", ")})
+    let scopeSql = `chat_id IN (${placeholders.join(", ")})
           AND (expires_at = '' OR expires_at > $${equivalentIds.length + 1})`;
+    const normalizedClearedBefore = normalizeOptionalIsoTimestamp(clearedBefore);
+    if (normalizedClearedBefore) {
+      baseParams.push(normalizedClearedBefore);
+      scopeSql += `\n          AND ts > $${baseParams.length}`;
+    }
 
     const normalizedBeforeId = normalizeNullableString(beforeId);
     const normalizedAfterId = normalizeNullableString(afterId);
@@ -1709,6 +1717,15 @@ module.exports = {
       if (!participantIds.includes(normalizedUserId)) {
         continue;
       }
+      if (chat) {
+        const prefs = this._getChatMemberPrefs(chat, normalizedUserId);
+        if (
+          prefs.clearedBefore &&
+          String(message?.timestamp || "").localeCompare(prefs.clearedBefore) <= 0
+        ) {
+          continue;
+        }
+      }
       results.push({
         messageId: message.id,
         chatId: messageChatId,
@@ -1841,17 +1858,34 @@ module.exports = {
       if (!participants.includes(normalizedUserId)) {
         continue;
       }
+      const chatId = String(chat?.id || "").trim();
+      const prefs = this._getChatMemberPrefs(chat, normalizedUserId);
+      const allChatMessages = (messagesByChatId.get(chatId) || []).sort(
+        (left, right) =>
+          String(right?.timestamp || "").localeCompare(String(left?.timestamp || "")),
+      );
+      const relevantMessages = prefs.clearedBefore
+        ? allChatMessages.filter(
+            (message) =>
+              String(message?.timestamp || "").localeCompare(prefs.clearedBefore) > 0,
+          )
+        : allChatMessages;
+      if (
+        prefs.hiddenAt &&
+        !relevantMessages.some(
+          (message) =>
+            String(message?.timestamp || "").localeCompare(prefs.hiddenAt) > 0,
+        )
+      ) {
+        continue;
+      }
       const isGroup = chat?.type === "group" || chat?.type === "branch";
       const otherUserId = isGroup
         ? ""
         : participants.find((participantId) => participantId !== normalizedUserId) || "";
-      const relevantMessages = (messagesByChatId.get(String(chat?.id || "").trim()) || [])
-        .sort((left, right) =>
-          String(right?.timestamp || "").localeCompare(String(left?.timestamp || "")),
-        );
       const lastMessage = relevantMessages[0] || null;
       const preview = {
-        chatId: String(chat?.id || "").trim(),
+        chatId,
         userId: normalizedUserId,
         type: chat?.type || "direct",
         title: chat?.title || null,
@@ -1868,6 +1902,8 @@ module.exports = {
             !this._isProjectedMessageReadByUser(message, normalizedUserId);
         }).length,
         lastMessageSenderId: lastMessage?.senderId || "",
+        isArchived: prefs.isArchived,
+        notificationLevel: prefs.notificationLevel,
       };
       if (isGroup) {
         const otherParticipantNames = participants
@@ -1913,6 +1949,13 @@ module.exports = {
     // фан-аута) добавляло до ~300мс на access под бёрстом.
     const storedChats = await this._selectChatsForUserFromTables(normalizedUserId);
     const chatIds = storedChats.map((chat) => String(chat.id).trim());
+    const clearedBeforeByChatId = new Map();
+    for (const chat of storedChats) {
+      const prefs = this._getChatMemberPrefs(chat, normalizedUserId);
+      if (prefs.clearedBefore) {
+        clearedBeforeByChatId.set(String(chat.id).trim(), prefs.clearedBefore);
+      }
+    }
     const messages = await this._selectChatMessagesForPreviews(
       normalizedUserId,
       chatIds,
@@ -1925,11 +1968,23 @@ module.exports = {
       }
       const messageChatId = String(message?.chatId || "").trim();
       const participants = normalizeParticipantIds(message?.participants);
+      const directParticipants = parseDirectParticipantsFromChatId(messageChatId);
       const isMember =
         chatIdSet.has(messageChatId) ||
         participants.includes(normalizedUserId) ||
-        parseDirectParticipantsFromChatId(messageChatId).includes(normalizedUserId);
+        directParticipants.includes(normalizedUserId);
       if (!isMember) {
+        continue;
+      }
+      const canonicalDirectId =
+        directParticipants.length === 2 ? directParticipants.join("_") : "";
+      const clearedBefore =
+        clearedBeforeByChatId.get(messageChatId) ||
+        (canonicalDirectId ? clearedBeforeByChatId.get(canonicalDirectId) : null);
+      if (
+        clearedBefore &&
+        String(message?.timestamp || "").localeCompare(clearedBefore) <= 0
+      ) {
         continue;
       }
       if (!this._isProjectedMessageReadByUser(message, normalizedUserId)) {
@@ -1937,6 +1992,107 @@ module.exports = {
       }
     }
     return total;
+  },
+
+  async _purgeChatRowsFromTables(chatIds) {
+    const normalizedIds = Array.from(
+      new Set(
+        (Array.isArray(chatIds) ? chatIds : [])
+          .map((id) => String(id || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (normalizedIds.length === 0) {
+      return;
+    }
+    const placeholders = normalizedIds.map((_, index) => `$${index + 1}`);
+    const deleted = await this._pool.query(
+      `DELETE FROM ${this._qualifiedChatMessagesTableName}
+        WHERE chat_id IN (${placeholders.join(", ")})
+        RETURNING id`,
+      normalizedIds,
+    );
+    const deletedIds = deleted.rows
+      .map((row) => String(row?.id || "").trim())
+      .filter(Boolean);
+    if (deletedIds.length > 0) {
+      const idPlaceholders = deletedIds.map((_, index) => `$${index + 1}`);
+      await this._pool.query(
+        `DELETE FROM ${this._qualifiedChatReactionsTableName}
+          WHERE message_id IN (${idPlaceholders.join(", ")})`,
+        deletedIds,
+      );
+    }
+    await this._pool.query(
+      `DELETE FROM ${this._qualifiedChatDraftsTableName}
+        WHERE chat_id IN (${placeholders.join(", ")})`,
+      normalizedIds,
+    );
+    await this._pool.query(
+      `DELETE FROM ${this._qualifiedChatPinsTableName}
+        WHERE chat_id IN (${placeholders.join(", ")})`,
+      normalizedIds,
+    );
+  },
+
+  async _deleteUserChatDraftsFromTable(chatIds, userId) {
+    const normalizedIds = Array.from(
+      new Set(
+        (Array.isArray(chatIds) ? chatIds : [])
+          .map((id) => String(id || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const normalizedUserId = String(userId || "").trim();
+    if (normalizedIds.length === 0 || !normalizedUserId) {
+      return;
+    }
+    const placeholders = normalizedIds.map((_, index) => `$${index + 1}`);
+    await this._pool.query(
+      `DELETE FROM ${this._qualifiedChatDraftsTableName}
+        WHERE chat_id IN (${placeholders.join(", ")})
+          AND user_id = $${normalizedIds.length + 1}`,
+      [...normalizedIds, normalizedUserId],
+    );
+  },
+
+  async deleteOrHideChatForUser(chatId, userId, options = {}) {
+    await this.initialize();
+    const result = await FileStore.prototype.deleteOrHideChatForUser.call(
+      this,
+      chatId,
+      userId,
+      options,
+    );
+    if (!result || result.error) {
+      return result;
+    }
+    const eqIds = this._equivalentChatIdList(chatId, result.chatId || chatId);
+    if (result.action === "deleted") {
+      await this._purgeChatRowsFromTables(eqIds);
+    } else if (result.action === "hidden" || result.action === "left") {
+      await this._deleteUserChatDraftsFromTable(eqIds, userId);
+    }
+    return result;
+  },
+
+  async leaveGroupChat(chatId, userId) {
+    await this.initialize();
+    const result = await FileStore.prototype.leaveGroupChat.call(
+      this,
+      chatId,
+      userId,
+    );
+    if (!result || typeof result !== "object") {
+      return result;
+    }
+    const eqIds = this._equivalentChatIdList(chatId, result.id || chatId);
+    if (result.deleted === true) {
+      await this._purgeChatRowsFromTables(eqIds);
+    } else {
+      await this._deleteUserChatDraftsFromTable(eqIds, userId);
+    }
+    return result;
   },
 
 };

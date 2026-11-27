@@ -334,6 +334,36 @@ mixin _CustomApiChatRoomsMixin on _CustomApiChatBase {
   }
 
   @override
+  Future<void> updateChatPreferences({
+    required String chatId,
+    bool? isArchived,
+    String? notificationLevel,
+  }) async {
+    final body = <String, dynamic>{
+      if (isArchived != null) 'isArchived': isArchived,
+      if (notificationLevel != null) 'notificationLevel': notificationLevel,
+    };
+    if (body.isEmpty) return;
+    await _requestJson(
+      method: 'PATCH',
+      path: '/v1/chats/$chatId/preferences',
+      body: body,
+    );
+    unawaited(refreshChatOverview());
+  }
+
+  @override
+  Future<bool> deleteChat(String chatId, {bool forAll = false}) async {
+    final path = forAll ? '/v1/chats/$chatId?forAll=true' : '/v1/chats/$chatId';
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: path,
+    );
+    unawaited(refreshChatOverview());
+    return response['deleted'] == true;
+  }
+
+  @override
   Future<List<ChatPreview>> _fetchChatPreviews() async {
     final response = await _requestJson(
       method: 'GET',
@@ -364,6 +394,8 @@ mixin _CustomApiChatRoomsMixin on _CustomApiChatBase {
         'lastMessageTime': timestamp,
         'unreadCount': chat['unreadCount'],
         'lastMessageSenderId': chat['lastMessageSenderId'],
+        'isArchived': chat['isArchived'] == true,
+        'notificationLevel': chat['notificationLevel'],
       });
     }).toList();
   }

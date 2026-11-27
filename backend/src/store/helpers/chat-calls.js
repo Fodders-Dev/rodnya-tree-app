@@ -187,6 +187,7 @@ function createChatRecord({
   createdBy = null,
   treeId = null,
   branchRootPersonIds = [],
+  memberPrefs = {},
 }) {
   const timestamp = nowIso();
   return {
@@ -198,6 +199,10 @@ function createChatRecord({
     createdBy: normalizeNullableString(createdBy),
     treeId: normalizeNullableString(treeId),
     branchRootPersonIds: normalizeParticipantIds(branchRootPersonIds),
+    memberPrefs:
+      memberPrefs && typeof memberPrefs === "object"
+        ? structuredClone(memberPrefs)
+        : {},
     createdAt: timestamp,
     updatedAt: timestamp,
   };

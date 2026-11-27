@@ -89,8 +89,7 @@ class _FakeAccessService
       const [];
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 EditGrant _grant({
@@ -145,8 +144,7 @@ void main() {
     expect(find.byIcon(Icons.key_off_rounded), findsOneWidget);
   });
 
-  testWidgets('outgoing: группирует grants по graphPersonId',
-      (tester) async {
+  testWidgets('outgoing: группирует grants по graphPersonId', (tester) async {
     final service = _FakeAccessService(issuedGrants: [
       _grant(
         id: 'g-1',
@@ -312,5 +310,26 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Никому не выдано прав'), findsOneWidget);
+  });
+
+  testWidgets('outgoing: кнопка «Выдать доступ» открывает GrantEditAccessSheet',
+      (tester) async {
+    final service = _FakeAccessService();
+    await tester.pumpWidget(
+      _wrap(
+        AccessGrantsOutgoingTab(
+          accessService: service,
+          viewerUserId: 'me',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final addBtn = find.byKey(const Key('outgoing-empty-add-grant-btn'));
+    expect(addBtn, findsOneWidget);
+    await tester.tap(addBtn);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('grant-sheet-search-input')), findsOneWidget);
   });
 }

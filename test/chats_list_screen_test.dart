@@ -64,6 +64,9 @@ class _FakeChatService implements ChatServiceInterface {
   String? createdTitle;
   List<ChatPreview> chatPreviews = const <ChatPreview>[];
   Stream<List<ChatPreview>>? chatPreviewsStreamOverride;
+  final List<String> deletedChatIds = <String>[];
+  final List<String> leftGroupChatIds = <String>[];
+  final List<Map<String, dynamic>> preferenceUpdates = <Map<String, dynamic>>[];
 
   @override
   String? get currentUserId => 'user-1';
@@ -185,7 +188,28 @@ class _FakeChatService implements ChatServiceInterface {
       getChatDetails(chatId);
 
   @override
-  Future<void> leaveGroup(String chatId) async {}
+  Future<void> leaveGroup(String chatId) async {
+    leftGroupChatIds.add(chatId);
+  }
+
+  @override
+  Future<void> updateChatPreferences({
+    required String chatId,
+    bool? isArchived,
+    String? notificationLevel,
+  }) async {
+    preferenceUpdates.add({
+      'chatId': chatId,
+      'isArchived': isArchived,
+      'notificationLevel': notificationLevel,
+    });
+  }
+
+  @override
+  Future<bool> deleteChat(String chatId, {bool forAll = false}) async {
+    deletedChatIds.add(chatId);
+    return true;
+  }
 
   @override
   Future<void> editChatMessage({
@@ -922,7 +946,8 @@ void main() {
     expect(find.text('Мария Понькина'), findsOneWidget);
     expect(find.text('1 чат в архиве'), findsWidgets);
 
-    await tester.tap(find.byKey(const ValueKey<String>('chats-filter-archive')));
+    await tester
+        .tap(find.byKey(const ValueKey<String>('chats-filter-archive')));
     await tester.pumpAndSettle();
 
     expect(find.text('Иван Кузнецов'), findsOneWidget);
@@ -954,7 +979,8 @@ void main() {
     await tester.pumpWidget(buildApp(archiveStore: archiveStore));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey<String>('chats-filter-archive')));
+    await tester
+        .tap(find.byKey(const ValueKey<String>('chats-filter-archive')));
     await tester.pumpAndSettle();
 
     expect(find.text('Иван Кузнецов'), findsOneWidget);
@@ -1046,6 +1072,62 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('tree-screen'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'ChatsListScreen удаляет личный чат и выходит из группового через контекстное меню',
+    (tester) async {
+      final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+      chatService.chatPreviews = [
+        ChatPreview(
+          id: 'preview-1',
+          chatId: 'chat-1',
+          userId: 'user-1',
+          otherUserId: 'user-root-1',
+          otherUserName: 'Иван Кузнецов',
+          lastMessage: 'Привет',
+          lastMessageTime: DateTime(2026, 4, 10, 18, 0),
+          unreadCount: 0,
+          lastMessageSenderId: 'user-root-1',
+        ),
+        ChatPreview(
+          id: 'preview-group',
+          chatId: 'chat-group-1',
+          userId: 'user-1',
+          otherUserId: '',
+          otherUserName: 'Семья Кузнецовых',
+          type: 'group',
+          title: 'Семья Кузнецовых',
+          participantIds: const ['user-1', 'user-2'],
+          lastMessage: 'Доброе утро',
+          lastMessageTime: DateTime(2026, 4, 10, 19, 0),
+          unreadCount: 0,
+          lastMessageSenderId: 'user-2',
+        ),
+      ];
+
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+
+      await tester.longPress(find.text('Иван Кузнецов'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('chat-action-delete-chat-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Удалить'));
+      await tester.pumpAndSettle();
+
+      expect(chatService.deletedChatIds, ['chat-1']);
+
+      await tester.longPress(find.text('Доброе утро'));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const Key('chat-action-delete-chat-group-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Покинуть'));
+      await tester.pumpAndSettle();
+
+      expect(chatService.leftGroupChatIds, ['chat-group-1']);
     },
   );
 }

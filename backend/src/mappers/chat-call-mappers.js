@@ -134,7 +134,16 @@ function mapChatMessageCall(value) {
   };
 }
 
-function mapChatRecord(chat) {
+function mapChatRecord(chat, viewerUserId = null) {
+  const prefs =
+    viewerUserId && chat?.memberPrefs && typeof chat.memberPrefs === "object"
+      ? chat.memberPrefs[String(viewerUserId).trim()] || null
+      : null;
+  const notificationLevel = ["all", "silent", "muted"].includes(
+    prefs?.notificationLevel,
+  )
+    ? prefs.notificationLevel
+    : "all";
   return {
     id: chat.id,
     type: chat.type || "direct",
@@ -148,6 +157,8 @@ function mapChatRecord(chat) {
     branchRootPersonIds: Array.isArray(chat.branchRootPersonIds)
       ? chat.branchRootPersonIds
       : [],
+    isArchived: Boolean(prefs?.isArchived),
+    notificationLevel,
     createdAt: chat.createdAt,
     updatedAt: chat.updatedAt,
   };
@@ -348,6 +359,12 @@ function mapChatPreview(preview) {
     lastMessageTime: preview.lastMessageTime,
     unreadCount: Number(preview.unreadCount || 0),
     lastMessageSenderId: preview.lastMessageSenderId || "",
+    isArchived: Boolean(preview?.isArchived),
+    notificationLevel: ["all", "silent", "muted"].includes(
+      preview?.notificationLevel,
+    )
+      ? preview.notificationLevel
+      : "all",
   };
 }
 

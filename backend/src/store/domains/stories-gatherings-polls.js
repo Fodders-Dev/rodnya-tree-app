@@ -146,15 +146,13 @@ module.exports = {
     };
   },
 
-  async findStory(storyId) {
+  async findStory(storyId, {includeExpired = false} = {}) {
     const db = await this._read();
     const story = db.stories.find((entry) => entry.id === storyId);
     if (!story) {
       return null;
     }
-    if (isExpiredAt(story.expiresAt)) {
-      db.stories = db.stories.filter((entry) => entry.id !== storyId);
-      await this._write(db);
+    if (!includeExpired && isExpiredAt(story.expiresAt)) {
       return null;
     }
     return attachStoryReactions(db, story);
@@ -175,7 +173,6 @@ module.exports = {
     anchorPersonIds = [],
   }) {
     const db = await this._read();
-    db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
 
     const tree = db.trees.find((entry) => entry.id === treeId);
     const user = db.users.find((entry) => entry.id === authorId);
@@ -233,10 +230,8 @@ module.exports = {
 
   async markStoryViewed(storyId, userId) {
     const db = await this._read();
-    db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
     const story = db.stories.find((entry) => entry.id === storyId);
-    if (!story) {
-      await this._write(db);
+    if (!story || isExpiredAt(story.expiresAt)) {
       return null;
     }
 
@@ -278,9 +273,8 @@ module.exports = {
 
   async toggleStoryReaction({storyId, userId, emoji}) {
     const db = await this._read();
-    db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
     const story = db.stories.find((entry) => entry.id === storyId);
-    if (!story) {
+    if (!story || isExpiredAt(story.expiresAt)) {
       return null;
     }
     const normalizedEmoji = normalizeReactionEmoji(emoji);

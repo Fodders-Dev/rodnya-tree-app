@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
@@ -112,6 +113,46 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
     return date;
   }
 
+  Future<void> _confirmAndDeleteStory(Story story) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить историю?'),
+        content: const Text(
+          'История исчезнет из вашего архива. Это действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _storyService.deleteStory(story.id);
+      if (!mounted) return;
+      setState(() {
+        _archived = _archived
+            .where((entry) => entry.id != story.id)
+            .toList(growable: false);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('История удалена из архива')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось удалить историю: $error')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -177,7 +218,8 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.cloud_off_outlined, size: 48, color: tokens.inkSecondary),
+              Icon(Icons.cloud_off_outlined,
+                  size: 48, color: tokens.inkSecondary),
               const SizedBox(height: 10),
               Text(
                 'Не удалось загрузить архив. $_error',
@@ -223,6 +265,20 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
                   height: 1.4,
                 ),
               ),
+              const SizedBox(height: 16),
+              FilledButton.tonalIcon(
+                key: const Key('story-archive-create-cta'),
+                onPressed: () {
+                  final router = GoRouter.maybeOf(context);
+                  if (router != null) {
+                    router.push('/stories/create');
+                  } else {
+                    Navigator.of(context).maybePop();
+                  }
+                },
+                icon: const Icon(Icons.add_circle_outline_rounded),
+                label: const Text('Создать историю'),
+              ),
             ],
           ),
         ),
@@ -238,8 +294,14 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
         childAspectRatio: 9 / 16,
       ),
       itemCount: _archived.length,
-      itemBuilder: (context, index) => _ArchivedStoryTile(
-          story: _archived[index], onTap: () => _openStory(index)),
+      itemBuilder: (context, index) {
+        final story = _archived[index];
+        return _ArchivedStoryTile(
+          story: story,
+          onTap: () => _openStory(index),
+          onDelete: () => _confirmAndDeleteStory(story),
+        );
+      },
     );
   }
 
@@ -260,10 +322,15 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
 }
 
 class _ArchivedStoryTile extends StatelessWidget {
-  const _ArchivedStoryTile({required this.story, required this.onTap});
+  const _ArchivedStoryTile({
+    required this.story,
+    required this.onTap,
+    required this.onDelete,
+  });
 
   final Story story;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -313,13 +380,34 @@ class _ArchivedStoryTile extends StatelessWidget {
               if (story.type == StoryType.video)
                 const Positioned(
                   top: 8,
-                  right: 8,
+                  left: 8,
                   child: Icon(
                     Icons.play_circle_filled_rounded,
                     color: Colors.white,
                     size: 20,
                   ),
                 ),
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Material(
+                  color: Colors.black.withValues(alpha: 0.48),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    key: Key('story-archive-delete-${story.id}'),
+                    customBorder: const CircleBorder(),
+                    onTap: onDelete,
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(
+                        Icons.delete_outline_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
