@@ -192,15 +192,20 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async {
     final body = <String, dynamic>{'role': role.serverValue};
     final email = recipientEmail?.trim();
     final phone = recipientPhone?.trim();
     final userId = recipientUserId?.trim();
+    final cardId = personId?.trim();
     if (email != null && email.isNotEmpty) body['recipientEmail'] = email;
     if (phone != null && phone.isNotEmpty) body['recipientPhone'] = phone;
     if (userId != null && userId.isNotEmpty) {
       body['recipientUserId'] = userId;
+    }
+    if (cardId != null && cardId.isNotEmpty) {
+      body['personId'] = cardId;
     }
     try {
       final response = await _requestJson(
@@ -267,6 +272,52 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
   }
 
   @override
+  Future<SemyaInvitation?> previewInvitation(String token) async {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_TOKEN',
+        message: 'Некорректный токен',
+      );
+    }
+    try {
+      final uri = _buildUri('/v1/invitation/$trimmed');
+      final response = await _httpClient.get(
+        uri,
+        headers: <String, String>{'Accept': 'application/json'},
+      );
+      if (response.statusCode == 404) {
+        return null;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final body = response.body.isEmpty
+            ? const <String, dynamic>{}
+            : (jsonDecode(response.body) as Map<String, dynamic>);
+        throw SemyaError(
+          code: 'UNKNOWN',
+          message: body['message']?.toString() ??
+              'Не удалось проверить приглашение (${response.statusCode})',
+        );
+      }
+      final body = jsonDecode(response.body);
+      final invRaw = body is Map<String, dynamic> ? body['invitation'] : null;
+      if (invRaw is! Map) {
+        return null;
+      }
+      final map = Map<String, dynamic>.from(invRaw);
+      map['token'] ??= trimmed;
+      return SemyaInvitation.fromJson(map);
+    } on SemyaError {
+      rethrow;
+    } catch (error) {
+      throw SemyaError(
+        code: 'NETWORK',
+        message: 'Не удалось подключиться к серверу: $error',
+      );
+    }
+  }
+
+  @override
   Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async {
     final trimmed = token.trim();
     if (trimmed.isEmpty) {
@@ -283,6 +334,32 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
       return SemyaInvitationAcceptResult.fromJson(response);
     } on CustomApiException catch (e) {
       throw _mapSemyaException(e, endpoint: 'invitation_accept');
+    }
+  }
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_TOKEN',
+        message: 'Некорректный токен',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/invitation/$trimmed/decline',
+      );
+      final invRaw = response['invitation'];
+      if (invRaw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'invitation decline не вернул invitation объект',
+        );
+      }
+      return SemyaInvitation.fromJson(invRaw);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'invitation_decline');
     }
   }
 
@@ -778,7 +855,8 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
         break;
       case 403:
         if ((endpoint == 'invitation_accept' ||
-                endpoint == 'accept_invitation') &&
+                endpoint == 'accept_invitation' ||
+                endpoint == 'invitation_decline') &&
             (lower.contains('адресовано') || lower.contains('recipient'))) {
           code = 'WRONG_RECIPIENT';
         } else {
@@ -788,6 +866,8 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
       case 404:
         if (lower.contains('семь')) {
           code = 'SEMYA_NOT_FOUND';
+        } else if (lower.contains('карточк') || lower.contains('person')) {
+          code = 'PERSON_NOT_FOUND';
         } else if (endpoint.contains('invitation') ||
             lower.contains('приглаш')) {
           code = 'INVITATION_NOT_FOUND';
@@ -800,7 +880,9 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
         }
         break;
       case 409:
-        if (endpoint.contains('invitation') ||
+        if (lower.contains('связана') || lower.contains('claimed')) {
+          code = 'PERSON_ALREADY_CLAIMED';
+        } else if (endpoint.contains('invitation') ||
             lower.contains('принято') ||
             lower.contains('отклонено') ||
             lower.contains('отозван')) {

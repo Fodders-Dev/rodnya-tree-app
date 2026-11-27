@@ -806,12 +806,12 @@ extension _TreeTopbarSection on _TreeViewScreenState {
       );
     }
 
-    if (_currentTreeMeta?.isPublic == true) {
+    if (_familyService is SemyaCapableFamilyTreeService) {
       items.add(
         _buildTreeToolbarMenuItem(
           value: _TreeToolbarAction.copyPublicLink,
           icon: Icons.link_outlined,
-          label: 'Скопировать публичную ссылку',
+          label: 'Поделиться ссылкой',
         ),
       );
     }

@@ -1,9 +1,10 @@
+import '../backend_runtime_config.dart';
 import 'semya.dart' show SemyaRole;
 
 /// Ship FE3 (2026-05-26): семья invitation model.
 ///
 /// Mirrors backend Ship 4 `mapInvitation` shape (semya-invitation-routes.js:28).
-/// State machine: pending → accepted | revoked | expired (30d lazy expiry).
+/// State machine: pending → accepted | declined | revoked | expired (30d lazy expiry).
 ///
 /// `token` revealed только при создании (POST returns 201 с token);
 /// subsequent GET list calls return token as well (per Ship 4 mapping),
@@ -21,12 +22,18 @@ class SemyaInvitation {
     this.recipientUserId,
     this.recipientEmail,
     this.recipientPhone,
+    this.personId,
     this.acceptedAt,
     this.acceptedByUserId,
+    this.declinedAt,
+    this.declinedByUserId,
     this.revokedAt,
     this.revokedByUserId,
     this.expiredAt,
     this.semyaName,
+    this.inviterName,
+    this.targetPersonName,
+    this.semyaDeleted = false,
   });
 
   final String id;
@@ -40,18 +47,27 @@ class SemyaInvitation {
   final String? recipientUserId;
   final String? recipientEmail;
   final String? recipientPhone;
+  final String? personId;
   final String? acceptedAt;
   final String? acceptedByUserId;
+  final String? declinedAt;
+  final String? declinedByUserId;
   final String? revokedAt;
   final String? revokedByUserId;
   final String? expiredAt;
 
-  /// Ship FE9 (2026-05-27): denormalized семя name. Populated только
-  /// для responses от GET /v1/me/pending-invitations endpoint —
-  /// other invitation surfaces (per-семя list) leave null. Frontend
-  /// wizard использует для CTA copy «Принять приглашение от семьи
-  /// {semyaName}» без дополнительного GET /v1/semya/:id round-trip.
+  /// Ship FE9 (2026-05-27): denormalized семя name & preview metadata.
   final String? semyaName;
+  final String? inviterName;
+  final String? targetPersonName;
+  final bool semyaDeleted;
+
+  String get shareUrl {
+    final base = BackendRuntimeConfig.current.publicAppUrl
+        .trim()
+        .replaceAll(RegExp(r'/+$'), '');
+    return '$base/invite/${Uri.encodeComponent(token)}';
+  }
 
   bool get isPending => status == SemyaInvitationStatus.pending;
   bool get isTerminal => !isPending;
@@ -69,12 +85,18 @@ class SemyaInvitation {
       recipientUserId: _nullableString(json['recipientUserId']),
       recipientEmail: _nullableString(json['recipientEmail']),
       recipientPhone: _nullableString(json['recipientPhone']),
+      personId: _nullableString(json['personId']),
       acceptedAt: _nullableString(json['acceptedAt']),
       acceptedByUserId: _nullableString(json['acceptedByUserId']),
+      declinedAt: _nullableString(json['declinedAt']),
+      declinedByUserId: _nullableString(json['declinedByUserId']),
       revokedAt: _nullableString(json['revokedAt']),
       revokedByUserId: _nullableString(json['revokedByUserId']),
       expiredAt: _nullableString(json['expiredAt']),
       semyaName: _nullableString(json['semyaName']),
+      inviterName: _nullableString(json['inviterName']),
+      targetPersonName: _nullableString(json['targetPersonName']),
+      semyaDeleted: json['semyaDeleted'] == true,
     );
   }
 
@@ -91,16 +113,21 @@ class SemyaInvitation {
       'recipientUserId': recipientUserId,
       'recipientEmail': recipientEmail,
       'recipientPhone': recipientPhone,
+      'personId': personId,
       'acceptedAt': acceptedAt,
       'acceptedByUserId': acceptedByUserId,
+      'declinedAt': declinedAt,
+      'declinedByUserId': declinedByUserId,
       'revokedAt': revokedAt,
       'revokedByUserId': revokedByUserId,
       'expiredAt': expiredAt,
     };
   }
 
-  /// Convenience: recipient display string (email > phone > userId > '?').
+  /// Convenience: recipient display string (targetPersonName > email > phone > userId > 'Без получателя').
   String get recipientLabel {
+    final target = targetPersonName?.trim();
+    if (target != null && target.isNotEmpty) return target;
     final email = recipientEmail?.trim();
     if (email != null && email.isNotEmpty) return email;
     final phone = recipientPhone?.trim();
@@ -114,6 +141,7 @@ class SemyaInvitation {
 enum SemyaInvitationStatus {
   pending,
   accepted,
+  declined,
   revoked,
   expired,
   unknown;
@@ -124,6 +152,8 @@ enum SemyaInvitationStatus {
         return 'pending';
       case SemyaInvitationStatus.accepted:
         return 'accepted';
+      case SemyaInvitationStatus.declined:
+        return 'declined';
       case SemyaInvitationStatus.revoked:
         return 'revoked';
       case SemyaInvitationStatus.expired:
@@ -139,6 +169,8 @@ enum SemyaInvitationStatus {
         return SemyaInvitationStatus.pending;
       case 'accepted':
         return SemyaInvitationStatus.accepted;
+      case 'declined':
+        return SemyaInvitationStatus.declined;
       case 'revoked':
         return SemyaInvitationStatus.revoked;
       case 'expired':
@@ -155,6 +187,8 @@ enum SemyaInvitationStatus {
         return 'Ожидает';
       case SemyaInvitationStatus.accepted:
         return 'Принято';
+      case SemyaInvitationStatus.declined:
+        return 'Отклонено';
       case SemyaInvitationStatus.revoked:
         return 'Отозвано';
       case SemyaInvitationStatus.expired:
@@ -174,6 +208,7 @@ class SemyaInvitationAcceptResult {
     required this.role,
     required this.membershipId,
     this.treeId,
+    this.linkedPersonId,
   });
 
   final SemyaInvitation invitation;
@@ -181,6 +216,7 @@ class SemyaInvitationAcceptResult {
   final SemyaRole role;
   final String membershipId;
   final String? treeId;
+  final String? linkedPersonId;
 
   factory SemyaInvitationAcceptResult.fromJson(Map<String, dynamic> json) {
     final invRaw = json['invitation'];
@@ -199,6 +235,7 @@ class SemyaInvitationAcceptResult {
       role: SemyaRole.fromServerValue(memMap['role']),
       membershipId: (memMap['id'] ?? '').toString(),
       treeId: _nullableString(json['treeId']),
+      linkedPersonId: _nullableString(json['linkedPersonId']),
     );
   }
 }

@@ -73,6 +73,7 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async =>
       throw UnimplementedError();
 
@@ -85,6 +86,13 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     required String semyaId,
     required String invitationId,
   }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaInvitation?> previewInvitation(String token) async => null;
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async =>
       throw UnimplementedError();
 
   @override

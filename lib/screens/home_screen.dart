@@ -22,8 +22,9 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_service_interface.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
-import '../backend/models/tree_invitation.dart';
+import '../backend/models/semya_invitation.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../backend/interfaces/gathering_service_interface.dart';
 import '../backend/interfaces/poll_service_interface.dart';
@@ -98,6 +99,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _storiesUnavailable = false;
   bool _identityReviewsUnavailable = false;
   int _pendingIdentityReviewCount = 0;
+  List<SemyaInvitation> _pendingInvitations = const <SemyaInvitation>[];
   String? _currentTreeId;
   // Audience-mode feed filter. `null` = «Все» (post union across
   // every branch the viewer belongs to). When set, the feed is
@@ -217,6 +219,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // drops just because BranchSwitcher landed on a different
       // branch. They can narrow via the chip strip if they want.
       _loadPosts(branchId: null);
+      unawaited(_loadPendingInvitations());
 
       final treeId = _currentTreeId;
       // Literal `null` (not `_selectedFeedBranchId`) — mirrors the
@@ -982,6 +985,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _loadPostsWithSidecars(branchId: branchId);
   }
 
+  Future<void> _loadPendingInvitations() async {
+    final Object service = _familyTreeService;
+    if (service is! SemyaCapableFamilyTreeService) {
+      return;
+    }
+    try {
+      final list = await service.listPendingInvitations();
+      if (!mounted) return;
+      setState(() {
+        _pendingInvitations = list;
+      });
+    } catch (_) {
+      // Graceful degradation on home screen.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1017,6 +1036,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onRefresh: () async {
           await _customNotificationService?.refreshUnreadNotificationsCount();
           await _loadIdentityReviewSummary();
+          await _loadPendingInvitations();
           // Pull-to-refresh is an explicit user action — bypasses the
           // deferred schedule entirely (S-fanout), same as before:
           // everything refreshes together, right away. Feed always
@@ -1032,13 +1052,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ]);
           }
         },
-        child: StreamBuilder<List<TreeInvitation>>(
-          stream: _familyTreeService.getPendingTreeInvitations(),
-          builder: (context, snapshot) {
-            final pendingInvitations =
-                snapshot.data ?? const <TreeInvitation>[];
+        child: Builder(
+          builder: (context) {
             final homeBody = _buildHomeBody(
-              pendingInvitations: pendingInvitations,
+              pendingInvitations: _pendingInvitations,
               hasSelectedTree: hasSelectedTree,
               isWideLayout: isWideLayout,
               selectedTreeName: selectedTreeName,
@@ -1292,7 +1309,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// state stay above the split as a top strip — they target the full
   /// width of the inner column either way.
   Widget _buildHomeBody({
-    required List<TreeInvitation> pendingInvitations,
+    required List<SemyaInvitation> pendingInvitations,
     required bool hasSelectedTree,
     required bool isWideLayout,
     required String? selectedTreeName,
@@ -1540,11 +1557,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// 2b: слим-строка приглашений (~56dp вместо двухэтажной карточки).
   /// Вся строка — один тап в селектор приглашений; трейлинг «Открыть»
   /// сохранён как явная подпись действия (и точка тапа в тестах).
-  Widget _buildPendingInvitationsBanner(List<TreeInvitation> invitations) {
+  Widget _buildPendingInvitationsBanner(List<SemyaInvitation> invitations) {
     final theme = Theme.of(context);
     final tokens = AppTheme.tokensOf(context);
     final count = invitations.length;
-    final firstTreeName = invitations.first.tree.name.trim();
+    final firstTreeName = (invitations.first.semyaName ?? '').trim();
     final title = count == 1
         ? (firstTreeName.isNotEmpty ? firstTreeName : 'Новое приглашение')
         : '$count приглашения';

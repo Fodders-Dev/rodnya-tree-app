@@ -94,6 +94,7 @@ class SemyaInvitationsController with ChangeNotifier {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async {
     final service = _resolveService();
     if (service == null) {
@@ -104,9 +105,11 @@ class SemyaInvitationsController with ChangeNotifier {
     final email = recipientEmail?.trim();
     final phone = recipientPhone?.trim();
     final userId = recipientUserId?.trim();
+    final cardId = personId?.trim();
     if ((email == null || email.isEmpty) &&
         (phone == null || phone.isEmpty) &&
-        (userId == null || userId.isEmpty)) {
+        (userId == null || userId.isEmpty) &&
+        (cardId == null || cardId.isEmpty)) {
       _errorMessage = 'Укажите email либо телефон получателя';
       notifyListeners();
       return false;
@@ -122,6 +125,7 @@ class SemyaInvitationsController with ChangeNotifier {
         recipientEmail: email,
         recipientPhone: phone,
         recipientUserId: userId,
+        personId: cardId,
       );
       _lastCreated = invitation;
       _isSending = false;

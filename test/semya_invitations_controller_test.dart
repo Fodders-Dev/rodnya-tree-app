@@ -54,6 +54,7 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async {
     createCalls += 1;
     lastCreateRecipientEmail = recipientEmail;
@@ -96,6 +97,13 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
       revokedAt: '2026-05-26T00:00:01.000Z',
     );
   }
+
+  @override
+  Future<SemyaInvitation?> previewInvitation(String token) async => null;
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async =>
+      throw UnimplementedError();
 
   @override
   Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async =>
@@ -181,7 +189,8 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
       const <DeletedPerson>[];
 
   @override
-  Future<List<DeletedPerson>> listDeletedPersonsForSemya(String semyaId) async =>
+  Future<List<DeletedPerson>> listDeletedPersonsForSemya(
+          String semyaId) async =>
       const <DeletedPerson>[];
 
   @override
@@ -193,8 +202,7 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
       throw UnimplementedError();
 
   @override
-  Future<List<DeletedPost>> listMyDeletedPosts() async =>
-      const <DeletedPost>[];
+  Future<List<DeletedPost>> listMyDeletedPosts() async => const <DeletedPost>[];
 
   @override
   Future<void> restoreDeletedPost(String deletedPostId) async =>
@@ -270,8 +278,7 @@ void main() {
     expect(service.createCalls, 0);
   });
 
-  test('sendInvitation happy path — returns true + sets lastCreated',
-      () async {
+  test('sendInvitation happy path — returns true + sets lastCreated', () async {
     final invitation = _invitation(id: 'inv-2', email: 'a@b.c');
     final service = _FakeSemyaService(
       invitations: [invitation],
@@ -379,8 +386,7 @@ void main() {
     }
   });
 
-  test('Model recipientLabel falls back: email > phone > userId > default',
-      () {
+  test('Model recipientLabel falls back: email > phone > userId > default', () {
     final emailOnly = _invitation(email: 'a@b.c');
     expect(emailOnly.recipientLabel, 'a@b.c');
 

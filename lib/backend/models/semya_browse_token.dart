@@ -1,3 +1,5 @@
+import '../backend_runtime_config.dart';
+
 /// Ship FE6a (2026-05-26): browse-token capability — owner-issued
 /// shareable read-only link to семя's tree. Backend Ship 7 (5c00fc6).
 ///
@@ -34,9 +36,13 @@ class SemyaBrowseToken {
   final String? revokedAt;
   final String? lastUsedAt;
 
-  /// Public share URL — Andrid app links + web fallback.
-  /// Format matches backend's expected resolve path.
-  String get shareUrl => 'https://rodnya-tree.ru/browse/$token';
+  /// Public share URL — Android App Links + web fallback.
+  String get shareUrl {
+    final base = BackendRuntimeConfig.current.publicAppUrl
+        .trim()
+        .replaceAll(RegExp(r'/+$'), '');
+    return '$base/browse/${Uri.encodeComponent(token)}';
+  }
 
   bool get isActive {
     if (revokedAt != null && revokedAt!.isNotEmpty) return false;

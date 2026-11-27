@@ -4,7 +4,9 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
-import 'package:rodnya/backend/models/tree_invitation.dart';
+import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
+import 'package:rodnya/backend/models/semya.dart';
+import 'package:rodnya/backend/models/semya_invitation.dart';
 import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/tree_selector_screen.dart';
@@ -12,14 +14,15 @@ import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
+class _FakeFamilyTreeService
+    implements FamilyTreeServiceInterface, SemyaCapableFamilyTreeService {
   _FakeFamilyTreeService(
     this.trees, {
-    this.invitations = const <TreeInvitation>[],
+    this.invitations = const <SemyaInvitation>[],
   });
 
   final List<FamilyTree> trees;
-  final List<TreeInvitation> invitations;
+  final List<SemyaInvitation> invitations;
   final List<String> removedTreeIds = <String>[];
   String? lastUpdatedTreeName;
   final List<MapEntry<String, bool>> invitationResponses =
@@ -55,13 +58,28 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
-  Stream<List<TreeInvitation>> getPendingTreeInvitations() =>
-      Stream<List<TreeInvitation>>.value(invitations);
+  Future<List<SemyaInvitation>> listPendingInvitations() async => invitations;
 
   @override
-  Future<void> respondToTreeInvitation(String invitationId, bool accept) async {
-    invitationResponses.add(MapEntry(invitationId, accept));
+  Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async {
+    invitationResponses.add(MapEntry(token, true));
+    final inv = invitations.firstWhere((e) => e.token == token);
+    return SemyaInvitationAcceptResult(
+      invitation: inv,
+      semyaId: inv.semyaId,
+      role: inv.role,
+      membershipId: 'mem-1',
+    );
   }
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async {
+    invitationResponses.add(MapEntry(token, false));
+    return invitations.firstWhere((e) => e.token == token);
+  }
+
+  @override
+  Future<List<Semya>> listMySemya() async => const <Semya>[];
 
   @override
   Future<void> removeTree(String treeId) async {
@@ -283,10 +301,17 @@ void main() {
           _buildTree(id: 'tree-1', name: 'Семья Кузнецовых'),
         ],
         invitations: [
-          TreeInvitation(
-            invitationId: 'invite-1',
-            tree: _buildTree(id: 'tree-2', name: 'Семья Шуфляк'),
-            invitedBy: 'Артём',
+          SemyaInvitation(
+            id: 'invite-1',
+            token: 'tok-1',
+            semyaId: 'semya-2',
+            inviterUserId: 'user-2',
+            role: SemyaRole.editor,
+            status: SemyaInvitationStatus.pending,
+            createdAt: '2026-05-26T00:00:00Z',
+            expiresAt: '2026-06-25T00:00:00Z',
+            semyaName: 'Семья Шуфляк',
+            inviterName: 'Артём',
           ),
         ],
       ),
@@ -315,9 +340,16 @@ void main() {
       _FakeFamilyTreeService(
         [],
         invitations: [
-          TreeInvitation(
-            invitationId: 'invite-1',
-            tree: _buildTree(id: 'tree-2', name: 'Семья Шуфляк'),
+          SemyaInvitation(
+            id: 'invite-1',
+            token: 'tok-1',
+            semyaId: 'semya-2',
+            inviterUserId: 'user-2',
+            role: SemyaRole.viewer,
+            status: SemyaInvitationStatus.pending,
+            createdAt: '2026-05-26T00:00:00Z',
+            expiresAt: '2026-06-25T00:00:00Z',
+            semyaName: 'Семья Шуфляк',
           ),
         ],
       ),
@@ -391,9 +423,16 @@ void main() {
           _buildTree(id: 'tree-1', name: 'Семья Кузнецовых'),
         ],
         invitations: [
-          TreeInvitation(
-            invitationId: 'invite-1',
-            tree: _buildTree(id: 'tree-2', name: 'Rodnya QA Invite'),
+          SemyaInvitation(
+            id: 'invite-1',
+            token: 'tok-1',
+            semyaId: 'semya-2',
+            inviterUserId: 'user-2',
+            role: SemyaRole.editor,
+            status: SemyaInvitationStatus.pending,
+            createdAt: '2026-05-26T00:00:00Z',
+            expiresAt: '2026-06-25T00:00:00Z',
+            semyaName: 'Rodnya QA Invite',
           ),
         ],
       ),

@@ -1,6 +1,7 @@
 const path = require("node:path");
 const crypto = require("node:crypto");
 const {
+  composeDisplayNameFromProfile,
   nowIso,
 } = require("../helpers");
 
@@ -503,6 +504,7 @@ module.exports = {
     recipientUserId = null,
     recipientEmail = null,
     recipientPhone = null,
+    personId = null,
     role,
     expiresInDays = 30,
   }) {
@@ -515,10 +517,13 @@ module.exports = {
     if (role !== "editor" && role !== "viewer") {
       throw new Error("INVALID_ROLE");
     }
+    const normalizedPersonId =
+      personId && typeof personId === "string" ? personId.trim() : null;
     const hasRecipient =
       (recipientUserId && typeof recipientUserId === "string") ||
       (recipientEmail && typeof recipientEmail === "string") ||
-      (recipientPhone && typeof recipientPhone === "string");
+      (recipientPhone && typeof recipientPhone === "string") ||
+      Boolean(normalizedPersonId);
     if (!hasRecipient) {
       throw new Error("MISSING_RECIPIENT");
     }
@@ -529,6 +534,28 @@ module.exports = {
     );
     if (!semya) {
       throw new Error("SEMYA_NOT_FOUND");
+    }
+    // Validate personId if provided — must belong to bound tree, be alive,
+    // and not already linked to a different user.
+    if (normalizedPersonId) {
+      const targetPerson = (db.persons || []).find(
+        (p) => p.id === normalizedPersonId && p.treeId === semya.treeId,
+      );
+      if (!targetPerson) {
+        throw new Error("PERSON_NOT_FOUND");
+      }
+      if (
+        targetPerson.isAlive === false ||
+        Boolean(targetPerson.deathDate && String(targetPerson.deathDate).trim())
+      ) {
+        throw new Error("PERSON_DECEASED");
+      }
+      if (
+        targetPerson.userId &&
+        (!recipientUserId || targetPerson.userId !== recipientUserId)
+      ) {
+        throw new Error("PERSON_ALREADY_CLAIMED");
+      }
     }
     // Validate recipientUserId if provided.
     if (recipientUserId) {
@@ -553,13 +580,14 @@ module.exports = {
     this._lazyExpireInvitations(db, semyaId);
 
     // Idempotent re-create — if existing pending invitation для same
-    // (semyaId, recipientUserId либо recipientEmail/Phone) → return it.
+    // (semyaId, recipient / personId) → return it.
     let existing = null;
     if (recipientUserId) {
       existing = (db.semyaInvitations || []).find(
         (inv) =>
           inv.semyaId === semyaId &&
           inv.recipientUserId === recipientUserId &&
+          (inv.personId || null) === normalizedPersonId &&
           inv.status === "pending",
       );
     } else if (recipientEmail) {
@@ -568,6 +596,7 @@ module.exports = {
         (inv) =>
           inv.semyaId === semyaId &&
           (inv.recipientEmail || "").toLowerCase() === targetEmail &&
+          (inv.personId || null) === normalizedPersonId &&
           inv.status === "pending",
       );
     } else if (recipientPhone) {
@@ -576,6 +605,17 @@ module.exports = {
         (inv) =>
           inv.semyaId === semyaId &&
           (inv.recipientPhone || "").replace(/\s+/g, "") === targetPhone &&
+          (inv.personId || null) === normalizedPersonId &&
+          inv.status === "pending",
+      );
+    } else if (normalizedPersonId) {
+      existing = (db.semyaInvitations || []).find(
+        (inv) =>
+          inv.semyaId === semyaId &&
+          inv.personId === normalizedPersonId &&
+          !inv.recipientUserId &&
+          !inv.recipientEmail &&
+          !inv.recipientPhone &&
           inv.status === "pending",
       );
     }
@@ -601,11 +641,14 @@ module.exports = {
       recipientPhone: recipientPhone
         ? String(recipientPhone).trim()
         : null,
+      personId: normalizedPersonId,
       role,
       createdAt,
       expiresAt,
       status: "pending",
       acceptedAt: null,
+      declinedAt: null,
+      declinedByUserId: null,
       revokedAt: null,
       revokedByUserId: null,
       expiredAt: null,
@@ -613,6 +656,50 @@ module.exports = {
     db.semyaInvitations.push(invitation);
     await this._write(db);
     return {created: true, invitation: structuredClone(invitation)};
+  },
+
+  async getInvitationPreview(token) {
+    if (!token || typeof token !== "string") {
+      return null;
+    }
+    const db = await this._read();
+    this._lazyExpireInvitations(db, null);
+    const inv = (db.semyaInvitations || []).find((entry) => entry.token === token);
+    if (!inv) {
+      return null;
+    }
+    const semya = (db.semyi || []).find((s) => s.id === inv.semyaId) || null;
+    const inviter =
+      (db.users || []).find((u) => u.id === inv.inviterUserId) || null;
+    const inviterName =
+      inviter?.profile?.displayName ||
+      composeDisplayNameFromProfile(inviter?.profile) ||
+      null;
+    let targetPersonName = null;
+    if (inv.personId && semya?.treeId) {
+      const person = (db.persons || []).find(
+        (p) => p.id === inv.personId && p.treeId === semya.treeId,
+      );
+      targetPersonName = person?.name || null;
+    }
+    return {
+      id: inv.id,
+      semyaId: inv.semyaId,
+      role: inv.role,
+      status: inv.status,
+      createdAt: inv.createdAt,
+      expiresAt: inv.expiresAt,
+      acceptedAt: inv.acceptedAt ?? null,
+      declinedAt: inv.declinedAt ?? null,
+      revokedAt: inv.revokedAt ?? null,
+      expiredAt: inv.expiredAt ?? null,
+      semyaName: semya?.deletedAt ? null : (semya?.name || null),
+      semyaDeleted: Boolean(semya?.deletedAt || !semya),
+      inviterName,
+      targetPersonName,
+      personId: inv.personId ?? null,
+      hasRecipientUser: Boolean(inv.recipientUserId),
+    };
   },
 
   async findInvitationByToken(token) {
@@ -728,6 +815,39 @@ module.exports = {
         invitation: structuredClone(invitation),
         membership: structuredClone(membership),
       };
+    });
+  },
+
+  async declineInvitation({token, actingUserId}) {
+    if (!token || typeof token !== "string") {
+      throw new Error("INVALID_TOKEN");
+    }
+    if (!actingUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    return this._mutate((db) => {
+      this._lazyExpireInvitations(db, null);
+      const invitation = (db.semyaInvitations || []).find(
+        (inv) => inv.token === token,
+      );
+      if (!invitation) {
+        throw new Error("INVITATION_NOT_FOUND");
+      }
+      if (invitation.status !== "pending") {
+        throw new Error("INVITATION_NOT_PENDING");
+      }
+      if (
+        invitation.recipientUserId &&
+        invitation.recipientUserId !== actingUserId
+      ) {
+        throw new Error("WRONG_RECIPIENT");
+      }
+      const now = nowIso();
+      invitation.status = "declined";
+      invitation.declinedAt = now;
+      invitation.declinedByUserId = actingUserId;
+      return structuredClone(invitation);
     });
   },
 

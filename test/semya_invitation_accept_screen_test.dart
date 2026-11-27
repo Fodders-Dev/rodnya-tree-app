@@ -1,10 +1,3 @@
-// Density chunk 25: smoke + invariant tests for the invitation
-// deep-link accept screen. No test existed for this screen before —
-// it's the first thing an invited relative sees after tapping the
-// link, so it's worth a permanent regression guard even though this
-// chunk only touched layout (auto-accept-on-mount logic is untouched,
-// see the comment in semya_invitation_accept_screen.dart build()).
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -21,20 +14,44 @@ import 'package:rodnya/screens/semya_invitation_accept_screen.dart';
 import 'package:rodnya/services/semya_invitation_deep_link_service.dart';
 
 class _FakeSemyaService implements SemyaCapableFamilyTreeService {
-  _FakeSemyaService({this.acceptError});
+  _FakeSemyaService({
+    this.previewResult,
+    this.previewError,
+    this.acceptResult,
+    this.acceptError,
+    this.declineResult,
+    this.holdPreview = false,
+  });
 
+  SemyaInvitation? previewResult;
+  SemyaError? previewError;
+  SemyaInvitationAcceptResult? acceptResult;
   SemyaError? acceptError;
+  SemyaInvitation? declineResult;
+  final bool holdPreview;
+  int acceptCalls = 0;
+  int declineCalls = 0;
 
-  /// Never completes when [acceptError] is null — used by the
-  /// "processing state" test, which only needs the spinner to still
-  /// be up after the first frame (a fake that resolves/throws
-  /// synchronously would race the microtask queue against `pump()`).
-  final Completer<SemyaInvitationAcceptResult> _pending = Completer();
+  final Completer<SemyaInvitation?> _pendingPreview = Completer();
+
+  @override
+  Future<SemyaInvitation?> previewInvitation(String token) async {
+    if (holdPreview) return _pendingPreview.future;
+    if (previewError != null) throw previewError!;
+    return previewResult;
+  }
 
   @override
   Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async {
+    acceptCalls += 1;
     if (acceptError != null) throw acceptError!;
-    return _pending.future;
+    return acceptResult!;
+  }
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async {
+    declineCalls += 1;
+    return declineResult!;
   }
 
   @override
@@ -56,6 +73,7 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async =>
       throw UnimplementedError();
 
@@ -200,12 +218,30 @@ GoRouter _buildRouter(Widget accept) {
   );
 }
 
+SemyaInvitation _samplePendingInvitation({
+  SemyaInvitationStatus status = SemyaInvitationStatus.pending,
+}) {
+  return SemyaInvitation(
+    id: 'inv-1',
+    token: 'tok',
+    semyaId: 'semya-1',
+    inviterUserId: 'user-owner',
+    role: SemyaRole.editor,
+    status: status,
+    createdAt: '2026-11-27T00:00:00Z',
+    expiresAt: '2026-12-27T00:00:00Z',
+    semyaName: 'Семья Ивановых',
+    inviterName: 'Артём',
+    targetPersonName: 'Дядя Павел',
+  );
+}
+
 void main() {
   testWidgets(
     'density chunk 25: error state — icon/text/CTA fit compactly, CTA is 52dp',
     (tester) async {
       final service = _FakeSemyaService(
-        acceptError: const SemyaError(
+        previewError: const SemyaError(
           code: 'INVITATION_NOT_FOUND',
           message: 'not found',
         ),
@@ -221,8 +257,6 @@ void main() {
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await tester.pumpAndSettle();
 
-      // Both the body text and the transient SnackBar carry this
-      // message — at least one (the body copy) must be present.
       expect(find.text('Приглашение не найдено'), findsWidgets);
       expect(deepLink.clearCalls, 1);
 
@@ -246,8 +280,7 @@ void main() {
   );
 
   testWidgets('processing state renders spinner + label', (tester) async {
-    // Never resolves — keeps the screen in the processing state.
-    final service = _FakeSemyaService();
+    final service = _FakeSemyaService(holdPreview: true);
     final router = _buildRouter(
       SemyaInvitationAcceptScreen(
         token: 'tok',
@@ -260,12 +293,79 @@ void main() {
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.text('Проверяем приглашение...'), findsOneWidget);
+    expect(service.acceptCalls, 0);
+  });
+
+  testWidgets('preview renders metadata and requires confirm before accept',
+      (tester) async {
+    final inv = _samplePendingInvitation();
+    final service = _FakeSemyaService(
+      previewResult: inv,
+      acceptResult: SemyaInvitationAcceptResult(
+        invitation: inv,
+        semyaId: inv.semyaId,
+        role: inv.role,
+        membershipId: 'mem-1',
+      ),
+    );
+    final deepLink = _FakeDeepLinkService();
+    final router = _buildRouter(
+      SemyaInvitationAcceptScreen(
+        token: 'tok',
+        serviceOverride: service,
+        deepLinkServiceOverride: deepLink,
+      ),
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Семья Ивановых'), findsOneWidget);
+    expect(find.textContaining('Артём приглашает вас'), findsOneWidget);
+    expect(find.text('Карточка в дереве: Дядя Павел'), findsOneWidget);
+    expect(service.acceptCalls, 0);
+
+    await tester.tap(find.byKey(const Key('invitation-accept-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(service.acceptCalls, 1);
+    expect(deepLink.clearCalls, 1);
+    expect(find.text('Главный экран'), findsOneWidget);
+  });
+
+  testWidgets('decline button calls declineInvitation and returns home',
+      (tester) async {
+    final inv = _samplePendingInvitation();
+    final declined = _samplePendingInvitation(
+      status: SemyaInvitationStatus.declined,
+    );
+    final service = _FakeSemyaService(
+      previewResult: inv,
+      declineResult: declined,
+    );
+    final deepLink = _FakeDeepLinkService();
+    final router = _buildRouter(
+      SemyaInvitationAcceptScreen(
+        token: 'tok',
+        serviceOverride: service,
+        deepLinkServiceOverride: deepLink,
+      ),
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('invitation-accept-decline')));
+    await tester.pumpAndSettle();
+
+    expect(service.declineCalls, 1);
+    expect(deepLink.clearCalls, 1);
+    expect(find.text('Главный экран'), findsOneWidget);
   });
 
   testWidgets('INVITATION_EXPIRED and FORBIDDEN clear pending token',
       (tester) async {
     for (final code in ['INVITATION_EXPIRED', 'FORBIDDEN']) {
       final service = _FakeSemyaService(
+        previewResult: _samplePendingInvitation(),
         acceptError: SemyaError(code: code, message: 'err'),
       );
       final deepLink = _FakeDeepLinkService();
@@ -277,6 +377,9 @@ void main() {
         ),
       );
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('invitation-accept-confirm')));
       await tester.pumpAndSettle();
       expect(deepLink.clearCalls, 1, reason: 'Failed to clear token on $code');
     }

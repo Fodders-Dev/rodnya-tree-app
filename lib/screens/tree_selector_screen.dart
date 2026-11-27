@@ -2,21 +2,20 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
-import '../backend/models/tree_invitation.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
+import '../backend/models/semya_invitation.dart';
 import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
-import '../services/public_tree_link_service.dart';
 import '../utils/russian_plural.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/share_browse_token_modal.dart';
 
 /// Canonical tree-selection surface. Lives at `/trees` (moved off
 /// `/tree?selector=1` once `/tree` became its own tab route — prefix
@@ -60,8 +59,7 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
   String _errorMessage = '';
   String? _selectingTreeId;
 
-  StreamSubscription<List<TreeInvitation>>? _invitationsSub;
-  List<TreeInvitation> _pendingInvitations = const <TreeInvitation>[];
+  List<SemyaInvitation> _pendingInvitations = const <SemyaInvitation>[];
   bool _isInvitationsLoading = true;
   String? _processingInvitationId;
   String? _processingRemovalTreeId;
@@ -72,34 +70,40 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
   void initState() {
     super.initState();
     _loadUserTrees();
-    _subscribeToInvitations();
+    _loadPendingInvitations();
   }
 
   @override
   void dispose() {
-    _invitationsSub?.cancel();
     super.dispose();
   }
 
-  void _subscribeToInvitations() {
-    final stream = _familyTreeService.getPendingTreeInvitations();
-    _invitationsSub = stream.listen(
-      (invitations) {
-        if (!mounted) return;
-        setState(() {
-          _pendingInvitations = invitations;
-          _isInvitationsLoading = false;
-        });
-        _maybeScrollToInitialFocus();
-      },
-      onError: (Object error, StackTrace stack) {
-        debugPrint('Invitations stream error: $error');
-        if (!mounted) return;
-        setState(() {
-          _isInvitationsLoading = false;
-        });
-      },
-    );
+  Future<void> _loadPendingInvitations() async {
+    final service = _familyTreeService;
+    if (service is! SemyaCapableFamilyTreeService) {
+      if (!mounted) return;
+      setState(() {
+        _pendingInvitations = const <SemyaInvitation>[];
+        _isInvitationsLoading = false;
+      });
+      return;
+    }
+    try {
+      final invitations = await (service as SemyaCapableFamilyTreeService)
+          .listPendingInvitations();
+      if (!mounted) return;
+      setState(() {
+        _pendingInvitations = invitations;
+        _isInvitationsLoading = false;
+      });
+      _maybeScrollToInitialFocus();
+    } catch (error) {
+      debugPrint('Invitations load error: $error');
+      if (!mounted) return;
+      setState(() {
+        _isInvitationsLoading = false;
+      });
+    }
   }
 
   Future<void> _loadUserTrees() async {
@@ -342,7 +346,10 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
       ..sort((left, right) => left.name.compareTo(right.name));
 
     return RefreshIndicator(
-      onRefresh: _loadUserTrees,
+      onRefresh: () async {
+        await _loadUserTrees();
+        await _loadPendingInvitations();
+      },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
@@ -469,10 +476,14 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
     );
   }
 
-  Widget _buildInvitationCard(TreeInvitation invitation) {
+  Widget _buildInvitationCard(SemyaInvitation invitation) {
     final theme = Theme.of(context);
-    final isProcessing = _processingInvitationId == invitation.invitationId;
-    final tree = invitation.tree;
+    final isProcessing = _processingInvitationId == invitation.id;
+    final title = (invitation.semyaName ?? '').trim().isNotEmpty
+        ? invitation.semyaName!.trim()
+        : 'Семья';
+    final inviterName = (invitation.inviterName ?? '').trim();
+    final targetPersonName = (invitation.targetPersonName ?? '').trim();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -487,10 +498,8 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                 CircleAvatar(
                   radius: 24,
                   backgroundColor: theme.colorScheme.tertiary,
-                  child: Icon(
-                    tree.isFriendsTree
-                        ? Icons.diversity_3_outlined
-                        : Icons.family_restroom,
+                  child: const Icon(
+                    Icons.family_restroom,
                     color: Colors.white,
                   ),
                 ),
@@ -500,7 +509,7 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        tree.name,
+                        title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -510,19 +519,19 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        invitation.invitedBy != null &&
-                                invitation.invitedBy!.trim().isNotEmpty
-                            ? 'Приглашает: ${invitation.invitedBy}'
-                            : 'Вас пригласили присоединиться.',
+                        inviterName.isNotEmpty
+                            ? 'Приглашает: $inviterName'
+                            : 'Вас пригласили присоединиться · Роль: '
+                                '${invitation.role.displayLabel.toLowerCase()}',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
-                      if (tree.description.trim().isNotEmpty) ...[
+                      if (targetPersonName.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
-                          tree.description,
-                          maxLines: 2,
+                          'Карточка: $targetPersonName',
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
@@ -565,22 +574,29 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
   }
 
   Future<void> _handleInvitation(
-    TreeInvitation invitation,
+    SemyaInvitation invitation,
     bool accept,
   ) async {
-    if (_processingInvitationId != null) return;
+    final service = _familyTreeService;
+    if (_processingInvitationId != null ||
+        service is! SemyaCapableFamilyTreeService) {
+      return;
+    }
+    final semyaService = service as SemyaCapableFamilyTreeService;
     setState(() {
-      _processingInvitationId = invitation.invitationId;
+      _processingInvitationId = invitation.id;
     });
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await _familyTreeService.respondToTreeInvitation(
-        invitation.invitationId,
-        accept,
-      );
+      if (accept) {
+        await semyaService.acceptInvitation(invitation.token);
+      } else {
+        await semyaService.declineInvitation(invitation.token);
+      }
       if (!mounted) return;
-      // Re-pull the tree list when accepting so the freshly-joined
-      // tree appears in «Другие» without a manual refresh.
+      _pendingInvitations = _pendingInvitations
+          .where((entry) => entry.id != invitation.id)
+          .toList(growable: false);
       if (accept) {
         if (GetIt.I.isRegistered<TreeProvider>()) {
           await GetIt.I<TreeProvider>().refreshAvailableTrees();
@@ -714,14 +730,6 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                                 : Icons.groups_2_outlined,
                             label: isOwned ? 'Создатель' : 'Участник',
                           ),
-                          _SelectorChip(
-                            icon: tree.isPrivate
-                                ? Icons.lock_outline
-                                : Icons.public,
-                            label: tree.isPrivate
-                                ? 'Только участникам'
-                                : 'Публичный доступ',
-                          ),
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -761,10 +769,10 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (tree.isPublic)
+                      if (_familyTreeService is SemyaCapableFamilyTreeService)
                         IconButton(
-                          tooltip: 'Скопировать публичную ссылку',
-                          onPressed: () => _copyPublicLink(tree),
+                          tooltip: 'Поделиться ссылкой',
+                          onPressed: () => _shareTreeBrowseLink(tree),
                           icon: const Icon(Icons.link_outlined),
                         ),
                       PopupMenuButton<_TreeMenuAction>(
@@ -821,18 +829,36 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
     return '$day.$month.${date.year}';
   }
 
-  Future<void> _copyPublicLink(FamilyTree tree) async {
-    final publicUri = PublicTreeLinkService.buildPublicTreeUri(
-      tree.publicRouteId,
-      publicAppUrl: BackendRuntimeConfig.current.publicAppUrl,
-    );
-    await Clipboard.setData(ClipboardData(text: publicUri.toString()));
-    if (!mounted) {
-      return;
+  Future<void> _shareTreeBrowseLink(FamilyTree tree) async {
+    final service = _familyTreeService;
+    if (service is! SemyaCapableFamilyTreeService) return;
+    try {
+      final semyi =
+          await (service as SemyaCapableFamilyTreeService).listMySemya();
+      final matched = semyi.where((s) => s.treeId == tree.id).toList();
+      if (!mounted) return;
+      if (matched.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Ссылка доступна только участникам семьи.')),
+        );
+        return;
+      }
+      await showShareBrowseTokenModal(
+        context,
+        semyaId: matched.first.id,
+        semyaName: tree.name,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(error, fallback: 'Не удалось создать ссылку.'),
+          ),
+        ),
+      );
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Публичная ссылка скопирована.')),
-    );
   }
 
   Future<void> _editTree(FamilyTree tree) async {
@@ -1106,7 +1132,6 @@ class _TreeEditDialogState extends State<_TreeEditDialog> {
       TextEditingController(text: widget.initialName);
   late final TextEditingController _descController =
       TextEditingController(text: widget.initialDescription);
-  late bool _isPrivate = widget.initialIsPrivate;
   String? _errorText;
 
   @override
@@ -1149,14 +1174,6 @@ class _TreeEditDialogState extends State<_TreeEditDialog> {
               labelText: 'Описание (необязательно)',
             ),
           ),
-          const SizedBox(height: 8),
-          SwitchListTile(
-            key: const Key('tree-edit-private-switch'),
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Приватное дерево'),
-            value: _isPrivate,
-            onChanged: (value) => setState(() => _isPrivate = value),
-          ),
         ],
       ),
       actions: [
@@ -1176,7 +1193,7 @@ class _TreeEditDialogState extends State<_TreeEditDialog> {
               _TreeEditResult(
                 name: name,
                 description: _descController.text.trim(),
-                isPrivate: _isPrivate,
+                isPrivate: widget.initialIsPrivate,
               ),
             );
           },

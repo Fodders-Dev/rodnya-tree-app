@@ -6,6 +6,8 @@ import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/kinship_check_capable_family_tree_service.dart';
 import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
 import 'package:rodnya/backend/models/kinship_check.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/user_profile.dart';
 import 'package:rodnya/screens/discover_relatives/discover_relatives_screen.dart';
 
@@ -13,6 +15,26 @@ class _FakeKinshipService
     implements
         FamilyTreeServiceInterface,
         KinshipCheckCapableFamilyTreeService {
+  final List<Map<String, dynamic>> sentRequests = <Map<String, dynamic>>[];
+
+  @override
+  Future<List<FamilyPerson>> getRelatives(String treeId) async =>
+      const <FamilyPerson>[];
+
+  @override
+  Future<void> sendRelationRequest({
+    required String treeId,
+    required String recipientId,
+    required RelationType relationType,
+    String? message,
+  }) async {
+    sentRequests.add({
+      'treeId': treeId,
+      'recipientId': recipientId,
+      'relationType': relationType,
+    });
+  }
+
   @override
   Future<List<KinshipCheck>> listIssuedKinshipChecks({
     KinshipCheckStatus? status,
@@ -33,10 +55,13 @@ class _FakeProfileService implements ProfileServiceInterface {
   _FakeProfileService({this.results = const <UserProfile>[]});
 
   final List<UserProfile> results;
+  String? lastQuery;
 
   @override
-  Future<List<UserProfile>> searchUsers(String query, {int limit = 10}) async =>
-      results;
+  Future<List<UserProfile>> searchUsers(String query, {int limit = 10}) async {
+    lastQuery = query;
+    return results;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -160,4 +185,54 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+      'P2.5a: initialProfileCode strips leading @, auto-searches & allows add to tree',
+      (tester) async {
+    final kinship = _FakeKinshipService();
+    final profileSvc = _FakeProfileService(
+      results: [
+        _profile('user-2', name: 'Ирина Кузнецова', username: 'irina'),
+      ],
+    );
+    await getIt.unregister<FamilyTreeServiceInterface>();
+    await getIt.unregister<ProfileServiceInterface>();
+    getIt.registerSingleton<FamilyTreeServiceInterface>(kinship);
+    getIt.registerSingleton<ProfileServiceInterface>(profileSvc);
+
+    await tester.pumpWidget(
+      MaterialApp.router(
+        routerConfig: GoRouter(
+          initialLocation: '/discover',
+          routes: [
+            GoRoute(
+              path: '/discover',
+              builder: (_, __) => const DiscoverRelativesScreen(
+                treeId: 'tree-1',
+                initialProfileCode: '@irina',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(profileSvc.lastQuery, 'irina');
+    expect(find.text('Ирина Кузнецова'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('discover-add-relative-user-2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Кем приходится?'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Брат/сестра').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('discover-confirm-add-relative')));
+    await tester.pumpAndSettle();
+
+    expect(kinship.sentRequests, hasLength(1));
+    expect(kinship.sentRequests.first['treeId'], 'tree-1');
+    expect(kinship.sentRequests.first['recipientId'], 'user-2');
+    expect(kinship.sentRequests.first['relationType'], RelationType.sibling);
+  });
 }

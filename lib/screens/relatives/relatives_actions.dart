@@ -122,13 +122,36 @@ extension _RelativesActions on _RelativesScreenState {
     );
   }
 
+  Future<Uri> _createCardInvitationUri({
+    required String treeId,
+    required String personId,
+  }) async {
+    final Object service = _familyService;
+    if (service is SemyaCapableFamilyTreeService) {
+      final semyi = await service.listMySemya();
+      final matched = semyi.where((s) => s.treeId == treeId).toList();
+      if (matched.isNotEmpty) {
+        final invitation = await service.createInvitation(
+          semyaId: matched.first.id,
+          role: SemyaRole.editor,
+          personId: personId,
+        );
+        return Uri.parse(invitation.shareUrl);
+      }
+    }
+    return _invitationLinkService.buildInvitationLink(
+      treeId: treeId,
+      personId: personId,
+    );
+  }
+
   Future<void> _shareInviteForRelative(FamilyPerson relative) async {
     if (!_canInviteRelative(relative) || _currentTreeId == null) {
       return;
     }
 
     try {
-      final inviteUrl = _invitationLinkService.buildInvitationLink(
+      final inviteUrl = await _createCardInvitationUri(
         treeId: _currentTreeId!,
         personId: relative.id,
       );
@@ -192,7 +215,7 @@ extension _RelativesActions on _RelativesScreenState {
       // перезагружается после сохранения (stale-list смоук 2026-07-04).
       unawaited(_startAddRelativeFlow(selectedTreeId));
     } else if (value == 'find') {
-      context.push('/relatives/find/$selectedTreeId');
+      context.push('/discover/relatives?treeId=$selectedTreeId');
     } else if (value == 'create_tree') {
       context.push('/trees/create').then((result) {
         // Можно опционально перейти на новый экран дерева после создания.

@@ -64,7 +64,15 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaInvitation?> previewInvitation(String token) async => null;
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async =>
       throw UnimplementedError();
 
   @override
@@ -178,7 +186,8 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
       const <DeletedPerson>[];
 
   @override
-  Future<List<DeletedPerson>> listDeletedPersonsForSemya(String semyaId) async =>
+  Future<List<DeletedPerson>> listDeletedPersonsForSemya(
+          String semyaId) async =>
       const <DeletedPerson>[];
 
   @override
@@ -190,8 +199,7 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
       throw UnimplementedError();
 
   @override
-  Future<List<DeletedPost>> listMyDeletedPosts() async =>
-      const <DeletedPost>[];
+  Future<List<DeletedPost>> listMyDeletedPosts() async => const <DeletedPost>[];
 
   @override
   Future<void> restoreDeletedPost(String deletedPostId) async =>
@@ -219,8 +227,7 @@ class _FakeFamilyService implements FamilyTreeServiceInterface {
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 FamilyPerson _person(String id, String name) {
@@ -256,8 +263,7 @@ void main() {
     expect(semyaSvc.listCalls, 1);
   });
 
-  testWidgets('populated state renders rows с resolved names',
-      (tester) async {
+  testWidgets('populated state renders rows с resolved names', (tester) async {
     final semyaSvc = _FakeSemyaService(hiddenIds: ['p-1', 'p-2']);
     final familySvc = _FakeFamilyService(
       persons: {
@@ -326,8 +332,7 @@ void main() {
     expect(find.text('Снова видно'), findsOneWidget);
   });
 
-  testWidgets('unhide failure → snackbar error, row preserved',
-      (tester) async {
+  testWidgets('unhide failure → snackbar error, row preserved', (tester) async {
     final semyaSvc = _FakeSemyaService(
       hiddenIds: ['p-1'],
       throwOnUpdate: const SemyaError(

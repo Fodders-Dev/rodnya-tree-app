@@ -160,18 +160,19 @@ extension _RelativesHeaderSection on _RelativesScreenState {
                   label: const Text('Добавить'),
                 ),
               OutlinedButton.icon(
-                onPressed: _currentTreeId == null
-                    ? null
-                    : () => context.push('/relatives/find/${_currentTreeId!}'),
-                icon: const Icon(Icons.search),
-                label: const Text('Найти'),
-              ),
-              if (!isFriendsTree)
-                OutlinedButton.icon(
-                  onPressed: () => context.push('/discover/relatives'),
-                  icon: const Icon(Icons.travel_explore_rounded),
-                  label: const Text('Проверить родство'),
+                onPressed: () {
+                  final treeId = _currentTreeId;
+                  if (treeId == null) {
+                    context.push('/discover/relatives');
+                    return;
+                  }
+                  context.push('/discover/relatives?treeId=$treeId');
+                },
+                icon: const Icon(Icons.search_rounded),
+                label: Text(
+                  isFriendsTree ? 'Найти' : 'Найти родню',
                 ),
+              ),
               if (_pendingRequestsCount > 0)
                 OutlinedButton.icon(
                   onPressed: _currentTreeId == null

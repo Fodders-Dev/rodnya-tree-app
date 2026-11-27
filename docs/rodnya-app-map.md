@@ -45,7 +45,7 @@ flowchart LR
     end
 
     subgraph sgAccess ["Приглашения и права"]
-        semyaInvite["SemyaInvitation (нет decline и preview)"]
+        semyaInvite["SemyaInvitation (preview, accept, decline, revoke, personId)"]
         browseToken["SemyaBrowseToken (гостевой просмотр)"]
         editGrant["EditGrant (UI выдачи + отзыв + отказ)"]
         legacyInvite["Legacy TreeInvite + Claim (RBAC усилен)"]
@@ -172,7 +172,7 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 | **1. `UserProfile` / Account** | Back ✓ (`register`, OAuth)<br>UI ✓ (`/login`, `/setup`) | Back ✓ (`profile/me`, `users/:id/profile`)<br>UI ✓ (`/profile`, `/user/:id`) | **Back ✓ (`PATCH /profile/me`, `users/:id/profile` с sync фото, `POST /auth/change-password`)**<br>**UI ✓ (`showProfileEditSheet`, «Вход и безопасность»)** | Back ✓ (поиск, discovery)<br>UI ✓ (`/user/:id`, код) | ❌ нет деактивации | **Back ✓ (`DELETE /auth/account`, `DELETE /auth/providers/:provider`)**<br>**UI ✓ (`SettingsScreen`: отвязка OAuth, удаление без пароля для OAuth)** | Только сам пользователь | Wave B2b закрыл смену пароля в сессии, отвязку OAuth с защитой от потери последнего входа, passwordless delete для OAuth и sync `photoUrl` *(ранее Wave A починил передачу `Semya` и 3 поля GDPR)*; `ProfileNote` решается в P2 |
 | **2. `FamilyTree`** | Back ✓ (`POST /trees`)<br>UI ✓ (`/trees/create`) | Back ✓ (`GET /trees`, `GET /:treeId`)<br>UI ✓ (`/trees`, `/tree`) | **Back ✓ (`PATCH /trees/:treeId`)**<br>**UI ✓ (`/trees` меню «Изменить»)** | Back ✓ (`isPrivate` + `publicSlug`)<br>UI ✓ | ❌ нет архива/корзины дерева | Back ✓ (`DELETE /trees/:id`: owner=hard, member=leave)<br>UI ✓ (`/trees`) | Owner / `Semya owner` (исправлено в Wave B1, вкл. `include-rules`) | Синкается с `Semya.name/description`; hard-delete пока без корзины; legacy `/public/trees/*` уберём в Wave C *(Wave B1)* |
 | **3. `Semya` & `SemyaMember`** | Back ✓ (`POST /semya` + auto-bind)<br>UI ⚠️ (auto-bind + бейдж в дереве) | Back ✓ (`GET /me/semya`, `/semya/:id`)<br>UI ✓ (`SemyaDetailsScreen`) | Back ✓ (`PATCH /semya/:id`, роли/гранты)<br>UI ✓ (owner, синкает `tree.name`) | Back ✓ (инвайты + browse)<br>UI ✓ | Back ✓ (`SemyaMember` `hiddenAt`; `POST /semya/:id/restore` 90d + `hardDeleteExpired` sweep)<br>UI ⚠️ | Back ✓ (`DELETE /semya/:id` owner soft; `DELETE /membership` leave/kick)<br>**UI ✓ (Leave + Delete для owner)** | `Semya` owner (`editor+hasInviteGrant` для приглашений) | Восстановление `POST /semya/:id/restore` доступно на бэке и чистится `hardDeleteExpired` за 90 дней *(Wave B1)* |
-| **4. `SemyaInvitation`** | Back ✓ (`POST /semya/:id/invitation`)<br>UI ✓ (`SemyaInviteScreen`) | Back ✓ (список, нет `GET /:token` preview)<br>UI ✓ (`SemyaInvitationsListScreen`, `/invite/:token`) | ❌ нельзя сменить роль/срок | Back ✓ (токен / email)<br>UI ✓ | ❌ | Back ✓ (`DELETE` отзыв; `accept` по токену; **нет `decline`**)<br>UI ✓ (отзыв/принятие) | Owner или `editor + hasInviteGrant`; принятие по токену | Нет `decline` получателем, нет preview до принятия, нельзя сделать открытую одноразовую ссылку без email/userId/phone |
+| **4. `SemyaInvitation`** | **Back ✓ (`POST /semya/:id/invitation` с опц. `personId`)**<br>**UI ✓ (`SemyaInviteScreen`, карточка персоны)** | **Back ✓ (`GET /v1/invitation/:token` preview, `/invitations`, `/me/pending-invitations`)**<br>**UI ✓ (`SemyaInvitationAcceptScreen`, `SemyaInvitationsListScreen`, `TreeSelector`, `Onboarding`)** | ❌ нельзя сменить роль/срок | **Back ✓ (токен / email / `personId` card-link)**<br>**UI ✓ (`shareUrl`)** | ❌ | **Back ✓ (`DELETE` отзыв; `accept` + автопривязка `personId`; `POST /decline`)**<br>**UI ✓ (отзыв/принятие/отклонение)** | Owner или `editor + hasInviteGrant`; принятие/отклонение получателем или носителем токена | Полный цикл закрыт в Wave C2 (preview, decline, link-by-personId, перевод экранов с `TreeInvitation`) |
 | **5. `SemyaBrowseToken`** | Back ✓ (`POST /browse-token`)<br>UI ✓ (`ShareBrowseTokenModal`) | Back ✓ (`GET /browse-tokens`, публичный `GET /browse/:token`)<br>UI ✓ (`/browse/:token`, список) | ❌ нет имени/метки и продления срока | Back ✓ (capability-токен)<br>UI ✓ | ❌ | Back ✓ (`DELETE /browse-token/:id`)<br>UI ✓ (отзыв) | Owner, `editor + hasInviteGrant` или `createdByUserId` | Нельзя подписать назначение ссылки или продлить срок |
 | **6. Legacy `TreeInvitation` / `Pending` / `RelationRequest`** | Back ✓ (все 3 смонтированы)<br>UI ✓ (`TreeSelector`, `FindRelative`) | **Back ✓ (`pending?direction=incoming\|outgoing\|all`)**<br>**UI ✓ (`RelationRequestsScreen` 2 вкладки, `/trees?tab=invitations`)** | ❌ | ⚠️ `/invite?treeId=&personId=` + `claim-token` | ❌ | **Back ✓ (`DELETE /relation-requests/:id` и `POST /respond {canceled}` для отправителя; `TreeInvitation` в P2)**<br>**UI ✓ («Отозвать» во вкладке «Отправленные»)** | Owner или `editor + hasInviteGrant` *(Wave A)*; `RelationRequest` cancel — только отправитель | `RelationRequest` outgoing + отмена закрыты *(Wave B2b)*; legacy-инвайты ещё дублируют `SemyaInvitation` (консолидация в P2) |
 | **7. `FamilyPerson` & `GraphPerson`** | Back ✓ (`POST /persons`, `import`, `pull-person`)<br>UI ✓ (`/relatives/add`, quick-add, pull) | Back ✓ (`persons`, `dossier`, `search`, `graph-persons/:id`)<br>UI ✓ (`/tree`, `/family`, `/relative/details/:id`) | Back ✓ (`PATCH`, медиа, атрибуты, visibility)<br>UI ✓ (полная правка) | Back ✓ (гранты, visibility, pull)<br>UI ⚠️ (нет UI выдачи `EditGrant`) | Back ✓ (soft-delete 30d + `hide-filter`)<br>UI ✓ (скрыть в семье + корзина) | Back ✓ (soft-delete + `unlink`)<br>UI ✓ | Anon: `editor+`; Claimed: owner или `EditGrant` | `GET /persons/:id` не проверяет `hide-filter`; `PUT /attributes` требует `_isPersonSteward` *(Wave A починил отзыв `semyaMembers` при `unlinkUserFromPerson`)* |
@@ -357,9 +357,9 @@ Chat (id, type: direct|group|branch, participantIds[], createdBy)
 ### P2 — Delete-first и консолидация экранов/маршрутов
 1. **Мгновенная чистка мёртвого кода — ✅ Закрыто в Wave C1 (2026-11-27):** удалены `SendRelationRequestScreen` + 2 мёртвых роута (`/relatives/send_request/:treeId`, `/send_relation_request`), `lib/navigation/page_transitions.dart`, дубль `/relatives/chat/:userId` (с переносом `UrlUtils.normalizeImageUrl` в `/chat/:userId`), а также неиспользуемый `ProfileNote` во Flutter и на бэке.
 2. **Консолидация 3 онбордингов → 1 — ✅ Закрыто в Wave C1 (2026-11-27):** оставлен единый `/setup` (`OnboardingWizardScreen` с опциональной датой рождения; `seedOnboarding` заполняет `firstName`, `lastName` и уникальный `username`), удалены `OnboardingScreen`/`OnboardingService` и `CompleteProfileScreen` (парсер телефона перенесён в `lib/utils/phone_parser.dart`, `/onboarding` → `/setup`, `/complete_profile` → `/profile?edit=1`).
-3. **Консолидация 3 инвайт-потоков → 1 (Wave C2):** добавить preview (`GET /v1/invitation/:token`) и `decline` к `SemyaInvitation`, и поэтапно вывести legacy `TreeInvitation` и `/invite?treeId=&personId=`.
-4. **Консолидация 2 публичных просмотров → 1 (Wave C2):** мигрировать `/public/tree/*` на отзываемый `SemyaBrowseToken` (`/browse/:token`).
-5. **Консолидация поиска родных и корзин — ⚠️ Частично закрыто (корзины ✅ в Wave C1):** объединены `TrashScreen` и `SemyaDeletedPersonsScreen` в единый `/profile/trash` (`?semyaId=&semyaName=`). Поиск родных (`/relatives/find/:treeId` + `/discover/relatives`) консолидируется в Wave C2.
+3. **Консолидация 3 инвайт-потоков → 1 — ✅ Закрыто в Wave C2 (2026-11-27):** добавлены `GET /v1/invitation/:token` (capability preview без PII), `POST /v1/invitation/:token/decline`, опциональный `personId` в `POST /v1/semya/:id/invitation` с автопривязкой `linkPersonToUser` при принятии и обогащением `inviterName`/`targetPersonName`; `SemyaInvitationAcceptScreen` переведён на явное превью → «Принять» / «Отклонить», кнопки «Пригласить» на карточке персоны переведены на `SemyaInvitation` (`shareUrl`), `HomeScreen`/`TreeSelectorScreen`/`AppShellRouteModule` переведены с `TreeInvitation` на `SemyaInvitation` (legacy `/invite?treeId=&personId=` оставлен только как совместимый приёмник старых ссылок).
+4. **Консолидация 2 публичных просмотров → 1 — ✅ Закрыто в Wave C2 (2026-11-27):** единый гостевой просмотр `/browse/:token` (`BrowseTreeScreen`) дополнен карточкой деталей персоны, фокусом ветки, авторизованным «Добавить к себе в семью» и гостевым CTA «Войти»; `SemyaBrowseToken.shareUrl` использует `BackendRuntimeConfig.current.publicAppUrl`; кнопки шаринга в `TreeViewScreen`/`TreeSelectorScreen` переведены на `showShareBrowseTokenModal`; удалены `PublicTreeEntryScreen`, `PublicTreeViewerScreen`, `PublicTreeService`, `PublicTreeLinkService` и UI-переключатели `isPrivate` из `CreateTreeScreen`/`_TreeEditDialog`.
+5. **Консолидация поиска родных и корзин — ✅ Закрыто в Wave C1 + Wave C2 (2026-11-27):** корзины объединены в `/profile/trash` (Wave C1); поиск родных объединён в единый `/discover/relatives` (`DiscoverRelativesScreen` с `?treeId=&profileCode=`, снятием `@`, `sendRelationRequest` и без блокировки при отсутствии kinship capability), дублирующая кнопка в шапке «Родных» слита в одну, `/relatives/find/:treeId` переведён на redirect, `FindRelativeScreen` удалён.
 6. **Маршрутизация — ✅ Закрыто в Wave C1 (2026-11-27):** переведены в `GoRouter` `SemyaDetailsScreen` (`/semya/:semyaId`), `TrashScreen` (`/profile/trash`) и `ProfileArticleEditorScreen` (`/relative/details/:personId/biography`), а `AppLinksDynamicLinkService` + `AndroidManifest.xml` синхронизированы со всеми активными deep-link маршрутами.
 
 ---
@@ -385,7 +385,7 @@ flowchart LR
         legacyOnboard["УДАЛЕНО: /onboarding + /complete_profile → redirect"]
         inviteAccept["Инвайт семьи (/invite/:token)"]
         storyGuest["Гостевая история SSR (/story/:token)"]
-        browseVsPublic["ОБЪЕДИНИТЬ: /browse/:token vs /public/tree/*"]
+        browseVsPublic["Гостевое дерево (/browse/:token) — СНЕСТИ legacy /public/tree ✅"]
     end
 
     subgraph sgFeed ["Лента и события (Tab 1)"]
@@ -402,7 +402,7 @@ flowchart LR
         treeSelector["Деревья (/trees и /trees/create)"]
         personDetails["Карточка родного (/relative/details/:id)"]
         personSubScreens["Биография, Фото, Голос, Видимость"]
-        discoverDup["ОБЪЕДИНИТЬ: /discover vs /relatives/find"]
+        discoverDup["Поиск родных (/discover/relatives) — /relatives/find/:treeId redirect ✅"]
     end
 
     subgraph sgComm ["Чаты и звонки (Tab 4)"]
@@ -419,10 +419,10 @@ flowchart LR
         securitySub["Сеансы, Доступы, Блокировки, Право"]
     end
 
-    subgraph sgDelete ["Снесено в Wave C1 / к сносу в C2"]
+    subgraph sgDelete ["Снесено в Wave C1 и Wave C2"]
         sendReqDead["СНЕСЕНО: SendRelationRequestScreen + page_transitions"]
         chatRouteDup["СНЕСЕНО: дубль /relatives/chat/:id + ProfileNote"]
-        legacyInviteDead["СНЕСТИ в C2: /invite legacy и /public/tree"]
+        legacyInviteDead["СНЕСТИ/ВЫВЕДЕНО в C2: PublicTreeEntry/Viewer, FindRelativeScreen"]
     end
 
     authLogin -->|"новый пользователь"| setupWizard

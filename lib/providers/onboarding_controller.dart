@@ -204,6 +204,40 @@ class OnboardingController extends ChangeNotifier {
     }
   }
 
+  Future<bool> declineInvitation(String token) async {
+    final svc = _resolveSemyaService();
+    if (svc == null) {
+      _error = 'Сервис недоступен';
+      _safeNotify();
+      return false;
+    }
+    if (_disposed || _isAccepting || _isSubmitting) return false;
+    _isAccepting = true;
+    _error = null;
+    _safeNotify();
+    try {
+      await svc.declineInvitation(token);
+      if (_disposed) return false;
+      SemyaInvitationDeepLinkService().clearPendingToken();
+      _pendingInvitations = _pendingInvitations
+          .where((i) => i.token != token)
+          .toList(growable: false);
+      _isAccepting = false;
+      _safeNotify();
+      return true;
+    } on SemyaError catch (e) {
+      _error = e.message;
+      _isAccepting = false;
+      _safeNotify();
+      return false;
+    } catch (e) {
+      _error = 'Не удалось отклонить приглашение: $e';
+      _isAccepting = false;
+      _safeNotify();
+      return false;
+    }
+  }
+
   Future<void> _hydrateFromServer() async {
     final service = _service;
     if (service == null) {

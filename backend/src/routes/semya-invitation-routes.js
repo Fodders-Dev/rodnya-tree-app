@@ -48,20 +48,26 @@ function registerSemyaInvitationRoutes(
       recipientUserId: invitation.recipientUserId ?? null,
       recipientEmail: invitation.recipientEmail ?? null,
       recipientPhone: invitation.recipientPhone ?? null,
+      personId: invitation.personId ?? null,
       role: invitation.role,
       status: invitation.status,
       createdAt: invitation.createdAt,
       expiresAt: invitation.expiresAt,
       acceptedAt: invitation.acceptedAt ?? null,
+      declinedAt: invitation.declinedAt ?? null,
+      declinedByUserId: invitation.declinedByUserId ?? null,
       revokedAt: invitation.revokedAt ?? null,
       revokedByUserId: invitation.revokedByUserId ?? null,
       expiredAt: invitation.expiredAt ?? null,
     };
-    // Ship FE9 (2026-05-27): listPendingInvitationsForUser enriches
-    // с semyaName (denormalized для frontend wizard CTA copy «семья
-    // {name}» — saves extra GET /v1/semya/:id round-trip).
     if (invitation.semyaName !== undefined) {
       base.semyaName = invitation.semyaName;
+    }
+    if (invitation.inviterName !== undefined) {
+      base.inviterName = invitation.inviterName;
+    }
+    if (invitation.targetPersonName !== undefined) {
+      base.targetPersonName = invitation.targetPersonName;
     }
     return base;
   }
@@ -108,6 +114,21 @@ function registerSemyaInvitationRoutes(
     res.json({invitations: rows.map(mapInvitation)});
   });
 
+  // GET /v1/invitation/:token — capability preview without auth (no PII).
+  app.get("/v1/invitation/:token", async (req, res) => {
+    const token = String(req.params.token || "").trim();
+    if (!token) {
+      res.status(400).json({message: "Некорректный токен"});
+      return;
+    }
+    const preview = await store.getInvitationPreview(token);
+    if (!preview) {
+      res.status(404).json({message: "Приглашение не найдено"});
+      return;
+    }
+    res.json({invitation: preview});
+  });
+
   // POST /v1/semya/:id/invitation — owner либо editor c grant
   // creates pending invitation. Idempotent на (semyaId + recipient).
   app.post("/v1/semya/:id/invitation", requireAuth, async (req, res) => {
@@ -135,6 +156,9 @@ function registerSemyaInvitationRoutes(
     const recipientPhone = req.body?.recipientPhone
       ? String(req.body.recipientPhone).trim()
       : null;
+    const personId = req.body?.personId
+      ? String(req.body.personId).trim()
+      : null;
     const role = String(req.body?.role || "").trim();
     const expiresInDays =
       typeof req.body?.expiresInDays === "number"
@@ -147,10 +171,10 @@ function registerSemyaInvitationRoutes(
       });
       return;
     }
-    if (!recipientUserId && !recipientEmail && !recipientPhone) {
+    if (!recipientUserId && !recipientEmail && !recipientPhone && !personId) {
       res.status(400).json({
         message:
-          "Нужен recipientUserId, recipientEmail либо recipientPhone",
+          "Нужен recipientUserId, recipientEmail, recipientPhone либо personId",
       });
       return;
     }
@@ -162,6 +186,7 @@ function registerSemyaInvitationRoutes(
         recipientUserId,
         recipientEmail,
         recipientPhone,
+        personId,
         role,
         expiresInDays,
       });
@@ -264,6 +289,22 @@ function registerSemyaInvitationRoutes(
         res.status(404).json({message: "Получатель не найден"});
         return;
       }
+      if (code === "PERSON_NOT_FOUND") {
+        res.status(404).json({message: "Карточка человека не найдена в семье"});
+        return;
+      }
+      if (code === "PERSON_ALREADY_CLAIMED") {
+        res.status(409).json({
+          message: "Эта карточка уже связана с другим пользователем",
+        });
+        return;
+      }
+      if (code === "PERSON_DECEASED") {
+        res.status(400).json({
+          message: "Нельзя привязать приглашение к карточке ушедшего человека",
+        });
+        return;
+      }
       if (code === "SEMYA_NOT_FOUND") {
         res.status(404).json({message: "Семья не найдена"});
         return;
@@ -292,13 +333,27 @@ function registerSemyaInvitationRoutes(
         acceptingUserId: req.auth.user.id,
       });
 
-      // Notify inviter inviting accepted.
+      // Notify inviter inviting accepted + auto-claim optional personId.
       let semyaTreeId = null;
+      let linkedPersonId = null;
       try {
         const semya = await store
           .findSemyaById(outcome.invitation.semyaId)
           .catch(() => null);
         semyaTreeId = semya?.treeId || null;
+        if (outcome.invitation.personId && semyaTreeId) {
+          const linked = await store
+            .linkPersonToUser({
+              treeId: semyaTreeId,
+              personId: outcome.invitation.personId,
+              userId: req.auth.user.id,
+              bypassClaimToken: true,
+            })
+            .catch(() => null);
+          if (linked && typeof linked === "object" && linked.id) {
+            linkedPersonId = linked.id;
+          }
+        }
         await createAndDispatchNotification({
           userId: outcome.invitation.inviterUserId,
           type: "semya_invitation_accepted",
@@ -321,6 +376,7 @@ function registerSemyaInvitationRoutes(
       res.json({
         invitation: mapInvitation(outcome.invitation),
         treeId: semyaTreeId,
+        linkedPersonId,
         membership: {
           id: outcome.membership.id,
           semyaId: outcome.membership.semyaId,
@@ -349,6 +405,58 @@ function registerSemyaInvitationRoutes(
       }
       if (code === "SEMYA_NOT_FOUND") {
         res.status(404).json({message: "Семья не найдена"});
+        return;
+      }
+      if (code === "INVALID_TOKEN") {
+        res.status(400).json({message: "Некорректный токен"});
+        return;
+      }
+      throw error;
+    }
+  });
+
+  // POST /v1/invitation/:token/decline — recipient declines pending invite.
+  app.post("/v1/invitation/:token/decline", requireAuth, async (req, res) => {
+    try {
+      const declined = await store.declineInvitation({
+        token: req.params.token,
+        actingUserId: req.auth.user.id,
+      });
+
+      try {
+        await createAndDispatchNotification({
+          userId: declined.inviterUserId,
+          type: "semya_invitation_declined",
+          title: "Приглашение отклонено",
+          body: "Приглашённый пользователь отклонил приглашение в семью.",
+          data: {
+            invitationId: declined.id,
+            semyaId: declined.semyaId,
+            declinedByUserId: req.auth.user.id,
+          },
+        });
+      } catch (notifyErr) {
+        // eslint-disable-next-line no-console
+        console.error("[semya] invitation decline notify failed", notifyErr);
+      }
+
+      res.json({
+        invitation: mapInvitation(declined, {includeToken: false}),
+      });
+    } catch (error) {
+      const code = error?.message;
+      if (code === "INVITATION_NOT_FOUND") {
+        res.status(404).json({message: "Приглашение не найдено"});
+        return;
+      }
+      if (code === "INVITATION_NOT_PENDING") {
+        res.status(409).json({message: "Это приглашение уже не действует"});
+        return;
+      }
+      if (code === "WRONG_RECIPIENT") {
+        res.status(403).json({
+          message: "Это приглашение адресовано другому пользователю",
+        });
         return;
       }
       if (code === "INVALID_TOKEN") {

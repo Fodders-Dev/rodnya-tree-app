@@ -661,10 +661,10 @@ extension _TreeContextPanels on _TreeViewScreenState {
           compact: compact,
           onPressed: () => _resetManualTreeLayout(selectedTreeId),
         ),
-      if (_currentTreeMeta?.isPublic == true)
+      if (_familyService is SemyaCapableFamilyTreeService)
         _buildTreeActionButton(
           icon: Icons.link_outlined,
-          label: compact ? 'Ссылка' : 'Публичная ссылка',
+          label: compact ? 'Ссылка' : 'Поделиться ссылкой',
           compact: compact,
           onPressed: _copyPublicTreeLink,
         ),

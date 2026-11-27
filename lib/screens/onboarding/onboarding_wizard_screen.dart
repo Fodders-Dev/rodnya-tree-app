@@ -321,6 +321,21 @@ class _WelcomeStep extends StatelessWidget {
                       (inv) => _PendingInvitationCard(
                         invitation: inv,
                         onAccept: () => onAcceptInvitation(inv),
+                        onDecline: () async {
+                          final ok =
+                              await controller.declineInvitation(inv.token);
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                ok
+                                    ? 'Приглашение отклонено'
+                                    : (controller.error ??
+                                        'Не удалось отклонить приглашение'),
+                              ),
+                            ),
+                          );
+                        },
                         isAccepting: controller.isAccepting,
                       ),
                     ),
@@ -373,11 +388,13 @@ class _PendingInvitationCard extends StatelessWidget {
   const _PendingInvitationCard({
     required this.invitation,
     required this.onAccept,
+    required this.onDecline,
     required this.isAccepting,
   });
 
   final SemyaInvitation invitation;
   final Future<void> Function() onAccept;
+  final Future<void> Function() onDecline;
   final bool isAccepting;
 
   @override
@@ -438,6 +455,12 @@ class _PendingInvitationCard extends StatelessWidget {
                         padding: EdgeInsets.symmetric(vertical: 8),
                         child: Text('Принять приглашение'),
                       ),
+              ),
+              const SizedBox(height: 4),
+              TextButton(
+                key: Key('onboarding-decline-${invitation.id}'),
+                onPressed: isAccepting ? null : onDecline,
+                child: const Text('Отклонить'),
               ),
             ],
           ),

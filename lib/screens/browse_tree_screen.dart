@@ -1,25 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/models/semya.dart' show SemyaError;
 import '../backend/models/semya_browse_token.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
+import '../utils/person_date_format.dart';
 import '../widgets/interactive_family_tree.dart';
 import '../widgets/pull_person_sheet.dart';
 
-/// Ship FE6a (2026-05-26): read-only browse view of someone else's
-/// семя tree via shared capability token. Backend Ship 7 endpoint
-/// GET /v1/browse/:token returns privacy-filtered persons + relations.
+/// Read-only browse view of a shared family tree via `/browse/:token`.
 ///
-/// Mirrors `PublicTreeViewerScreen` pattern для familiar canvas
-/// rendering. Persons tap fires `PullPersonSheet` (FE5 entry point) —
-/// recipient can copy интересного relative к caller's own семя.
-///
-/// Route registered as anonymous-allowed via app_router_guards (mirror
-/// /public/tree/:id exemption pattern).
+/// Consolidates capability-token tree browsing + guest details inspection +
+/// branch focus + optional signed-in «Добавить к себе в семью» action.
 class BrowseTreeScreen extends StatefulWidget {
   const BrowseTreeScreen({
     super.key,
@@ -36,6 +33,8 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   BrowsedSemyaTree? _snapshot;
+  String? _branchRootPersonId;
+  String? _branchRootName;
 
   SemyaCapableFamilyTreeService? get _service {
     if (!GetIt.I.isRegistered<FamilyTreeServiceInterface>()) return null;
@@ -44,6 +43,12 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
       return raw as SemyaCapableFamilyTreeService;
     }
     return null;
+  }
+
+  bool get _isAuthenticated {
+    if (!GetIt.I.isRegistered<AuthServiceInterface>()) return false;
+    final userId = GetIt.I<AuthServiceInterface>().currentUserId;
+    return userId != null && userId.isNotEmpty;
   }
 
   @override
@@ -77,39 +82,158 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _errorMessage = error is SemyaError
-            ? error.message
-            : 'Не удалось загрузить дерево';
+        _errorMessage =
+            error is SemyaError ? error.message : 'Не удалось загрузить дерево';
       });
     }
+  }
+
+  void _focusBranch(FamilyPerson person) {
+    setState(() {
+      _branchRootPersonId = person.id;
+      _branchRootName = person.name;
+    });
+  }
+
+  void _resetBranchFocus() {
+    setState(() {
+      _branchRootPersonId = null;
+      _branchRootName = null;
+    });
   }
 
   void _handlePersonTap(FamilyPerson person) {
     final snapshot = _snapshot;
     if (snapshot == null) return;
-    // FE5 entry point: launch PullPersonSheet с source семя ID
-    // (from browse snapshot) + source person ID (from tap). Recipient
-    // picks target семя where they're editor+ → backend handles copy.
-    unawaited(
-      showPullPersonSheet(
-        context,
-        sourceSemyaId: snapshot.semyaId,
-        sourcePersonId: person.id,
-        sourcePersonName: person.name,
-      ).then((result) {
-        if (result?.success == true && mounted) {
-          final targetName = result?.targetSemya?.name ?? 'свою семью';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${person.name} добавлен(а) в $targetName',
-              ),
-              backgroundColor: Colors.green,
+    final isSignedIn = _isAuthenticated;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  person.name,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (person.maidenName?.trim().isNotEmpty == true) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'В девичестве: ${person.maidenName!.trim()}',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _PersonChip(
+                      icon: Icons.person_outline,
+                      label: _genderLabel(person.gender),
+                    ),
+                    if (person.birthDate != null)
+                      _PersonChip(
+                        icon: Icons.cake_outlined,
+                        label: 'Родился: ${formatPersonDate(
+                          person.birthDate!,
+                          person.birthDatePrecision,
+                        )}',
+                      ),
+                    if (person.deathDate != null)
+                      _PersonChip(
+                        icon: Icons.history_toggle_off_outlined,
+                        label: 'Умер: ${formatPersonDate(
+                          person.deathDate!,
+                          person.deathDatePrecision,
+                        )}',
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  key: const Key('browse-person-focus-branch'),
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    _focusBranch(person);
+                  },
+                  icon: const Icon(Icons.alt_route),
+                  label: const Text('Показать ветку от этого человека'),
+                ),
+                const SizedBox(height: 10),
+                if (isSignedIn)
+                  FilledButton.icon(
+                    key: const Key('browse-person-pull'),
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      _openPullSheet(snapshot, person);
+                    },
+                    icon: const Icon(Icons.person_add_alt_1_outlined),
+                    label: const Text('Добавить к себе в семью'),
+                  )
+                else
+                  FilledButton.icon(
+                    key: const Key('browse-person-login'),
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      final from = Uri.encodeComponent(
+                        '/browse/${widget.browseToken}',
+                      );
+                      context.go('/login?from=$from');
+                    },
+                    icon: const Icon(Icons.login_rounded),
+                    label: const Text('Войти, чтобы добавить в семью'),
+                  ),
+              ],
             ),
-          );
-        }
-      }),
+          ),
+        );
+      },
     );
+  }
+
+  Future<void> _openPullSheet(
+    BrowsedSemyaTree snapshot,
+    FamilyPerson person,
+  ) async {
+    final result = await showPullPersonSheet(
+      context,
+      sourceSemyaId: snapshot.semyaId,
+      sourcePersonId: person.id,
+      sourcePersonName: person.name,
+    );
+    if (result?.success == true && mounted) {
+      final targetName = result?.targetSemya?.name ?? 'свою семью';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${person.name} добавлен(а) в $targetName'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  String _genderLabel(Gender gender) {
+    switch (gender) {
+      case Gender.male:
+        return 'Мужчина';
+      case Gender.female:
+        return 'Женщина';
+      case Gender.other:
+        return 'Другой пол';
+      case Gender.unknown:
+        return 'Пол не указан';
+    }
   }
 
   @override
@@ -149,7 +273,12 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
     }
     return Column(
       children: [
-        _ReadOnlyBanner(semya: snapshot),
+        _ReadOnlyBanner(
+          semya: snapshot,
+          isAuthenticated: _isAuthenticated,
+          branchRootName: _branchRootName,
+          onResetBranch: _branchRootPersonId != null ? _resetBranchFocus : null,
+        ),
         Expanded(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
@@ -166,7 +295,10 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
                   .map((r) => _toFamilyRelation(r, snapshot.treeId))
                   .toList(),
               currentUserId: null,
+              branchRootPersonId: _branchRootPersonId,
+              onBranchFocusCleared: _resetBranchFocus,
               onPersonTap: _handlePersonTap,
+              onBranchFocusRequested: _focusBranch,
               isEditMode: false,
               onAddRelativeTapWithType: (_, __) {},
               currentUserIsInTree: false,
@@ -178,9 +310,6 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
     );
   }
 
-  // Adapter: BrowsedPerson → FamilyPerson чтобы reuse существующий
-  // InteractiveFamilyTree renderer без refactor. Privacy-filtered fields
-  // map prosto — backend explicitly omits photos/bio.
   FamilyPerson _toFamilyPerson(BrowsedPerson p, String treeId) {
     return FamilyPerson(
       id: p.id,
@@ -190,8 +319,6 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
       maidenName: p.maidenName,
       gender: _genderFromString(p.gender),
       birthDate: _parseDate(p.birthDate),
-      // D3: точность дат едет в FamilyPerson — всё, что ниже по течению
-      // (карточки, шиты), остаётся честным для «знаю только год».
       birthDatePrecision:
           FamilyPerson.datePrecisionFromString(p.birthDatePrecision),
       deathDate: _parseDate(p.deathDate),
@@ -241,10 +368,45 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
   }
 }
 
+class _PersonChip extends StatelessWidget {
+  const _PersonChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(label, style: theme.textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
+}
+
 class _ReadOnlyBanner extends StatelessWidget {
-  const _ReadOnlyBanner({required this.semya});
+  const _ReadOnlyBanner({
+    required this.semya,
+    required this.isAuthenticated,
+    this.branchRootName,
+    this.onResetBranch,
+  });
 
   final BrowsedSemyaTree semya;
+  final bool isAuthenticated;
+  final String? branchRootName;
+  final VoidCallback? onResetBranch;
 
   @override
   Widget build(BuildContext context) {
@@ -260,36 +422,55 @@ class _ReadOnlyBanner extends StatelessWidget {
           color: theme.colorScheme.primary.withValues(alpha: 0.25),
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.visibility_outlined,
-            size: 18,
-            color: theme.colorScheme.primary,
+          Row(
+            children: [
+              Icon(
+                Icons.visibility_outlined,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Только просмотр',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    Text(
+                      isAuthenticated
+                          ? 'Это дерево семьи «${semya.semyaName}». Нажмите на человека для деталей или добавления к себе.'
+                          : 'Это дерево семьи «${semya.semyaName}». Нажмите на человека, чтобы посмотреть детали или ветку.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Только просмотр',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-                Text(
-                  'Это дерево семьи «${semya.semyaName}». '
-                  'Нажмите на человека, чтобы добавить его в свою семью.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
+          if (onResetBranch != null) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: onResetBranch,
+              icon: const Icon(Icons.account_tree_outlined, size: 16),
+              label: Text(
+                branchRootName != null
+                    ? 'Вся семья (сейчас ветка: $branchRootName)'
+                    : 'Показать всё дерево',
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -337,7 +518,3 @@ class _BrowseErrorState extends StatelessWidget {
     );
   }
 }
-
-// Tiny helper для fire-and-forget — local instead of importing dart:async
-// чтобы keep imports minimal.
-void unawaited(Future<void> future) {}

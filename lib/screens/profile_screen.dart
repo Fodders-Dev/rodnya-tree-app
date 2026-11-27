@@ -507,7 +507,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final baseUri = Uri.parse(BackendRuntimeConfig.current.publicAppUrl);
     return baseUri.replace(
       fragment:
-          '/relatives/find/$normalizedTreeId?profileCode=${Uri.encodeQueryComponent(normalizedProfileCode)}',
+          '/discover/relatives?treeId=${Uri.encodeQueryComponent(normalizedTreeId)}&profileCode=${Uri.encodeQueryComponent(normalizedProfileCode)}',
     );
   }
 

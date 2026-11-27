@@ -60,6 +60,12 @@ function registerRateLimitMiddleware(app, {config, rateLimitBackend}) {
           limit: config.publicStoryReadRateLimitMax || 30,
         };
       }
+      if (/^\/v1\/invitation\/[^/]+$/.test(normalizedPathName)) {
+        return {
+          bucket: "public_invitation_read",
+          limit: config.publicStoryReadRateLimitMax || 30,
+        };
+      }
       if (/^\/story\/[^/]+\/(media|answer)$/.test(normalizedPathName)) {
         return {
           bucket: "public_story_write",

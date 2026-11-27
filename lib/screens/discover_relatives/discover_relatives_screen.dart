@@ -6,13 +6,18 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../backend/interfaces/auth_service_interface.dart';
 import '../../backend/interfaces/family_tree_service_interface.dart';
 import '../../backend/interfaces/kinship_check_capable_family_tree_service.dart';
 import '../../backend/interfaces/profile_service_interface.dart';
 import '../../backend/models/kinship_check.dart';
+import '../../models/family_relation.dart';
 import '../../models/user_profile.dart';
 import '../../providers/kinship_check_controller.dart';
+import '../../providers/tree_provider.dart';
+import '../../utils/user_facing_error.dart';
 import '../../widgets/relation_chain_strip.dart';
+import '../../widgets/relation_picker_sheet.dart';
 
 /// Phase 6 chunk 3 (PHASE-6-PROPOSAL.md §2.4-§2.6): «мы родственники?»
 /// discover entry. Hosts:
@@ -29,6 +34,8 @@ class DiscoverRelativesScreen extends StatefulWidget {
     super.key,
     this.incomingCheckId,
     this.resultCheckId,
+    this.treeId,
+    this.initialProfileCode,
   });
 
   /// Если задан — screen открывается с action sheet для этого
@@ -41,6 +48,13 @@ class DiscoverRelativesScreen extends StatefulWidget {
   /// matching check as submittedCheck + transitions step=result.
   final String? resultCheckId;
 
+  /// Optional active tree id when opened from a specific tree/relatives screen
+  /// or profile connection link (enables direct «Добавить в дерево» relation request).
+  final String? treeId;
+
+  /// Optional @username/profile code prefill to search immediately.
+  final String? initialProfileCode;
+
   @override
   State<DiscoverRelativesScreen> createState() =>
       _DiscoverRelativesScreenState();
@@ -48,31 +62,84 @@ class DiscoverRelativesScreen extends StatefulWidget {
 
 class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
   late final KinshipCheckController _controller;
+  late final FamilyTreeServiceInterface _familyTreeService;
   late final ProfileServiceInterface _profileService;
+  AuthServiceInterface? _authService;
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
 
   bool _isSearching = false;
+  bool _isSubmittingRelationRequest = false;
   List<UserProfile> _searchResults = const <UserProfile>[];
+  Set<String> _existingTreeUserIds = const <String>{};
+  RelationType? _selectedRelation;
   String? _searchError;
   bool _autoSheetPresented = false;
   bool _resultDeepLinkPresented = false;
 
+  String? get _resolvedTreeId {
+    final explicit = widget.treeId?.trim();
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+    if (GetIt.I.isRegistered<TreeProvider>()) {
+      final selected = GetIt.I<TreeProvider>().selectedTreeId?.trim();
+      if (selected != null && selected.isNotEmpty) return selected;
+    }
+    try {
+      final selected = Provider.of<TreeProvider>(context, listen: false)
+          .selectedTreeId
+          ?.trim();
+      if (selected != null && selected.isNotEmpty) return selected;
+    } catch (_) {}
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
-    final service = GetIt.I<FamilyTreeServiceInterface>();
+    _familyTreeService = GetIt.I<FamilyTreeServiceInterface>();
     _controller = KinshipCheckController(
-      service: service is KinshipCheckCapableFamilyTreeService
-          ? service as KinshipCheckCapableFamilyTreeService
+      service: _familyTreeService is KinshipCheckCapableFamilyTreeService
+          ? _familyTreeService as KinshipCheckCapableFamilyTreeService
           : null,
     );
     _profileService = GetIt.I<ProfileServiceInterface>();
+    _authService = GetIt.I.isRegistered<AuthServiceInterface>()
+        ? GetIt.I<AuthServiceInterface>()
+        : null;
+    final initialCode = widget.initialProfileCode?.trim() ?? '';
+    if (initialCode.isNotEmpty) {
+      _searchController.text =
+          initialCode.startsWith('@') ? initialCode : '@$initialCode';
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _controller.refresh();
+      if (_controller.isCapable) {
+        _controller.refresh();
+      }
+      _loadExistingTreeUsers();
+      if (initialCode.isNotEmpty) {
+        _runSearch(initialCode);
+      }
       _maybeAutoPresentIncomingSheet();
       _maybeAutoPresentResult();
     });
+  }
+
+  Future<void> _loadExistingTreeUsers() async {
+    final treeId = _resolvedTreeId;
+    if (treeId == null) return;
+    try {
+      final relatives = await _familyTreeService.getRelatives(treeId);
+      if (!mounted) return;
+      setState(() {
+        _existingTreeUserIds = relatives
+            .map((p) => p.userId)
+            .whereType<String>()
+            .where((id) => id.isNotEmpty)
+            .toSet();
+      });
+    } catch (_) {
+      // Non-fatal; server still validates duplicate relation requests.
+    }
   }
 
   @override
@@ -142,15 +209,28 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
   }
 
   Future<void> _runSearch(String query) async {
+    final normalized = query.trim().replaceFirst(RegExp(r'^@+'), '').trim();
+    if (normalized.isEmpty) {
+      setState(() {
+        _searchResults = const <UserProfile>[];
+        _searchError = null;
+        _isSearching = false;
+      });
+      return;
+    }
     setState(() {
       _isSearching = true;
       _searchError = null;
     });
     try {
-      final results = await _profileService.searchUsers(query, limit: 12);
+      final results = await _profileService.searchUsers(normalized, limit: 12);
       if (!mounted) return;
+      final currentUserId = _authService?.currentUserId;
+      final filtered = results
+          .where((u) => u.id.isNotEmpty && u.id != currentUserId)
+          .toList(growable: false);
       setState(() {
-        _searchResults = results;
+        _searchResults = filtered;
         _isSearching = false;
       });
     } catch (e) {
@@ -166,10 +246,148 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
   // ── Outgoing flow actions ──────────────────────────────────────
 
   void _selectTarget(UserProfile profile) {
-    _controller.selectTarget(
-      userId: profile.id,
-      displayName: _displayName(profile),
+    if (_controller.isCapable) {
+      _controller.selectTarget(
+        userId: profile.id,
+        displayName: _displayName(profile),
+      );
+      return;
+    }
+    if (_resolvedTreeId != null && !_existingTreeUserIds.contains(profile.id)) {
+      _showRelationSelectDialog(profile);
+    }
+  }
+
+  void _showRelationSelectDialog(UserProfile user) {
+    final treeId = _resolvedTreeId;
+    if (treeId == null || _isSubmittingRelationRequest) return;
+    setState(() {
+      _selectedRelation = null;
+    });
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Добавить в дерево'),
+        content: DropdownButtonFormField<RelationType>(
+          initialValue: _selectedRelation,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          hint: const Text('Кем приходится?'),
+          isExpanded: true,
+          items: const [
+            DropdownMenuItem(
+              value: RelationType.parent,
+              child: Text('Родитель'),
+            ),
+            DropdownMenuItem(value: RelationType.child, child: Text('Ребёнок')),
+            DropdownMenuItem(
+              value: RelationType.spouse,
+              child: Text('Супруг(а)'),
+            ),
+            DropdownMenuItem(
+              value: RelationType.sibling,
+              child: Text('Брат/сестра'),
+            ),
+            DropdownMenuItem(
+              value: RelationType.cousin,
+              child: Text('Двоюродный брат/сестра'),
+            ),
+            DropdownMenuItem(value: RelationType.uncle, child: Text('Дядя')),
+            DropdownMenuItem(value: RelationType.aunt, child: Text('Тётя')),
+            DropdownMenuItem(
+              value: RelationType.grandparent,
+              child: Text('Бабушка/дедушка'),
+            ),
+            DropdownMenuItem(
+              value: RelationType.grandchild,
+              child: Text('Внук/внучка'),
+            ),
+          ],
+          onChanged: (value) {
+            setState(() {
+              _selectedRelation = value;
+            });
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            key: const Key('discover-confirm-add-relative'),
+            onPressed: () {
+              final chosen = _selectedRelation;
+              if (chosen == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Сначала выберите тип родства'),
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(dialogContext);
+              unawaited(_sendRelationRequest(treeId, user, chosen));
+            },
+            child: const Text('Отправить запрос'),
+          ),
+        ],
+      ),
     );
+  }
+
+  Future<void> _sendRelationRequest(
+    String treeId,
+    UserProfile user,
+    RelationType relationType,
+  ) async {
+    setState(() => _isSubmittingRelationRequest = true);
+    try {
+      final currentUserId = _authService?.currentUserId;
+      if (currentUserId != null && currentUserId.isNotEmpty) {
+        final hasPending = await _familyTreeService.hasPendingRelationRequest(
+          treeId: treeId,
+          senderId: currentUserId,
+          recipientId: user.id,
+        );
+        if (!mounted) return;
+        if (hasPending) {
+          setState(() => _isSubmittingRelationRequest = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Запрос этому человеку уже отправлен.'),
+            ),
+          );
+          return;
+        }
+      }
+      await _familyTreeService.sendRelationRequest(
+        treeId: treeId,
+        recipientId: user.id,
+        relationType: relationType,
+        message: 'Запрос на подтверждение родственной связи',
+      );
+      if (!mounted) return;
+      setState(() => _isSubmittingRelationRequest = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Запрос отправлен.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isSubmittingRelationRequest = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(
+              error,
+              fallback: 'Не удалось отправить запрос. Попробуйте ещё раз.',
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _submitCheck() async {
@@ -294,9 +512,6 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
       value: _controller,
       child: Consumer<KinshipCheckController>(
         builder: (context, controller, _) {
-          if (!controller.isCapable) {
-            return _buildCapabilityUnavailable(context);
-          }
           return Scaffold(
             appBar: AppBar(
               title: const Text('Найти родню'),
@@ -456,9 +671,25 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: () => context.go('/family'),
+                  onPressed: () {
+                    final treeId = _resolvedTreeId;
+                    if (treeId != null) {
+                      unawaited(
+                        showRelationPickerAndNavigateAdd(
+                          context,
+                          treeId: treeId,
+                        ),
+                      );
+                      return;
+                    }
+                    context.go('/family');
+                  },
                   icon: const Icon(Icons.person_add_alt_1_outlined),
-                  label: const Text('Добавить человека в дерево'),
+                  label: Text(
+                    _resolvedTreeId != null
+                        ? 'Добавить карточку родственника'
+                        : 'Добавить человека в дерево',
+                  ),
                 ),
               ],
             ),
@@ -468,8 +699,12 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
             key: ValueKey('discover-result-${profile.id}'),
             profile: profile,
             onTap: () => _selectTarget(profile),
+            onAddToTree: (_resolvedTreeId != null &&
+                    !_existingTreeUserIds.contains(profile.id))
+                ? () => _showRelationSelectDialog(profile)
+                : null,
           ),
-        if (c.issued.isNotEmpty) ...[
+        if (c.isCapable && c.issued.isNotEmpty) ...[
           const SizedBox(height: 32),
           _IssuedHistorySection(
             checks: c.issued,
@@ -655,48 +890,6 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
     );
   }
 
-  Widget _buildCapabilityUnavailable(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Найти родню'),
-      ),
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.cloud_off_rounded,
-                  size: 64,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Функция временно недоступна',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Обновите приложение либо попробуйте позже.',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   static String _displayName(UserProfile profile) {
     final name = profile.displayName.trim();
     if (name.isNotEmpty) return name;
@@ -721,10 +914,12 @@ class _SearchResultTile extends StatelessWidget {
     super.key,
     required this.profile,
     required this.onTap,
+    this.onAddToTree,
   });
 
   final UserProfile profile;
   final VoidCallback onTap;
+  final VoidCallback? onAddToTree;
 
   @override
   Widget build(BuildContext context) {
@@ -798,6 +993,21 @@ class _SearchResultTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
+              if (onAddToTree != null)
+                IconButton(
+                  key: Key('discover-add-relative-${profile.id}'),
+                  tooltip: 'Добавить в дерево',
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 36, minHeight: 36),
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    Icons.person_add_alt_1_outlined,
+                    size: 20,
+                    color: theme.colorScheme.primary,
+                  ),
+                  onPressed: onAddToTree,
+                ),
               Icon(
                 Icons.chevron_right_rounded,
                 color: theme.colorScheme.onSurfaceVariant,

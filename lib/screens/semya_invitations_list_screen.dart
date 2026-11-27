@@ -449,6 +449,7 @@ Color _statusBackground(ThemeData theme, SemyaInvitationStatus status) {
       return theme.colorScheme.primary.withValues(alpha: 0.14);
     case SemyaInvitationStatus.accepted:
       return Colors.green.withValues(alpha: 0.14);
+    case SemyaInvitationStatus.declined:
     case SemyaInvitationStatus.revoked:
       return theme.colorScheme.errorContainer.withValues(alpha: 0.5);
     case SemyaInvitationStatus.expired:
@@ -463,6 +464,7 @@ Color _statusForeground(ThemeData theme, SemyaInvitationStatus status) {
       return theme.colorScheme.primary;
     case SemyaInvitationStatus.accepted:
       return Colors.green.shade800;
+    case SemyaInvitationStatus.declined:
     case SemyaInvitationStatus.revoked:
       return theme.colorScheme.error;
     case SemyaInvitationStatus.expired:
@@ -477,6 +479,7 @@ IconData _statusIcon(SemyaInvitationStatus status) {
       return Icons.hourglass_top_rounded;
     case SemyaInvitationStatus.accepted:
       return Icons.check_rounded;
+    case SemyaInvitationStatus.declined:
     case SemyaInvitationStatus.revoked:
       return Icons.close_rounded;
     case SemyaInvitationStatus.expired:

@@ -16,9 +16,7 @@ import '../screens/password_reset_screen.dart';
 import '../screens/reset_password_confirm_screen.dart';
 import '../screens/privacy_policy_screen.dart';
 import '../screens/profile_article_editor_screen.dart';
-import '../screens/public_tree_entry_screen.dart';
 import '../screens/qr_login_display_screen.dart';
-import '../screens/public_tree_viewer_screen.dart';
 import '../screens/relative_details_screen.dart';
 import '../screens/semya_details_screen.dart';
 import '../screens/semya_invitation_accept_screen.dart';
@@ -174,6 +172,8 @@ class AppOverlayRouteModule {
         pageBuilder: (context, state) {
           final incoming = state.uri.queryParameters['incoming']?.trim();
           final result = state.uri.queryParameters['result']?.trim();
+          final treeId = state.uri.queryParameters['treeId']?.trim();
+          final profileCode = state.uri.queryParameters['profileCode']?.trim();
           return RodnyaCustomTransitionPage(
             key: state.pageKey,
             constrainWidth: true,
@@ -182,6 +182,10 @@ class AppOverlayRouteModule {
                   incoming != null && incoming.isNotEmpty ? incoming : null,
               resultCheckId:
                   result != null && result.isNotEmpty ? result : null,
+              treeId: treeId != null && treeId.isNotEmpty ? treeId : null,
+              initialProfileCode: profileCode != null && profileCode.isNotEmpty
+                  ? profileCode
+                  : null,
             ),
             transitionsBuilder: AppRouteTransitions.slide,
           );
@@ -333,26 +337,22 @@ class AppOverlayRouteModule {
       GoRoute(
         path: '/public/tree/:publicTreeId',
         parentNavigatorKey: rootNavigatorKey,
-        pageBuilder: (context, state) {
-          final publicTreeId = state.pathParameters['publicTreeId'] ?? '';
-          return RodnyaCustomTransitionPage(
-            key: state.pageKey,
-            child: PublicTreeEntryScreen(publicTreeId: publicTreeId),
-            transitionsBuilder: AppRouteTransitions.slide,
-          );
-        },
+        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const _RetiredPublicTreeScreen(),
+          transitionsBuilder: AppRouteTransitions.slide,
+        ),
       ),
       GoRoute(
         path: '/public/tree/:publicTreeId/view',
         parentNavigatorKey: rootNavigatorKey,
-        pageBuilder: (context, state) {
-          final publicTreeId = state.pathParameters['publicTreeId'] ?? '';
-          return RodnyaCustomTransitionPage(
-            key: state.pageKey,
-            child: PublicTreeViewerScreen(publicTreeId: publicTreeId),
-            transitionsBuilder: AppRouteTransitions.slide,
-          );
-        },
+        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const _RetiredPublicTreeScreen(),
+          transitionsBuilder: AppRouteTransitions.slide,
+        ),
       ),
       // Ship FE6a (2026-05-26): browse-token capability route.
       // Mirrors /public/tree/* anonymous-allowed pattern. Anonymous
@@ -586,6 +586,61 @@ class AppOverlayRouteModule {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _RetiredPublicTreeScreen extends StatelessWidget {
+  const _RetiredPublicTreeScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Публичное дерево')),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.link_off_rounded,
+                    size: 48,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Ссылка устарела',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Гостевые ссылки теперь создаются через безопасный доступ семьи «Поделиться ссылкой». Попросите новую ссылку у владельца дерева.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: () => context.go('/'),
+                    icon: const Icon(Icons.home_outlined),
+                    label: const Text('На главную'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

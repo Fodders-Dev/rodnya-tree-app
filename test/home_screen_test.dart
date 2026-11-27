@@ -8,9 +8,11 @@ import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/post_service_interface.dart';
 import 'package:rodnya/backend/interfaces/gathering_service_interface.dart';
 import 'package:rodnya/backend/interfaces/poll_service_interface.dart';
+import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
 import 'package:rodnya/backend/interfaces/story_service_interface.dart';
 import 'package:rodnya/backend/backend_runtime_config.dart';
-import 'package:rodnya/backend/models/tree_invitation.dart';
+import 'package:rodnya/backend/models/semya.dart';
+import 'package:rodnya/backend/models/semya_invitation.dart';
 import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
@@ -73,14 +75,15 @@ class _FakeLocalStorageService implements LocalStorageService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
+class _FakeFamilyTreeService
+    implements FamilyTreeServiceInterface, SemyaCapableFamilyTreeService {
   _FakeFamilyTreeService({
     this.invitations = const [],
     List<FamilyTree>? trees,
     this.relativesOverride,
   }) : trees = trees ?? [_buildTree(id: 'tree-1', name: 'Тестовое дерево')];
 
-  final List<TreeInvitation> invitations;
+  final List<SemyaInvitation> invitations;
   final List<FamilyTree> trees;
 
   /// When set, `getRelatives` returns this instead of the default
@@ -110,8 +113,7 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   Future<List<FamilyRelation>> getRelations(String treeId) async => const [];
 
   @override
-  Stream<List<TreeInvitation>> getPendingTreeInvitations() =>
-      Stream.value(invitations);
+  Future<List<SemyaInvitation>> listPendingInvitations() async => invitations;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -393,19 +395,16 @@ void main() {
       getIt.registerSingleton<FamilyTreeServiceInterface>(
         _FakeFamilyTreeService(
           invitations: [
-            TreeInvitation(
-              invitationId: 'invite-1',
-              tree: FamilyTree(
-                id: 'tree-2',
-                name: 'Семья Шуфляк',
-                description: '',
-                creatorId: 'user-2',
-                memberIds: const ['user-2'],
-                createdAt: DateTime(2024, 1, 1),
-                updatedAt: DateTime(2024, 1, 1),
-                isPrivate: true,
-                members: const ['user-2'],
-              ),
+            const SemyaInvitation(
+              id: 'invite-1',
+              token: 'tok-1',
+              semyaId: 'semya-2',
+              inviterUserId: 'user-2',
+              role: SemyaRole.editor,
+              status: SemyaInvitationStatus.pending,
+              createdAt: '2026-05-26T00:00:00Z',
+              expiresAt: '2026-06-25T00:00:00Z',
+              semyaName: 'Семья Шуфляк',
             ),
           ],
         ),

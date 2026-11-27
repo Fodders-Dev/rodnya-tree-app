@@ -78,8 +78,7 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
   int listHiddenCalls = 0;
   int updateHideCalls = 0;
 
-  static String _hideKey(String semyaId, String userId) =>
-      '$semyaId::$userId';
+  static String _hideKey(String semyaId, String userId) => '$semyaId::$userId';
 
   @override
   Future<List<Semya>> listMySemya() async {
@@ -120,11 +119,13 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async {
     createInvitationCalls += 1;
     final invitation = SemyaInvitation(
       id: 'inv-${_invitations[semyaId]?.length ?? 0}-${DateTime.now().microsecondsSinceEpoch}',
-      token: 'tok-$semyaId-${recipientEmail ?? recipientPhone ?? recipientUserId}',
+      token:
+          'tok-$semyaId-${recipientEmail ?? recipientPhone ?? recipientUserId ?? personId}',
       semyaId: semyaId,
       inviterUserId: currentUserId,
       role: role,
@@ -132,6 +133,7 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
       recipientEmail: recipientEmail,
       recipientPhone: recipientPhone,
       recipientUserId: recipientUserId,
+      personId: personId,
       createdAt: '2026-05-26T00:00:00.000Z',
       expiresAt: '2026-06-25T00:00:00.000Z',
     );
@@ -181,6 +183,47 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
     );
     list[idx] = revoked;
     return revoked;
+  }
+
+  @override
+  Future<SemyaInvitation?> previewInvitation(String token) async {
+    for (final entry in _invitations.entries) {
+      for (final inv in entry.value) {
+        if (inv.token == token) return inv;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async {
+    for (final entry in _invitations.entries) {
+      final list = entry.value;
+      final idx = list.indexWhere((i) => i.token == token);
+      if (idx >= 0) {
+        final orig = list[idx];
+        final declined = SemyaInvitation(
+          id: orig.id,
+          token: orig.token,
+          semyaId: orig.semyaId,
+          inviterUserId: orig.inviterUserId,
+          role: orig.role,
+          status: SemyaInvitationStatus.declined,
+          recipientEmail: orig.recipientEmail,
+          recipientPhone: orig.recipientPhone,
+          recipientUserId: orig.recipientUserId,
+          personId: orig.personId,
+          createdAt: orig.createdAt,
+          expiresAt: orig.expiresAt,
+        );
+        list[idx] = declined;
+        return declined;
+      }
+    }
+    throw const SemyaError(
+      code: 'INVITATION_NOT_FOUND',
+      message: 'нет приглашения',
+    );
   }
 
   @override
@@ -234,8 +277,7 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
       role: matched.role,
       joinedAt: '2026-05-26T00:00:00.000Z',
     );
-    (_memberships[matched.semyaId] ??= <SemyaMembership>[])
-        .add(newMembership);
+    (_memberships[matched.semyaId] ??= <SemyaMembership>[]).add(newMembership);
     return SemyaInvitationAcceptResult(
       invitation: list[idx],
       semyaId: matched.semyaId,
@@ -522,7 +564,9 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
     final nextRole = role ?? orig.role;
     var nextGrant = hasInviteGrant ?? orig.hasInviteGrant;
     if (nextRole != SemyaRole.editor) {
-      if (hasInviteGrant != null && hasInviteGrant && nextRole != SemyaRole.editor) {
+      if (hasInviteGrant != null &&
+          hasInviteGrant &&
+          nextRole != SemyaRole.editor) {
         throw const SemyaError(
           code: 'INVITE_GRANT_ONLY_EDITOR',
           message: 'право приглашать только для редакторов',

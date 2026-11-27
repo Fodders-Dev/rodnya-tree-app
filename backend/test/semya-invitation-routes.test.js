@@ -1147,3 +1147,196 @@ test("DELETE invitation: outsider can't even probe IDs (403 via семья acces
     await shutdown(ctx);
   }
 });
+
+test("GET /v1/invitation/:token: anonymous preview returns safe metadata without PII", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, tree, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "preview-owner@example.com",
+    );
+    const person = await ctx.store.createPerson({
+      treeId: tree.id,
+      creatorId: owner.userId,
+      personData: {
+        name: "Тётя Мария",
+        gender: "female",
+      },
+    });
+
+    const createRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({
+          recipientEmail: "secret-recipient@example.com",
+          personId: person.id,
+          role: "editor",
+        }),
+      },
+    );
+    assert.equal(createRes.status, 201);
+    const {invitation} = await createRes.json();
+
+    const previewRes = await fetch(
+      `${ctx.baseUrl}/v1/invitation/${invitation.token}`,
+    );
+    assert.equal(previewRes.status, 200);
+    const previewBody = await previewRes.json();
+    assert.equal(previewBody.invitation.semyaId, semya.id);
+    assert.equal(previewBody.invitation.semyaName, "Тестовая семья");
+    assert.equal(previewBody.invitation.inviterName, "preview-owner");
+    assert.equal(previewBody.invitation.targetPersonName, "Тётя Мария");
+    assert.equal(previewBody.invitation.personId, person.id);
+    assert.equal(previewBody.invitation.status, "pending");
+    assert.equal(previewBody.invitation.recipientEmail, undefined);
+    assert.equal(previewBody.invitation.recipientPhone, undefined);
+    assert.equal(previewBody.invitation.token, undefined);
+
+    const missingRes = await fetch(`${ctx.baseUrl}/v1/invitation/missing-tok`);
+    assert.equal(missingRes.status, 404);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("POST /v1/invitation/:token/decline: declines pending invitation & enforces permissions", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "decline-owner@example.com",
+    );
+    const recipient = await makeUser(
+      ctx.store,
+      ctx.baseUrl,
+      "decline-recipient@example.com",
+    );
+    const otherUser = await makeUser(
+      ctx.store,
+      ctx.baseUrl,
+      "decline-other@example.com",
+    );
+
+    const createRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({
+          recipientUserId: recipient.userId,
+          role: "viewer",
+        }),
+      },
+    );
+    const {invitation} = await createRes.json();
+
+    const wrongRes = await fetch(
+      `${ctx.baseUrl}/v1/invitation/${invitation.token}/decline`,
+      {
+        method: "POST",
+        headers: {Authorization: `Bearer ${otherUser.token}`},
+      },
+    );
+    assert.equal(wrongRes.status, 403);
+
+    const declineRes = await fetch(
+      `${ctx.baseUrl}/v1/invitation/${invitation.token}/decline`,
+      {
+        method: "POST",
+        headers: {Authorization: `Bearer ${recipient.token}`},
+      },
+    );
+    assert.equal(declineRes.status, 200);
+    const declinedBody = await declineRes.json();
+    assert.equal(declinedBody.invitation.status, "declined");
+    assert.ok(declinedBody.invitation.declinedAt);
+
+    // Accepting after decline fails cleanly with 409.
+    const acceptAfterDecline = await fetch(
+      `${ctx.baseUrl}/v1/invitation/${invitation.token}/accept`,
+      {
+        method: "POST",
+        headers: {Authorization: `Bearer ${recipient.token}`},
+      },
+    );
+    assert.equal(acceptAfterDecline.status, 409);
+
+    // Pending list is now empty.
+    const pendingRes = await fetch(`${ctx.baseUrl}/v1/me/pending-invitations`, {
+      headers: {Authorization: `Bearer ${recipient.token}`},
+    });
+    const pendingBody = await pendingRes.json();
+    assert.equal(pendingBody.invitations.length, 0);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("POST invitation with personId only: creates card-claim invite & binds person on accept", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, tree, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "person-invite-owner@example.com",
+    );
+    const invitee = await makeUser(
+      ctx.store,
+      ctx.baseUrl,
+      "person-invite-guest@example.com",
+    );
+    const card = await ctx.store.createPerson({
+      treeId: tree.id,
+      creatorId: owner.userId,
+      personData: {
+        name: "Двоюродный брат Олег",
+        gender: "male",
+      },
+    });
+
+    const createRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({
+          personId: card.id,
+          role: "editor",
+        }),
+      },
+    );
+    assert.equal(createRes.status, 201);
+    const {invitation} = await createRes.json();
+    assert.equal(invitation.personId, card.id);
+
+    const acceptRes = await fetch(
+      `${ctx.baseUrl}/v1/invitation/${invitation.token}/accept`,
+      {
+        method: "POST",
+        headers: {Authorization: `Bearer ${invitee.token}`},
+      },
+    );
+    assert.equal(acceptRes.status, 200);
+    const acceptBody = await acceptRes.json();
+    assert.equal(acceptBody.linkedPersonId, card.id);
+
+    const persons = await ctx.store.listPersons(tree.id);
+    const claimed = persons.find((p) => p.id === card.id);
+    assert.equal(claimed.userId, invitee.userId);
+  } finally {
+    await shutdown(ctx);
+  }
+});

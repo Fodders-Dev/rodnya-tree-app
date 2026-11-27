@@ -58,6 +58,7 @@ class _FakeService implements SemyaCapableFamilyTreeService {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async =>
       throw UnimplementedError();
 
@@ -70,6 +71,13 @@ class _FakeService implements SemyaCapableFamilyTreeService {
     required String semyaId,
     required String invitationId,
   }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaInvitation?> previewInvitation(String token) async => null;
+
+  @override
+  Future<SemyaInvitation> declineInvitation(String token) async =>
       throw UnimplementedError();
 
   @override
@@ -167,7 +175,8 @@ class _FakeService implements SemyaCapableFamilyTreeService {
       const <DeletedPerson>[];
 
   @override
-  Future<List<DeletedPerson>> listDeletedPersonsForSemya(String semyaId) async =>
+  Future<List<DeletedPerson>> listDeletedPersonsForSemya(
+          String semyaId) async =>
       const <DeletedPerson>[];
 
   @override
@@ -179,8 +188,7 @@ class _FakeService implements SemyaCapableFamilyTreeService {
       throw UnimplementedError();
 
   @override
-  Future<List<DeletedPost>> listMyDeletedPosts() async =>
-      const <DeletedPost>[];
+  Future<List<DeletedPost>> listMyDeletedPosts() async => const <DeletedPost>[];
 
   @override
   Future<void> restoreDeletedPost(String deletedPostId) async =>

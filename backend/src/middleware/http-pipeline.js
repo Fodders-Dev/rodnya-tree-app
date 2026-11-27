@@ -45,7 +45,9 @@ function registerCoreHttpMiddleware(app, {config, normalizedRuntimeInfo = {}}) {
 
       const sanitizedPath = String(pathName)
         .replace(/^\/story\/[^/]+(\/.*)?$/, "/story/:token$1")
-        .replace(/^\/v1\/browse\/[^/]+(\/.*)?$/, "/v1/browse/:token$1");
+        .replace(/^\/v1\/browse\/[^/]+(\/.*)?$/, "/v1/browse/:token$1")
+        .replace(/^\/v1\/invitation\/[^/]+(\/.*)?$/, "/v1/invitation/:token$1")
+        .replace(/^\/invite\/[^/]+(\/.*)?$/, "/invite/:token$1");
       const payload = JSON.stringify({
         requestId: req.requestId,
         method: req.method,

@@ -652,9 +652,9 @@ void main() {
     // (раньше их было два, и FAB-дубль сжимался в круг с «Добави…»).
     expect(find.text('Добавить'), findsOneWidget);
     expect(find.byType(FloatingActionButton), findsNothing);
-    expect(find.text('Найти'), findsOneWidget);
-    // F4: discover-вход переехал с FAB в панель.
-    expect(find.text('Проверить родство'), findsOneWidget);
+    // P2.5a: два входа поиска («Найти» + «Проверить родство») слиты в одну кнопку.
+    expect(find.text('Найти родню'), findsOneWidget);
+    expect(find.text('Проверить родство'), findsNothing);
     expect(find.text('3 чата'), findsOneWidget);
     expect(find.text('Пригласить 1'), findsOneWidget);
   });

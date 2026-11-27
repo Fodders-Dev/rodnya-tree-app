@@ -1602,6 +1602,21 @@ module.exports = {
       if (!semya) continue;
       const clone = structuredClone(inv);
       clone.semyaName = semya.name;
+      const inviter = (db.users || []).find((u) => u.id === inv.inviterUserId);
+      if (inviter) {
+        clone.inviterName =
+          inviter?.profile?.displayName ||
+          composeDisplayNameFromProfile(inviter?.profile) ||
+          null;
+      }
+      if (inv.personId && semya.treeId) {
+        const targetPerson = (db.persons || []).find(
+          (p) => p.id === inv.personId && p.treeId === semya.treeId,
+        );
+        if (targetPerson?.name) {
+          clone.targetPersonName = targetPerson.name;
+        }
+      }
       enriched.push(clone);
     }
     return enriched.sort((a, b) =>

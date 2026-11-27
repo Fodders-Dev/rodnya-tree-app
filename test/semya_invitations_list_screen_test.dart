@@ -37,6 +37,7 @@ class _FakeService
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   }) async =>
       throw UnimplementedError();
 
@@ -133,8 +134,7 @@ class _FakeService
       const <SemyaInvitation>[];
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 SemyaInvitation _invitation({
@@ -167,7 +167,8 @@ void main() {
     await getIt.reset();
   });
 
-  testWidgets('empty state когда no invitations + canInvite=true показывает CTA',
+  testWidgets(
+      'empty state когда no invitations + canInvite=true показывает CTA',
       (tester) async {
     getIt.registerSingleton<FamilyTreeServiceInterface>(_FakeService());
     await tester.pumpWidget(
@@ -182,12 +183,11 @@ void main() {
     expect(find.text('Пока нет приглашений'), findsOneWidget);
     expect(find.text('Отправьте первое приглашение родственнику.'),
         findsOneWidget);
-    expect(find.byKey(const Key('semya-invitations-empty-cta')),
-        findsOneWidget);
+    expect(
+        find.byKey(const Key('semya-invitations-empty-cta')), findsOneWidget);
   });
 
-  testWidgets('empty state когда canInvite=false скрывает CTA',
-      (tester) async {
+  testWidgets('empty state когда canInvite=false скрывает CTA', (tester) async {
     getIt.registerSingleton<FamilyTreeServiceInterface>(_FakeService());
     await tester.pumpWidget(
       const MaterialApp(
@@ -247,7 +247,8 @@ void main() {
       await tester.pumpAndSettle();
       // Pending — has both buttons.
       expect(find.byKey(const Key('semya-invitation-copy-p')), findsOneWidget);
-      expect(find.byKey(const Key('semya-invitation-revoke-p')), findsOneWidget);
+      expect(
+          find.byKey(const Key('semya-invitation-revoke-p')), findsOneWidget);
       // Accepted — no actions.
       expect(find.byKey(const Key('semya-invitation-copy-a')), findsNothing);
       expect(find.byKey(const Key('semya-invitation-revoke-a')), findsNothing);

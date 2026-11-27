@@ -671,6 +671,29 @@ extension _RelativeDetailsMutations on _RelativeDetailsScreenState {
     }
   }
 
+  Future<Uri> _createCardInvitationUri({
+    required String treeId,
+    required String personId,
+  }) async {
+    final Object service = _familyService;
+    if (service is SemyaCapableFamilyTreeService) {
+      final semyi = await service.listMySemya();
+      final matched = semyi.where((s) => s.treeId == treeId).toList();
+      if (matched.isNotEmpty) {
+        final invitation = await service.createInvitation(
+          semyaId: matched.first.id,
+          role: SemyaRole.editor,
+          personId: personId,
+        );
+        return Uri.parse(invitation.shareUrl);
+      }
+    }
+    return _invitationLinkService.buildInvitationLink(
+      treeId: treeId,
+      personId: personId,
+    );
+  }
+
   Future<void> _generateAndShareInviteLink() async {
     if (_person == null || _currentTreeId == null) return;
 
@@ -679,7 +702,7 @@ extension _RelativeDetailsMutations on _RelativeDetailsScreenState {
     });
 
     try {
-      final inviteUrl = _invitationLinkService.buildInvitationLink(
+      final inviteUrl = await _createCardInvitationUri(
         treeId: _currentTreeId!,
         personId: _person!.id,
       );

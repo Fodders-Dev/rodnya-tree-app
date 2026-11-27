@@ -29,7 +29,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
   final _descriptionController = TextEditingController();
 
   bool _isLoading = false;
-  bool _isPrivate = true; // Значение по умолчанию - приватное дерево
+  final bool _isPrivate = true;
   late TreeKind _treeKind;
   String? _selectedTemplateKey;
 
@@ -446,24 +446,6 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                   alignLabelWithHint: true,
                 ),
                 maxLines: 3,
-              ),
-              const SizedBox(height: 16),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                value: _isPrivate,
-                onChanged: (value) {
-                  setState(() {
-                    _isPrivate = value;
-                  });
-                },
-                title: Text(
-                  _isPrivate ? 'Приватное дерево' : 'Публичное дерево',
-                ),
-                subtitle: Text(
-                  _isPrivate
-                      ? 'Его увидят только приглашённые участники.'
-                      : 'Его можно будет открывать по ссылке.',
-                ),
               ),
               const SizedBox(height: 24),
               SizedBox(

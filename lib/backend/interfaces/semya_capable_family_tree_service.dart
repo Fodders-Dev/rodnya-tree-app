@@ -66,7 +66,14 @@ abstract class SemyaCapableFamilyTreeService {
     String? recipientEmail,
     String? recipientPhone,
     String? recipientUserId,
+    String? personId,
   });
+
+  /// `GET /v1/invitation/:token` (unauthenticated capability preview).
+  Future<SemyaInvitation?> previewInvitation(String token);
+
+  /// `POST /v1/invitation/:token/decline`. Declines pending invitation.
+  Future<SemyaInvitation> declineInvitation(String token);
 
   /// Ship FE3: `GET /v1/semya/:id/invitations`. Returns all invitations
   /// для семя (статусы pending/accepted/revoked/expired mixed) — caller

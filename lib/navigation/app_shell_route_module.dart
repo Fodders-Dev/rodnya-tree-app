@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../models/family_person.dart';
 import '../screens/about_screen.dart';
 import '../screens/access_grants_screen.dart';
@@ -23,7 +24,6 @@ import '../screens/chats_list_screen.dart';
 import '../screens/create_post_screen.dart';
 import '../screens/create_gathering_screen.dart';
 import '../screens/create_poll_screen.dart';
-import '../screens/find_relative_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/offline_profiles_screen.dart';
 import '../screens/post_detail_screen.dart';
@@ -474,17 +474,19 @@ class AppShellRouteModule {
           GoRoute(
             path: 'find/:treeId',
             parentNavigatorKey: rootNavigatorKey,
-            pageBuilder: (context, state) {
-              final treeId = state.pathParameters['treeId'] ?? '';
-              return RodnyaCustomTransitionPage(
-                key: state.pageKey,
-                constrainWidth: true,
-                child: FindRelativeScreen(
-                  treeId: treeId,
-                  initialProfileCode: state.uri.queryParameters['profileCode'],
-                ),
-                transitionsBuilder: AppRouteTransitions.slide,
+            redirect: (_, state) {
+              final treeId = Uri.encodeQueryComponent(
+                state.pathParameters['treeId'] ?? '',
               );
+              final profileCode =
+                  state.uri.queryParameters['profileCode']?.trim();
+              final buffer = StringBuffer('/discover/relatives?treeId=$treeId');
+              if (profileCode != null && profileCode.isNotEmpty) {
+                buffer.write(
+                  '&profileCode=${Uri.encodeQueryComponent(profileCode)}',
+                );
+              }
+              return buffer.toString();
             },
           ),
         ],
@@ -755,15 +757,16 @@ class _AppShellHostState extends State<_AppShellHost> {
         ? GetIt.I<ChatServiceInterface>()
             .getTotalUnreadCountStream(currentUserId)
         : Stream<int>.value(0);
-    // Стабильный broadcast-стрим на всё время жизни шелла (меняется только
-    // при смене пользователя), чтобы переключение вкладок не дёргало
-    // /v1/tree-invitations/pending заново на каждом клике.
-    _pendingInvitationsCountStream = currentUserId != null
-        ? GetIt.I<FamilyTreeServiceInterface>()
-            .getPendingTreeInvitations()
-            .map((invitations) => invitations.length)
-            .asBroadcastStream()
-        : Stream<int>.value(0);
+    final treeService = GetIt.I<FamilyTreeServiceInterface>();
+    _pendingInvitationsCountStream =
+        (currentUserId != null && treeService is SemyaCapableFamilyTreeService)
+            ? Stream<int>.fromFuture(
+                (treeService as SemyaCapableFamilyTreeService)
+                    .listPendingInvitations()
+                    .then((invitations) => invitations.length)
+                    .catchError((_) => 0),
+              ).asBroadcastStream()
+            : Stream<int>.value(0);
   }
 
   @override

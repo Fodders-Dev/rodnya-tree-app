@@ -682,22 +682,39 @@ extension _TreeMutationsSection on _TreeViewScreenState {
   }
 
   Future<void> _copyPublicTreeLink() async {
+    final Object service = _familyService;
     final treeMeta = _currentTreeMeta;
-    if (treeMeta == null || !treeMeta.isPublic) {
+    if (treeMeta == null || service is! SemyaCapableFamilyTreeService) {
       return;
     }
-
-    final publicUri = PublicTreeLinkService.buildPublicTreeUri(
-      treeMeta.publicRouteId,
-      publicAppUrl: BackendRuntimeConfig.current.publicAppUrl,
-    );
-
-    await Clipboard.setData(ClipboardData(text: publicUri.toString()));
-    if (!mounted) {
-      return;
+    try {
+      final semyi = await service.listMySemya();
+      final matched = semyi.where((s) => s.treeId == treeMeta.id).toList();
+      if (!mounted) return;
+      if (matched.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Ссылка доступна только участникам семьи.')),
+        );
+        return;
+      }
+      await showShareBrowseTokenModal(
+        context,
+        semyaId: matched.first.id,
+        semyaName: treeMeta.name,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _describeTreeActionError(
+              error,
+              fallbackMessage: 'Не удалось создать ссылку.',
+            ),
+          ),
+        ),
+      );
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Публичная ссылка скопирована.')),
-    );
   }
 }
