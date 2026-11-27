@@ -40,6 +40,7 @@ Avoid big-bang rewrites. First create abstractions and adapters, then migrate fe
 - Keep screens thin; move logic into services/repositories/providers.
 - Do not introduce duplicate architecture.
 - Preserve or improve Russian UI text quality when touching user-facing strings.
+- Follow the global product-integration-workflow (Схема → Макет → Код, Delete-first, full CRUD × Роли): update docs/rodnya-app-map.md before adding or redesigning screens/entities.
 
 ## Verification
 Before finishing a task:
@@ -63,6 +64,7 @@ Use Playwright only for web smoke tests, not for Android-native flows.
 - Active autopilot behavior, response style, and execution rules live in [Codex_rules.md](Codex_rules.md).
 - Current project state lives in [docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md). The 2026-04-09 web audit is FROZEN — see banner in that file for the post-Phase-3/4/6 redirect.
 - Keep the working self-prompt in [PROMPT.md](PROMPT.md) and refine it when the project direction changes.
+- Unified OOUX entity map, CRUD × Roles matrix, 58-screen inventory, and FigJam Breadboard live in [docs/rodnya-app-map.md](docs/rodnya-app-map.md).
 
 ## Web startup
 - Preferred local web validation path:

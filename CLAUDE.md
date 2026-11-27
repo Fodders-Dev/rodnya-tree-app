@@ -66,6 +66,7 @@
 
 ## Навигация по знанию
 
+- Единая карта сущностей, матрица CRUD × Роли, реестр экранов и FigJam Breadboard: `docs/rodnya-app-map.md` (обновлять ДО кода по навыку `product-integration-workflow`).
 - Текущий статус проекта: `docs/connected-trees-refactor/CURRENT-PHASE.md`
   (живой). Архитектурные решения — append-only `DECISIONS.md` там же.
 - `docs/speed_measurement.md` — скорость чатов и SPEED-6 (живой).
