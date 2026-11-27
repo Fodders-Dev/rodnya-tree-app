@@ -18,9 +18,14 @@ import 'reaction_picker.dart';
 import 'rodnya_avatar.dart';
 
 class CommentSheet extends StatefulWidget {
-  const CommentSheet({super.key, required this.post});
+  const CommentSheet({
+    super.key,
+    required this.post,
+    this.canModerateDelete = false,
+  });
 
   final Post post;
+  final bool canModerateDelete;
 
   @override
   State<CommentSheet> createState() => _CommentSheetState();
@@ -41,6 +46,7 @@ class _CommentSheetState extends State<CommentSheet> {
   /// comment. Cleared after a successful send or by tapping the X in the
   /// "Отвечаем X" banner above the input.
   Comment? _replyingTo;
+  Comment? _editingComment;
   final FocusNode _commentFocusNode = FocusNode();
 
   /// Threads with more than [_repliesPreviewLimit] replies are collapsed
@@ -100,6 +106,10 @@ class _CommentSheetState extends State<CommentSheet> {
 
   void _startReplyTo(Comment comment) {
     setState(() {
+      if (_editingComment != null) {
+        _editingComment = null;
+        _commentController.clear();
+      }
       _replyingTo = comment;
     });
     _commentFocusNode.requestFocus();
@@ -108,6 +118,25 @@ class _CommentSheetState extends State<CommentSheet> {
   void _cancelReply() {
     setState(() {
       _replyingTo = null;
+    });
+  }
+
+  void _startEditComment(Comment comment) {
+    setState(() {
+      _replyingTo = null;
+      _editingComment = comment;
+      _commentController.text = comment.content;
+      _commentController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _commentController.text.length),
+      );
+    });
+    _commentFocusNode.requestFocus();
+  }
+
+  void _cancelEditComment() {
+    setState(() {
+      _editingComment = null;
+      _commentController.clear();
     });
   }
 
@@ -141,6 +170,39 @@ class _CommentSheetState extends State<CommentSheet> {
     if (text.isEmpty || _isSending) return;
 
     HapticFeedback.lightImpact();
+    final editingTarget = _editingComment;
+    if (editingTarget != null) {
+      setState(() => _isSending = true);
+      try {
+        final updated = await _postService.updateComment(
+          postId: widget.post.id,
+          commentId: editingTarget.id,
+          content: text,
+        );
+        if (!mounted) return;
+        setState(() {
+          final index = _comments?.indexWhere((c) => c.id == updated.id) ?? -1;
+          if (index >= 0) {
+            _comments![index] = updated;
+          }
+          _editingComment = null;
+          _commentController.clear();
+          _isSending = false;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isSending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              humanizeError(e, fallback: 'Не удалось обновить комментарий.'),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     final replyTarget = _replyingTo;
     setState(() => _isSending = true);
 
@@ -183,6 +245,57 @@ class _CommentSheetState extends State<CommentSheet> {
                   fallback: 'Не удалось добавить комментарий.'))),
         );
       }
+    }
+  }
+
+  Future<void> _deleteComment(Comment comment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить комментарий?'),
+        content: const Text(
+            'Комментарий будет удалён без возможности восстановления.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            key: const Key('comment-delete-confirm'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await _postService.deleteComment(widget.post.id, comment.id);
+      if (!mounted) return;
+      setState(() {
+        _comments?.removeWhere((c) => c.id == comment.id);
+        if (_editingComment?.id == comment.id) {
+          _editingComment = null;
+          _commentController.clear();
+        }
+        if (_replyingTo?.id == comment.id) {
+          _replyingTo = null;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(e, fallback: 'Не удалось удалить комментарий.'),
+          ),
+        ),
+      );
     }
   }
 
@@ -481,6 +594,13 @@ class _CommentSheetState extends State<CommentSheet> {
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
+    final currentUserId = _authService.currentUserId;
+    final canEdit = currentUserId != null && currentUserId == comment.authorId;
+    final canDelete = canEdit ||
+        (currentUserId != null && currentUserId == widget.post.authorId) ||
+        widget.canModerateDelete;
+    final formattedDate = DateFormat('d MMM в HH:mm', 'ru')
+        .format(toLocalForDisplay(comment.createdAt));
 
     return GestureDetector(
       // Long-press → reaction picker. Same gesture pattern as the
@@ -506,14 +626,71 @@ class _CommentSheetState extends State<CommentSheet> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      DateFormat('d MMM в HH:mm', 'ru')
-                          .format(toLocalForDisplay(comment.createdAt)),
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 12,
+                    Flexible(
+                      child: Text(
+                        comment.isEdited
+                            ? '$formattedDate · изм.'
+                            : formattedDate,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                    if (canEdit || canDelete)
+                      PopupMenuButton<String>(
+                        key: Key('comment-menu-${comment.id}'),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 28,
+                          minHeight: 28,
+                        ),
+                        iconSize: 16,
+                        icon: Icon(
+                          Icons.more_horiz_rounded,
+                          size: 16,
+                          color: tokens.inkMuted,
+                        ),
+                        onSelected: (action) {
+                          if (action == 'edit') {
+                            _startEditComment(comment);
+                          } else if (action == 'delete') {
+                            _deleteComment(comment);
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          if (canEdit)
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Изменить'),
+                                ],
+                              ),
+                            ),
+                          if (canDelete)
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.delete_outline,
+                                    color: Colors.red,
+                                    size: 18,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Удалить',
+                                    style: TextStyle(color: Colors.red),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -684,7 +861,53 @@ class _CommentSheetState extends State<CommentSheet> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (_replyingTo != null)
+        if (_editingComment != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: tokens.accentSoft,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_outlined,
+                      size: 16, color: tokens.accentStrong),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Редактируем комментарий',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: tokens.ink,
+                      ),
+                    ),
+                  ),
+                  Semantics(
+                    button: true,
+                    label: 'Отменить редактирование',
+                    child: InkWell(
+                      key: const ValueKey('comment-edit-cancel'),
+                      onTap: _cancelEditComment,
+                      borderRadius: BorderRadius.circular(999),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(
+                          Icons.close,
+                          size: 16,
+                          color: tokens.inkMuted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else if (_replyingTo != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Container(
@@ -750,9 +973,11 @@ class _CommentSheetState extends State<CommentSheet> {
                   controller: _commentController,
                   focusNode: _commentFocusNode,
                   decoration: InputDecoration(
-                    hintText: _replyingTo != null
-                        ? 'Ваш ответ…'
-                        : 'Оставьте комментарий...',
+                    hintText: _editingComment != null
+                        ? 'Измените комментарий…'
+                        : _replyingTo != null
+                            ? 'Ваш ответ…'
+                            : 'Оставьте комментарий...',
                     hintStyle: TextStyle(color: Colors.grey.shade500),
                     fillColor: theme.colorScheme.surfaceContainerHighest,
                     filled: true,

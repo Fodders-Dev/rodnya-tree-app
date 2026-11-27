@@ -223,15 +223,30 @@ extension _HomeScreenSections on _HomeScreenState {
   /// gathering | poll).
   Widget _buildFeedEntryCard(_HomeFeedEntry entry) {
     if (entry.isPost) {
+      final post = entry.post!;
       return PostCard(
-        post: entry.post!,
+        post: post,
+        canModerateDelete: _canModerateDeleteForTree(post.treeId),
         onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
+        onUpdated: _replacePostInFeed,
       );
     }
     if (entry.isGathering) {
-      return GatheringCard(gathering: entry.gathering!);
+      final gathering = entry.gathering!;
+      return GatheringCard(
+        gathering: gathering,
+        canModerateDelete: _canModerateDeleteForTree(gathering.treeId),
+        onDeleted: () => _loadGatherings(branchId: _selectedFeedBranchId),
+        onUpdated: _replaceGatheringInFeed,
+      );
     }
-    return PollCard(poll: entry.poll!);
+    final poll = entry.poll!;
+    return PollCard(
+      poll: poll,
+      canModerateDelete: _canModerateDeleteForTree(poll.treeId),
+      onDeleted: () => _loadPolls(branchId: _selectedFeedBranchId),
+      onUpdated: _replacePollInFeed,
+    );
   }
 
   Widget _buildNarrowFeedSliver() {

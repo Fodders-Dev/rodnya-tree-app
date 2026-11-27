@@ -20,8 +20,10 @@ class _FakeGatheringService implements GatheringServiceInterface {
   String? lastPlace;
 
   @override
-  Future<List<Gathering>> getGatherings({required String treeId}) async =>
-      const [];
+  Future<List<Gathering>> getGatherings({String? treeId}) async => const [];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 
   int lastImageCount = 0;
 

@@ -226,6 +226,10 @@ module.exports = {
     }
 
     let mutated = false;
+    const boundTree = semya.treeId
+      ? (db.trees || []).find((entry) => entry.id === semya.treeId)
+      : null;
+
     if (name !== undefined && name !== null) {
       if (typeof name !== "string" || !name.trim()) {
         throw new Error("INVALID_NAME");
@@ -233,6 +237,10 @@ module.exports = {
       const trimmed = name.trim();
       if (trimmed !== semya.name) {
         semya.name = trimmed;
+        mutated = true;
+      }
+      if (boundTree && boundTree.name !== semya.name) {
+        boundTree.name = semya.name;
         mutated = true;
       }
     }
@@ -244,10 +252,21 @@ module.exports = {
         semya.description = next;
         mutated = true;
       }
+      if (boundTree) {
+        const nextTreeDesc = semya.description ?? "";
+        if ((boundTree.description ?? "") !== nextTreeDesc) {
+          boundTree.description = nextTreeDesc;
+          mutated = true;
+        }
+      }
     }
 
     if (mutated) {
-      semya.updatedAt = nowIso();
+      const timestamp = nowIso();
+      semya.updatedAt = timestamp;
+      if (boundTree) {
+        boundTree.updatedAt = timestamp;
+      }
       await this._write(db);
     }
     return structuredClone(semya);
@@ -974,7 +993,12 @@ module.exports = {
     }
 
     const deletedAt = nowIso();
+    const retentionDays = Number(process.env.RODNYA_SEMYA_RETENTION_DAYS) || 90;
     semya.deletedAt = deletedAt;
+    semya.deletedByUserId = actorUserId;
+    semya.hardDeleteScheduledAt = new Date(
+      Date.parse(deletedAt) + retentionDays * 86_400_000,
+    ).toISOString();
     semya.updatedAt = deletedAt;
 
     // Memberships hidden — listSemyiForUser + findMembership exclude
@@ -983,6 +1007,64 @@ module.exports = {
     for (const m of db.semyaMembers || []) {
       if (m.semyaId === semyaId && !m.hiddenAt) {
         m.hiddenAt = deletedAt;
+      }
+    }
+
+    await this._write(db);
+    return structuredClone(semya);
+  },
+
+  async restoreSemya({semyaId, actorUserId}) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!actorUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find((entry) => entry.id === semyaId);
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+    if (!semya.deletedAt) {
+      throw new Error("SEMYA_NOT_DELETED");
+    }
+
+    const retentionDays = Number(process.env.RODNYA_SEMYA_RETENTION_DAYS) || 90;
+    const scheduledMs = semya.hardDeleteScheduledAt
+      ? Date.parse(semya.hardDeleteScheduledAt)
+      : Date.parse(semya.deletedAt) + retentionDays * 86_400_000;
+    if (Number.isFinite(scheduledMs) && Date.now() > scheduledMs) {
+      throw new Error("RETENTION_EXPIRED");
+    }
+
+    const originalDeletedAt = semya.deletedAt;
+    const hasMemberships = (db.semyaMembers || []).some(
+      (m) => m.semyaId === semyaId,
+    );
+    const isOwner = hasMemberships
+      ? (db.semyaMembers || []).some(
+          (m) =>
+            m.semyaId === semyaId &&
+            m.userId === actorUserId &&
+            m.role === "owner" &&
+            m.hiddenAt === originalDeletedAt,
+        )
+      : semya.ownerId === actorUserId;
+    if (!isOwner) {
+      throw new Error("NOT_OWNER");
+    }
+
+    const restoredAt = nowIso();
+    semya.deletedAt = null;
+    semya.deletedByUserId = null;
+    semya.hardDeleteScheduledAt = null;
+    semya.updatedAt = restoredAt;
+
+    for (const m of db.semyaMembers || []) {
+      if (m.semyaId === semyaId && m.hiddenAt === originalDeletedAt) {
+        m.hiddenAt = null;
       }
     }
 

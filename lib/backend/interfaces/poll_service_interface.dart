@@ -31,6 +31,18 @@ abstract class PollServiceInterface {
   /// Returns the updated poll with refreshed public responses.
   Future<Poll> vote(String pollId, List<String> optionIds);
 
-  /// Delete a poll (server enforces author-only).
+  /// Withdraw the current user's vote while the poll is still open.
+  Future<Poll> withdrawVote(String pollId);
+
+  /// Edit poll question / deadline or close it early.
+  Future<Poll> updatePoll({
+    required String pollId,
+    String? question,
+    DateTime? closesAt,
+    bool clearClosesAt = false,
+    bool closeNow = false,
+  });
+
+  /// Delete a poll (server enforces author or active Semya owner).
   Future<void> deletePoll(String pollId);
 }

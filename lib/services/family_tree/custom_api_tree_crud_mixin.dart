@@ -49,6 +49,30 @@ mixin _CustomApiTreeCrudMixin on _CustomApiFamilyTreeHost {
   }
 
   @override
+  Future<FamilyTree> updateTree({
+    required String treeId,
+    String? name,
+    String? description,
+    bool? isPrivate,
+  }) async {
+    final trimmedId = treeId.trim();
+    final body = <String, dynamic>{};
+    if (name != null) body['name'] = name.trim();
+    if (description != null) body['description'] = description.trim();
+    if (isPrivate != null) body['isPrivate'] = isPrivate;
+
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/trees/$trimmedId',
+      body: body,
+    );
+
+    final tree = _treeFromResponse(response);
+    await _cacheTree(tree);
+    return tree;
+  }
+
+  @override
   Future<List<FamilyPerson>> getRelatives(String treeId) {
     final cached = _relativesCache[treeId];
     final cachedAt = _relativesCacheStamps[treeId];

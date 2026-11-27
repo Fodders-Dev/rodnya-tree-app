@@ -21,11 +21,38 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   final List<FamilyTree> trees;
   final List<TreeInvitation> invitations;
   final List<String> removedTreeIds = <String>[];
+  String? lastUpdatedTreeName;
   final List<MapEntry<String, bool>> invitationResponses =
       <MapEntry<String, bool>>[];
 
   @override
   Future<List<FamilyTree>> getUserTrees() async => trees;
+
+  @override
+  Future<FamilyTree> updateTree({
+    required String treeId,
+    String? name,
+    String? description,
+    bool? isPrivate,
+  }) async {
+    lastUpdatedTreeName = name;
+    final idx = trees.indexWhere((t) => t.id == treeId);
+    final old = trees[idx];
+    final updated = FamilyTree(
+      id: old.id,
+      name: name ?? old.name,
+      description: description ?? old.description,
+      creatorId: old.creatorId,
+      memberIds: old.memberIds,
+      members: old.members,
+      isPrivate: isPrivate ?? old.isPrivate,
+      kind: old.kind,
+      createdAt: old.createdAt,
+      updatedAt: DateTime(2026, 5, 2),
+    );
+    trees[idx] = updated;
+    return updated;
+  }
 
   @override
   Stream<List<TreeInvitation>> getPendingTreeInvitations() =>
@@ -387,5 +414,43 @@ void main() {
     expect(find.text('Rodnya QA Invite'), findsOneWidget);
     expect(find.text('Принять'), findsOneWidget);
     expect(find.text('Отклонить'), findsOneWidget);
+  });
+
+  testWidgets(
+      'TreeSelectorScreen позволяет владельцу переименовать дерево и обновляет TreeProvider',
+      (tester) async {
+    final ownTree = _buildTree(id: 'tree-own', name: 'Старое имя');
+    final treeService = _FakeFamilyTreeService([ownTree]);
+    getIt.registerSingleton<FamilyTreeServiceInterface>(treeService);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree(ownTree.id, ownTree.name,
+        treeKind: ownTree.kind);
+    final router = _buildRouter(initial: const TreeSelectorScreen());
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Действия').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Изменить'), findsOneWidget);
+
+    await tester.tap(find.text('Изменить'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('tree-edit-name-field')),
+      'Обновлённый род',
+    );
+    await tester.tap(find.byKey(const Key('tree-edit-save-button')));
+    await tester.pumpAndSettle();
+
+    expect(treeService.lastUpdatedTreeName, 'Обновлённый род');
+    expect(treeProvider.selectedTreeName, 'Обновлённый род');
+    expect(find.text('Обновлённый род'), findsWidgets);
   });
 }

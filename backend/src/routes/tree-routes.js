@@ -280,6 +280,131 @@ function registerTreeRoutes(
     });
   });
 
+  app.get("/v1/trees/:treeId", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId, {
+      requiredRole: "viewer",
+    });
+    if (!tree) {
+      return;
+    }
+
+    res.json({tree: mapTree(tree)});
+  });
+
+  app.patch("/v1/trees/:treeId", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId, {
+      requiredRole: "owner",
+    });
+    if (!tree) {
+      return;
+    }
+
+    const body = req.body || {};
+    const hasAnyField =
+      body.name !== undefined ||
+      body.description !== undefined ||
+      body.isPrivate !== undefined ||
+      body.publicSlug !== undefined;
+    if (!hasAnyField) {
+      res.status(400).json({message: "Нечего обновлять"});
+      return;
+    }
+
+    const patch = {
+      treeId: req.params.treeId,
+      actorUserId: req.auth.user.id,
+    };
+
+    if (body.name !== undefined) {
+      const nameGuard = enforceTextLimit(body.name, {
+        max: 120,
+        allowMultiline: false,
+        fieldName: "name",
+      });
+      if (!nameGuard.ok) {
+        res.status(nameGuard.status).json({message: nameGuard.message});
+        return;
+      }
+      patch.name = nameGuard.value;
+    }
+
+    if (body.description !== undefined) {
+      if (body.description === null) {
+        patch.description = null;
+      } else {
+        const descGuard = enforceTextLimit(body.description, {
+          max: 1000,
+          allowEmpty: true,
+          fieldName: "description",
+        });
+        if (!descGuard.ok) {
+          res.status(descGuard.status).json({message: descGuard.message});
+          return;
+        }
+        patch.description = descGuard.value;
+      }
+    }
+
+    if (body.isPrivate !== undefined) {
+      if (typeof body.isPrivate !== "boolean") {
+        res.status(400).json({message: "isPrivate должен быть boolean"});
+        return;
+      }
+      patch.isPrivate = body.isPrivate;
+    }
+
+    if (body.publicSlug !== undefined) {
+      if (body.publicSlug === null || body.publicSlug === "") {
+        patch.publicSlug = null;
+      } else {
+        const slugGuard = enforceTextLimit(body.publicSlug, {
+          max: 64,
+          allowMultiline: false,
+          allowEmpty: true,
+          fieldName: "publicSlug",
+        });
+        if (!slugGuard.ok) {
+          res.status(slugGuard.status).json({message: slugGuard.message});
+          return;
+        }
+        patch.publicSlug = slugGuard.value || null;
+      }
+    }
+
+    try {
+      const updated = await store.updateTree(patch);
+      if (!updated) {
+        res.status(404).json({message: "Дерево не найдено"});
+        return;
+      }
+      res.json({tree: mapTree(updated)});
+    } catch (error) {
+      const code = error?.message;
+      if (code === "NOT_OWNER") {
+        res
+          .status(403)
+          .json({message: "Только владелец может изменить дерево"});
+        return;
+      }
+      if (code === "INVALID_NAME") {
+        res.status(400).json({message: "Некорректное название дерева"});
+        return;
+      }
+      if (code === "INVALID_PUBLIC_SLUG") {
+        res.status(400).json({
+          message:
+            "publicSlug должен содержать 3–64 символа: строчные латинские буквы, цифры и дефис",
+        });
+        return;
+      }
+      if (code === "PUBLIC_SLUG_TAKEN") {
+        res.status(409).json({message: "Этот адрес уже занят другим деревом"});
+        return;
+      }
+      throw error;
+    }
+  });
+
   // Phase 0 of unified-graph migration: cross-tree person search.
   // The Flutter add-relative screen calls this from a debounced
   // textfield as the user types — surfaces relatives they ALREADY

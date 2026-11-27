@@ -15,6 +15,7 @@ import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
 import '../services/public_tree_link_service.dart';
 import '../utils/russian_plural.dart';
+import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
 
 /// Canonical tree-selection surface. Lives at `/trees` (moved off
@@ -770,11 +771,24 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                         tooltip: 'Действия',
                         icon: const Icon(Icons.more_vert),
                         onSelected: (action) {
-                          if (action == _TreeMenuAction.remove) {
+                          if (action == _TreeMenuAction.edit) {
+                            _editTree(tree);
+                          } else if (action == _TreeMenuAction.remove) {
                             _confirmRemoveTree(tree);
                           }
                         },
                         itemBuilder: (_) => [
+                          if (isOwned)
+                            const PopupMenuItem<_TreeMenuAction>(
+                              value: _TreeMenuAction.edit,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined),
+                                  SizedBox(width: 8),
+                                  Text('Изменить'),
+                                ],
+                              ),
+                            ),
                           PopupMenuItem<_TreeMenuAction>(
                             value: _TreeMenuAction.remove,
                             child: Row(
@@ -819,6 +833,53 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Публичная ссылка скопирована.')),
     );
+  }
+
+  Future<void> _editTree(FamilyTree tree) async {
+    final result = await showDialog<_TreeEditResult>(
+      context: context,
+      builder: (_) => _TreeEditDialog(
+        initialName: tree.name,
+        initialDescription: tree.description,
+        initialIsPrivate: tree.isPrivate,
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final treeProvider = Provider.of<TreeProvider>(context, listen: false);
+    final wasSelected = treeProvider.selectedTreeId == tree.id;
+
+    try {
+      final updated = await _familyTreeService.updateTree(
+        treeId: tree.id,
+        name: result.name,
+        description: result.description,
+        isPrivate: result.isPrivate,
+      );
+      await _loadUserTrees();
+      await treeProvider.refreshAvailableTrees();
+      if (wasSelected) {
+        await treeProvider.selectTree(
+          updated.id,
+          updated.name,
+          treeKind: updated.kind,
+        );
+      }
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Дерево обновлено')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(e, fallback: 'Не удалось обновить дерево.'),
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _confirmRemoveTree(FamilyTree tree) async {
@@ -937,7 +998,7 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
   }
 }
 
-enum _TreeMenuAction { remove }
+enum _TreeMenuAction { edit, remove }
 
 class _SelectorSectionHeader extends StatelessWidget {
   const _SelectorSectionHeader({
@@ -1009,6 +1070,119 @@ class _SelectorChip extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _TreeEditResult {
+  const _TreeEditResult({
+    required this.name,
+    required this.description,
+    required this.isPrivate,
+  });
+
+  final String name;
+  final String description;
+  final bool isPrivate;
+}
+
+class _TreeEditDialog extends StatefulWidget {
+  const _TreeEditDialog({
+    required this.initialName,
+    required this.initialDescription,
+    required this.initialIsPrivate,
+  });
+
+  final String initialName;
+  final String initialDescription;
+  final bool initialIsPrivate;
+
+  @override
+  State<_TreeEditDialog> createState() => _TreeEditDialogState();
+}
+
+class _TreeEditDialogState extends State<_TreeEditDialog> {
+  late final TextEditingController _nameController =
+      TextEditingController(text: widget.initialName);
+  late final TextEditingController _descController =
+      TextEditingController(text: widget.initialDescription);
+  late bool _isPrivate = widget.initialIsPrivate;
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Редактировать дерево'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            key: const Key('tree-edit-name-field'),
+            controller: _nameController,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              labelText: 'Название',
+              errorText: _errorText,
+            ),
+            onChanged: (_) {
+              if (_errorText != null) {
+                setState(() => _errorText = null);
+              }
+            },
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('tree-edit-description-field'),
+            controller: _descController,
+            minLines: 1,
+            maxLines: 3,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Описание (необязательно)',
+            ),
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            key: const Key('tree-edit-private-switch'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Приватное дерево'),
+            value: _isPrivate,
+            onChanged: (value) => setState(() => _isPrivate = value),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('tree-edit-save-button'),
+          onPressed: () {
+            final name = _nameController.text.trim();
+            if (name.isEmpty) {
+              setState(() => _errorText = 'Введите название дерева');
+              return;
+            }
+            Navigator.of(context).pop(
+              _TreeEditResult(
+                name: name,
+                description: _descController.text.trim(),
+                isPrivate: _isPrivate,
+              ),
+            );
+          },
+          child: const Text('Сохранить'),
+        ),
+      ],
     );
   }
 }

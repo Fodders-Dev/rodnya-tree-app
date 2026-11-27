@@ -346,6 +346,69 @@ function registerPostRoutes(
     res.status(201).json(mapPost(post, 0));
   });
 
+  app.get("/v1/posts/:postId", requireAuth, async (req, res) => {
+    const post = await store.findPost(req.params.postId);
+    if (!post) {
+      res.status(404).json({message: "Публикация не найдена"});
+      return;
+    }
+
+    if (!(await requirePostVisibility(req, res, post))) {
+      return;
+    }
+
+    const comments = await store.listPostComments(post.id);
+    res.json(mapPost(post, comments.length));
+  });
+
+  app.patch("/v1/posts/:postId", requireAuth, async (req, res) => {
+    const post = await store.findPost(req.params.postId);
+    if (!post) {
+      res.status(404).json({message: "Публикация не найдена"});
+      return;
+    }
+
+    if (!(await requirePostVisibility(req, res, post))) {
+      return;
+    }
+
+    if (req.body?.content === undefined) {
+      res.status(400).json({message: "Нечего обновлять"});
+      return;
+    }
+
+    const contentGuard = enforceTextLimit(req.body.content, {
+      max: 32_768,
+      allowEmpty: true,
+      fieldName: "content",
+    });
+    if (!contentGuard.ok) {
+      res.status(contentGuard.status).json({message: contentGuard.message});
+      return;
+    }
+
+    const updated = await store.updatePost({
+      postId: req.params.postId,
+      actorUserId: req.auth.user.id,
+      content: contentGuard.value,
+    });
+    if (updated === null) {
+      res.status(404).json({message: "Публикация не найдена"});
+      return;
+    }
+    if (updated === false) {
+      res.status(403).json({message: "Можно редактировать только свои публикации"});
+      return;
+    }
+    if (updated === "EMPTY_POST") {
+      res.status(400).json({message: "Пост не должен быть пустым"});
+      return;
+    }
+
+    const comments = await store.listPostComments(updated.id);
+    res.json(mapPost(updated, comments.length));
+  });
+
   async function requirePostVisibility(req, res, post) {
     const canView = await store.canUserViewScopedItem({
       item: post,
@@ -667,6 +730,54 @@ function registerPostRoutes(
 
     res.status(201).json(mapComment(comment));
   });
+
+  app.patch(
+    "/v1/posts/:postId/comments/:commentId",
+    requireAuth,
+    async (req, res) => {
+      const post = await store.findPost(req.params.postId);
+      if (!post) {
+        res.status(404).json({message: "Публикация не найдена"});
+        return;
+      }
+
+      if (!(await requirePostVisibility(req, res, post))) {
+        return;
+      }
+
+      const commentGuard = enforceTextLimit(req.body?.content, {
+        max: 4096,
+        fieldName: "content",
+      });
+      if (!commentGuard.ok) {
+        res.status(commentGuard.status).json({message: commentGuard.message});
+        return;
+      }
+
+      const updated = await store.updatePostComment({
+        postId: req.params.postId,
+        commentId: req.params.commentId,
+        actorUserId: req.auth.user.id,
+        content: commentGuard.value,
+      });
+      if (updated === null) {
+        res.status(404).json({message: "Комментарий не найден"});
+        return;
+      }
+      if (updated === false) {
+        res
+          .status(403)
+          .json({message: "Можно редактировать только свои комментарии"});
+        return;
+      }
+      if (updated === "EMPTY_COMMENT") {
+        res.status(400).json({message: "Комментарий не должен быть пустым"});
+        return;
+      }
+
+      res.json(mapComment(updated));
+    },
+  );
 
   app.delete(
     "/v1/posts/:postId/comments/:commentId",

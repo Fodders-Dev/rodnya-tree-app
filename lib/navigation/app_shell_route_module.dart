@@ -27,6 +27,7 @@ import '../screens/create_poll_screen.dart';
 import '../screens/find_relative_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/offline_profiles_screen.dart';
+import '../screens/post_detail_screen.dart';
 import '../screens/post_search_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/story_archive_screen.dart';
@@ -129,7 +130,15 @@ class AppShellRouteModule {
               GoRoute(
                 path: 'post/:postId',
                 parentNavigatorKey: rootNavigatorKey,
-                redirect: (context, state) => '/',
+                pageBuilder: (context, state) {
+                  final postId = state.pathParameters['postId'] ?? '';
+                  return RodnyaCustomTransitionPage(
+                    key: state.pageKey,
+                    constrainWidth: true,
+                    child: PostDetailScreen(postId: postId),
+                    transitionsBuilder: AppRouteTransitions.slide,
+                  );
+                },
               ),
               GoRoute(
                 // Phase E2: «Новая встреча» composer (mirrors post/create).

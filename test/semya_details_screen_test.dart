@@ -29,6 +29,7 @@ class _FakeFamilyTreeService
   SemyaDetails? details;
   List<SemyaMembership> memberships;
   String? lastUpdatedName;
+  String? deletedSemyaId;
 
   @override
   Future<Semya> createSemya({
@@ -49,6 +50,15 @@ class _FakeFamilyTreeService
     details = SemyaDetails(semya: next, membership: details!.membership);
     return next;
   }
+
+  @override
+  Future<Semya> deleteSemya(String semyaId) async {
+    deletedSemyaId = semyaId;
+    return details!.semya;
+  }
+
+  @override
+  Future<Semya> restoreSemya(String semyaId) async => details!.semya;
 
   @override
   Future<List<Semya>> listMySemya() async => const <Semya>[];
@@ -369,4 +379,29 @@ void main() {
       );
     },
   );
+
+  testWidgets('owner sees delete semya tile and can confirm deletion',
+      (tester) async {
+    final fake = _FakeFamilyTreeService(details: _details());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(fake);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SemyaDetailsScreen(semyaId: 'semya-1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('semya-details-delete')),
+      200,
+    );
+    await tester.tap(find.byKey(const Key('semya-details-delete')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('semya-delete-confirm')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('semya-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(fake.deletedSemyaId, 'semya-1');
+  });
 }

@@ -339,6 +339,28 @@ module.exports = {
     return attachPostReactions(db, post);
   },
 
+  async updatePost({postId, actorUserId, content}) {
+    const db = await this._read();
+    const post = db.posts.find((entry) => entry.id === postId);
+    if (!post) {
+      return null;
+    }
+    if (post.authorId !== actorUserId) {
+      return false;
+    }
+    const nextContent = String(content ?? "").trim();
+    const hasImages = Array.isArray(post.imageUrls) && post.imageUrls.length > 0;
+    if (!nextContent && !hasImages) {
+      return "EMPTY_POST";
+    }
+    const timestamp = nowIso();
+    post.content = nextContent;
+    post.updatedAt = timestamp;
+    post.editedAt = timestamp;
+    await this._write(db);
+    return attachPostReactions(db, post);
+  },
+
   async deletePost(postId, actorUserId) {
     // Ship Q4a (2026-05-28, Ship 30b): soft-delete semantics для
     // posts. Mirror persons pattern (Ship 30) — move snapshot к
@@ -893,6 +915,33 @@ module.exports = {
     }
 
     db.comments.push(comment);
+    await this._write(db);
+    return attachCommentReactions(db, comment);
+  },
+
+  async updatePostComment({postId, commentId, actorUserId, content}) {
+    const db = await this._read();
+    const post = db.posts.find((entry) => entry.id === postId);
+    if (!post) {
+      return null;
+    }
+    const comment = db.comments.find(
+      (entry) => entry.id === commentId && entry.postId === postId,
+    );
+    if (!comment) {
+      return null;
+    }
+    if (comment.authorId !== actorUserId) {
+      return false;
+    }
+    const nextContent = String(content ?? "").trim();
+    if (!nextContent) {
+      return "EMPTY_COMMENT";
+    }
+    const timestamp = nowIso();
+    comment.content = nextContent;
+    comment.updatedAt = timestamp;
+    comment.editedAt = timestamp;
     await this._write(db);
     return attachCommentReactions(db, comment);
   },

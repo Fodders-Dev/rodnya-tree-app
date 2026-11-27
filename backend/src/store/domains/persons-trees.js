@@ -215,6 +215,120 @@ module.exports = {
     return tree ? structuredClone(tree) : null;
   },
 
+  async updateTree({
+    treeId,
+    actorUserId,
+    name,
+    description,
+    isPrivate,
+    publicSlug,
+  }) {
+    const normalizedTreeId = normalizeNullableString(treeId);
+    const normalizedActorId = normalizeNullableString(actorUserId);
+    if (!normalizedTreeId || !normalizedActorId) {
+      return null;
+    }
+
+    const db = await this._read();
+    const tree = (db.trees || []).find((entry) => entry.id === normalizedTreeId);
+    if (!tree) {
+      return null;
+    }
+
+    const activeSemya = tree.semyaId
+      ? (db.semyi || []).find((s) => s.id === tree.semyaId && !s.deletedAt)
+      : null;
+    const hasSemyaMembers = Boolean(
+      activeSemya &&
+        (db.semyaMembers || []).some((m) => m.semyaId === activeSemya.id),
+    );
+    const isOwner = hasSemyaMembers
+      ? this._isActiveSemyaOwnerForTree(db, tree.id, normalizedActorId)
+      : tree.creatorId === normalizedActorId;
+    if (!isOwner) {
+      throw new Error("NOT_OWNER");
+    }
+
+    let mutated = false;
+    if (name !== undefined && name !== null) {
+      if (typeof name !== "string") {
+        throw new Error("INVALID_NAME");
+      }
+      const trimmedName = name.trim();
+      if (!trimmedName || trimmedName.length > 120) {
+        throw new Error("INVALID_NAME");
+      }
+      if (trimmedName !== tree.name) {
+        tree.name = trimmedName;
+        mutated = true;
+      }
+    }
+
+    if (description !== undefined) {
+      const nextDesc =
+        description === null ? "" : String(description).trim();
+      const currentDesc = tree.description ?? "";
+      if (nextDesc !== currentDesc) {
+        tree.description = nextDesc;
+        mutated = true;
+      }
+    }
+
+    if (isPrivate !== undefined) {
+      const nextPrivate = Boolean(isPrivate);
+      if (nextPrivate !== (tree.isPrivate !== false)) {
+        tree.isPrivate = nextPrivate;
+        mutated = true;
+      }
+    }
+
+    if (publicSlug !== undefined) {
+      let nextSlug = null;
+      if (publicSlug !== null && String(publicSlug).trim() !== "") {
+        nextSlug = String(publicSlug).trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(nextSlug)) {
+          throw new Error("INVALID_PUBLIC_SLUG");
+        }
+        const conflict = (db.trees || []).some(
+          (entry) =>
+            entry.id !== tree.id &&
+            String(entry.publicSlug || "").trim().toLowerCase() === nextSlug,
+        );
+        if (conflict) {
+          throw new Error("PUBLIC_SLUG_TAKEN");
+        }
+      }
+      if ((tree.publicSlug || null) !== nextSlug) {
+        tree.publicSlug = nextSlug;
+        mutated = true;
+      }
+    }
+
+    const timestamp = nowIso();
+    let semyaSynced = false;
+    if (activeSemya) {
+      if (name !== undefined && name !== null && activeSemya.name !== tree.name) {
+        activeSemya.name = tree.name;
+        activeSemya.updatedAt = timestamp;
+        semyaSynced = true;
+      }
+      if (description !== undefined) {
+        const nextSemyaDesc = tree.description ? tree.description : null;
+        if ((activeSemya.description ?? null) !== nextSemyaDesc) {
+          activeSemya.description = nextSemyaDesc;
+          activeSemya.updatedAt = timestamp;
+          semyaSynced = true;
+        }
+      }
+    }
+
+    if (mutated || semyaSynced) {
+      tree.updatedAt = timestamp;
+      await this._write(db);
+    }
+    return structuredClone(tree);
+  },
+
   _countActiveOwners(db, semyaId) {
     return (db.semyaMembers || []).filter(
       (m) => m.semyaId === semyaId && m.role === "owner" && !m.hiddenAt,

@@ -145,6 +145,55 @@ void main() {
     expect(updated.question, 'Когда собираемся?');
     expect(sentBody?['optionIds'], ['o1']);
   });
+
+  test('updatePoll and withdrawVote call PATCH and DELETE respond', () async {
+    final calls = <String>[];
+    final client = MockClient((request) async {
+      calls.add('${request.method} ${request.url.path}');
+      if (request.method == 'PATCH' && request.url.path == '/v1/polls/p1') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            ..._pollJson,
+            'question': body['question'] ?? _pollJson['question'],
+            'isClosed': body['closeNow'] == true,
+            'editedAt': '2026-06-02T10:00:00.000Z',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.method == 'DELETE' &&
+          request.url.path == '/v1/polls/p1/respond') {
+        return http.Response(
+          jsonEncode(_pollJson),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 400);
+    });
+
+    final service = CustomApiPollService(
+      authService: await _createAuthService(client),
+      storageService: _FakeStorageService(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final updated = await service.updatePoll(
+      pollId: 'p1',
+      question: 'Точно суббота?',
+    );
+    expect(updated.question, 'Точно суббота?');
+    expect(updated.isEdited, isTrue);
+
+    final unvoted = await service.withdrawVote('p1');
+    expect(unvoted.responses, isEmpty);
+    expect(calls, ['PATCH /v1/polls/p1', 'DELETE /v1/polls/p1/respond']);
+  });
 }
 
 Future<CustomApiAuthService> _createAuthService(http.Client client) async {

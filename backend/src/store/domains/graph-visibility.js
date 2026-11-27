@@ -831,7 +831,17 @@ module.exports = {
     const db = await this._read();
     const tree = (db.trees || []).find((entry) => entry.id === normalizedTreeId);
     if (!tree) return null;
-    if (tree.creatorId !== normalizedActor) {
+    const activeSemya = tree.semyaId
+      ? (db.semyi || []).find((s) => s.id === tree.semyaId && !s.deletedAt)
+      : null;
+    const hasSemyaMembers = Boolean(
+      activeSemya &&
+        (db.semyaMembers || []).some((m) => m.semyaId === activeSemya.id),
+    );
+    const isOwner = hasSemyaMembers
+      ? this._isActiveSemyaOwnerForTree(db, normalizedTreeId, normalizedActor)
+      : tree.creatorId === normalizedActor;
+    if (!isOwner) {
       throw new Error("NOT_OWNER");
     }
     if (!rules || typeof rules !== "object") {
@@ -877,10 +887,13 @@ module.exports = {
       (entry) => entry.id === normalizedTreeId,
     );
     if (!branch) return null;
-    if (
-      branch.ownerId !== normalizedViewer &&
-      !(Array.isArray(branch.memberIds) && branch.memberIds.includes(normalizedViewer))
-    ) {
+    const tree = (db.trees || []).find((entry) => entry.id === normalizedTreeId);
+    const hasBranchAccess =
+      branch.ownerId === normalizedViewer ||
+      (Array.isArray(branch.memberIds) &&
+        branch.memberIds.includes(normalizedViewer)) ||
+      (tree && this._userCanAccessTreeRecord(tree, normalizedViewer, db));
+    if (!hasBranchAccess) {
       throw new Error("FORBIDDEN");
     }
 

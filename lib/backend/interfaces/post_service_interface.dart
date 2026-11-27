@@ -63,6 +63,15 @@ abstract class PostServiceInterface {
     void Function(MediaUploadProgress progress)? onProgress,
   });
 
+  /// Fetch a single post by ID (returns null if 404).
+  Future<Post?> getPost(String postId);
+
+  /// Edit a post's content (server enforces author-only).
+  Future<Post> updatePost({
+    required String postId,
+    required String content,
+  });
+
   /// Delete a post by ID.
   Future<void> deletePost(String postId);
 
@@ -114,6 +123,13 @@ abstract class PostServiceInterface {
     String postId,
     String content, {
     String? parentCommentId,
+  });
+
+  /// Edit a comment's content (server enforces author-only).
+  Future<Comment> updateComment({
+    required String postId,
+    required String commentId,
+    required String content,
   });
 
   /// Delete a comment.

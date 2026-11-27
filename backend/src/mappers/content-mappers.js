@@ -31,6 +31,8 @@ function mapPost(post, commentCount = 0) {
       ? post.anchorPersonIds
       : [],
     reactions: Array.isArray(post.reactions) ? post.reactions : [],
+    updatedAt: post.updatedAt || post.createdAt || null,
+    editedAt: post.editedAt || null,
   };
 }
 
@@ -64,6 +66,7 @@ function mapGathering(gathering) {
     rsvps: Array.isArray(gathering.rsvps) ? gathering.rsvps : [],
     createdAt: gathering.createdAt,
     updatedAt: gathering.updatedAt,
+    editedAt: gathering.editedAt || null,
   };
 }
 
@@ -95,6 +98,12 @@ function mapPoll(poll) {
     responses: Array.isArray(poll.responses) ? poll.responses : [],
     createdAt: poll.createdAt,
     updatedAt: poll.updatedAt,
+    editedAt: poll.editedAt || null,
+    isClosed: Boolean(
+      poll.closesAt &&
+        Number.isFinite(Date.parse(poll.closesAt)) &&
+        Date.parse(poll.closesAt) <= Date.now(),
+    ),
   };
 }
 
@@ -140,6 +149,8 @@ function mapComment(comment) {
     likedBy,
     reactions: Array.isArray(comment.reactions) ? comment.reactions : [],
     parentCommentId,
+    updatedAt: comment.updatedAt || comment.createdAt || null,
+    editedAt: comment.editedAt || null,
   };
 }
 

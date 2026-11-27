@@ -13,8 +13,45 @@ import 'package:rodnya/widgets/gathering_card.dart';
 
 class _FakeGatheringService implements GatheringServiceInterface {
   int setRsvpCalls = 0;
+  int updateCalls = 0;
+  int deleteCalls = 0;
   String? lastStatus;
   int? lastHeadcount;
+
+  @override
+  Future<Gathering> updateGathering({
+    required String gatheringId,
+    String? title,
+    String? description,
+    bool clearDescription = false,
+    DateTime? startAt,
+    DateTime? endAt,
+    bool clearEndAt = false,
+    bool? isAllDay,
+    String? place,
+    bool clearPlace = false,
+  }) async {
+    updateCalls++;
+    return Gathering(
+      id: gatheringId,
+      treeId: 't',
+      authorId: 'org',
+      authorName: 'Орг',
+      title: title ?? 'Встреча',
+      description: clearDescription ? null : description,
+      startAt: startAt ?? DateTime(2026, 7, 1, 15),
+      endAt: clearEndAt ? null : endAt,
+      isAllDay: isAllDay ?? false,
+      place: clearPlace ? null : place,
+      createdAt: DateTime(2026, 6, 1),
+      editedAt: DateTime(2026, 6, 2),
+    );
+  }
+
+  @override
+  Future<void> deleteGathering(String gatheringId) async {
+    deleteCalls++;
+  }
 
   /// When set, setRsvp returns this pending future instead of resolving —
   /// lets a test observe the optimistic frame, then complete it with an
@@ -219,5 +256,56 @@ void main() {
     // пузыря-инициала (буквы из userId, т.к. в rsvps нет имени/фото).
     expect(find.byKey(const Key('gathering-participants')), findsOneWidget);
     expect(find.text('U'), findsNWidgets(2)); // 'u1'/'u2' → инициал 'U'
+  });
+
+  testWidgets('author can edit and delete gathering from card menu',
+      (tester) async {
+    final svc = _FakeGatheringService();
+    var deletedCalls = 0;
+    Gathering? updatedFromCallback;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: GatheringCard(
+            gathering: _gathering(),
+            serviceOverride: svc,
+            currentUserId: 'org',
+            onDeleted: () => deletedCalls++,
+            onUpdated: (g) => updatedFromCallback = g,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Edit gathering -> pushes CreateGatheringScreen in edit mode
+    await tester.tap(find.byKey(const Key('gathering-menu-g1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Редактировать'));
+    await tester.pumpAndSettle();
+    expect(find.text('Редактировать встречу'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('gathering-title-field')),
+      'Новый пикник',
+    );
+    await tester.tap(find.byKey(const Key('gathering-submit')));
+    await tester.pumpAndSettle();
+
+    expect(svc.updateCalls, 1);
+    expect(updatedFromCallback?.title, 'Новый пикник');
+    expect(find.text('Новый пикник'), findsOneWidget);
+
+    // Delete gathering
+    await tester.tap(find.byKey(const Key('gathering-menu-g1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('safe-delete-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(svc.deleteCalls, 1);
+    expect(deletedCalls, 1);
   });
 }

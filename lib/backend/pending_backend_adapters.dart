@@ -289,6 +289,16 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<FamilyTree> updateTree({
+    required String treeId,
+    String? name,
+    String? description,
+    bool? isPrivate,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
   Future<void> deleteRelative(String treeId, String personId) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
@@ -912,6 +922,19 @@ class PendingBackendPostService implements PostServiceInterface {
   }
 
   @override
+  Future<Post?> getPost(String postId) async {
+    return null;
+  }
+
+  @override
+  Future<Post> updatePost({
+    required String postId,
+    required String content,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
   Future<void> deletePost(String postId) {
     throw UnsupportedError(_pendingProviderMessage('post'));
   }
@@ -957,6 +980,15 @@ class PendingBackendPostService implements PostServiceInterface {
     String postId,
     String content, {
     String? parentCommentId,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
+  Future<Comment> updateComment({
+    required String postId,
+    required String commentId,
+    required String content,
   }) {
     throw UnsupportedError(_pendingProviderMessage('post'));
   }
@@ -1093,7 +1125,7 @@ class PendingBackendGatheringService implements GatheringServiceInterface {
   const PendingBackendGatheringService();
 
   @override
-  Future<List<Gathering>> getGatherings({required String treeId}) async {
+  Future<List<Gathering>> getGatherings({String? treeId}) async {
     return const [];
   }
 
@@ -1111,6 +1143,22 @@ class PendingBackendGatheringService implements GatheringServiceInterface {
     List<String> anchorPersonIds = const [],
     String? circleId,
     List<String>? branchIds,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('gathering'));
+  }
+
+  @override
+  Future<Gathering> updateGathering({
+    required String gatheringId,
+    String? title,
+    String? description,
+    bool clearDescription = false,
+    DateTime? startAt,
+    DateTime? endAt,
+    bool clearEndAt = false,
+    bool? isAllDay,
+    String? place,
+    bool clearPlace = false,
   }) {
     throw UnsupportedError(_pendingProviderMessage('gathering'));
   }
@@ -1157,6 +1205,22 @@ class PendingBackendPollService implements PollServiceInterface {
 
   @override
   Future<Poll> vote(String pollId, List<String> optionIds) {
+    throw UnsupportedError(_pendingProviderMessage('poll'));
+  }
+
+  @override
+  Future<Poll> withdrawVote(String pollId) {
+    throw UnsupportedError(_pendingProviderMessage('poll'));
+  }
+
+  @override
+  Future<Poll> updatePoll({
+    required String pollId,
+    String? question,
+    DateTime? closesAt,
+    bool clearClosesAt = false,
+    bool closeNow = false,
+  }) {
     throw UnsupportedError(_pendingProviderMessage('poll'));
   }
 

@@ -851,6 +851,15 @@ module.exports = {
     // Before the table exists (migration not yet run) this stays a no-op —
     // super()'s array-based sweep already handles that case correctly.
     if (this._deletedPersonsTablesReady) {
+      if (!dryRun && Array.isArray(summary._sweptSemyaIds) && summary._sweptSemyaIds.length > 0) {
+        const semyaIds = summary._sweptSemyaIds;
+        const placeholders = semyaIds.map((_, idx) => `$${idx + 1}`).join(", ");
+        await this._pool.query(
+          `DELETE FROM ${this._qualifiedDeletedPersonsTableName}
+            WHERE semya_id IN (${placeholders})`,
+          semyaIds,
+        );
+      }
       const GRAPH_SWEEP_KEYS = [
         "graphPersons",
         "graphRelations",
@@ -859,6 +868,7 @@ module.exports = {
         "branchPersonViews",
         "deletedPersons",
         "deletedPosts",
+        "semyi",
       ];
       const graphDeletedSoFar = GRAPH_SWEEP_KEYS.reduce(
         (sum, key) => sum + (Number(summary.deleted?.[key]) || 0),

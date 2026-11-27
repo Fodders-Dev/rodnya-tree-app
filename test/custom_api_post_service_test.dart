@@ -268,7 +268,8 @@ void main() {
 
   // ── Шаг 2/3 плана массовой загрузки: пул с ограниченной конкурентностью ──
 
-  test('bulk upload: порядок выбора сохраняется, даже если файлы финишируют '
+  test(
+      'bulk upload: порядок выбора сохраняется, даже если файлы финишируют '
       'вразнобой', () async {
     // Мелкие фото реально финишируют раньше крупных; карусель и альбом рисуют
     // imageUrls как массив, поэтому раскладка обязана идти по индексу выбора.
@@ -313,7 +314,8 @@ void main() {
     );
 
     expect(storage.maxInFlight, lessThanOrEqualTo(4));
-    expect(storage.maxInFlight, greaterThan(1), reason: 'должно быть параллельно');
+    expect(storage.maxInFlight, greaterThan(1),
+        reason: 'должно быть параллельно');
     expect(storage.uploadCount, 20);
   });
 
@@ -342,7 +344,8 @@ void main() {
     expect(events.every((e) => e.total == 5), isTrue);
   });
 
-  test('bulk upload: провал одного файла валит пост целиком и гасит остальные '
+  test(
+      'bulk upload: провал одного файла валит пост целиком и гасит остальные '
       'загрузки', () async {
     // Раньше `if (url != null)` молча выбрасывал непрогрузившееся фото:
     // человек публиковал 30 снимков и получал 27, не узнав об этом.
@@ -372,6 +375,83 @@ void main() {
       lessThan(20),
       reason: 'после ошибки воркеры не должны разбирать оставшиеся файлы',
     );
+  });
+
+  test('getPost, updatePost, updateComment send GET and PATCH requests',
+      () async {
+    final methods = <String>[];
+    final client = MockClient((request) async {
+      methods.add('${request.method} ${request.url.path}');
+      if (request.method == 'GET' && request.url.path == '/v1/posts/post-1') {
+        return _postResponse();
+      }
+      if (request.method == 'GET' && request.url.path == '/v1/posts/missing') {
+        return http.Response('{"message":"Not found"}', 404);
+      }
+      if (request.method == 'PATCH' && request.url.path == '/v1/posts/post-1') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'id': 'post-1',
+            'treeId': 'tree-1',
+            'authorId': 'author-1',
+            'authorName': 'Анна',
+            'content': body['content'],
+            'createdAt': '2026-04-13T10:00:00.000Z',
+            'editedAt': '2026-04-13T11:00:00.000Z',
+            'likedBy': const [],
+            'commentCount': 0,
+            'imageUrls': const [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.method == 'PATCH' &&
+          request.url.path == '/v1/posts/post-1/comments/c-1') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'id': 'c-1',
+            'postId': 'post-1',
+            'authorId': 'author-1',
+            'authorName': 'Анна',
+            'content': body['content'],
+            'createdAt': '2026-04-13T10:00:00.000Z',
+            'editedAt': '2026-04-13T11:00:00.000Z',
+            'likedBy': const [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 400);
+    });
+
+    final service = await _buildService(client, _FakeStorageService());
+    final found = await service.getPost('post-1');
+    expect(found?.id, 'post-1');
+    final missing = await service.getPost('missing');
+    expect(missing, isNull);
+
+    final updatedPost =
+        await service.updatePost(postId: 'post-1', content: 'Новый текст');
+    expect(updatedPost.content, 'Новый текст');
+    expect(updatedPost.isEdited, isTrue);
+
+    final updatedComment = await service.updateComment(
+      postId: 'post-1',
+      commentId: 'c-1',
+      content: 'Правка коммента',
+    );
+    expect(updatedComment.content, 'Правка коммента');
+    expect(updatedComment.isEdited, isTrue);
+    expect(methods, [
+      'GET /v1/posts/post-1',
+      'GET /v1/posts/missing',
+      'PATCH /v1/posts/post-1',
+      'PATCH /v1/posts/post-1/comments/c-1',
+    ]);
   });
 }
 
@@ -412,13 +492,15 @@ Future<CustomApiPostService> _buildService(
   final authService = await CustomApiAuthService.create(
     httpClient: client,
     preferences: prefs,
-    runtimeConfig: const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
+    runtimeConfig:
+        const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
     invitationService: InvitationService(),
   );
   return CustomApiPostService(
     authService: authService,
     storageService: storage,
-    runtimeConfig: const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
+    runtimeConfig:
+        const BackendRuntimeConfig(apiBaseUrl: 'https://api.example.ru'),
     httpClient: client,
   );
 }

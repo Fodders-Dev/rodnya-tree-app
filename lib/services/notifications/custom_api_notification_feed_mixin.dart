@@ -537,7 +537,13 @@ mixin _CustomApiNotificationFeedMixin on _CustomApiNotificationBase {
         type == 'post_reaction' ||
         type == 'comment_reaction' ||
         type == 'comment_reply') {
-      router.go('/');
+      final postId =
+          rootPayload['postId']?.toString() ?? data['postId']?.toString();
+      if (postId != null && postId.isNotEmpty) {
+        _navigateOverHome(router, '/post/$postId');
+      } else {
+        router.go('/');
+      }
       return;
     }
 

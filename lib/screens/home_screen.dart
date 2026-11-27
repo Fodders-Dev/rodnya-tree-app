@@ -774,20 +774,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   /// Phase E2c: best-effort gathering load for the mixed feed. Gatherings
-  /// are tree-scoped (no audience-aggregate endpoint), so they load for
-  /// the selected branch or the current tree. A failure simply hides them
-  /// — the post feed degrades independently and is never affected.
+  /// support audience mode (no treeId = across all accessible circles)
+  /// just like posts and polls. A failure simply hides them — the post
+  /// feed degrades independently and is never affected.
   Future<void> _loadGatherings({String? branchId}) async {
     final service = _gatheringService;
-    final treeId = branchId ?? _currentTreeId;
-    if (service == null || treeId == null) {
+    if (service == null) {
       if (_gatherings.isNotEmpty && mounted) {
         setState(() => _gatherings = const []);
       }
       return;
     }
     try {
-      final gatherings = await service.getGatherings(treeId: treeId);
+      final gatherings = await service.getGatherings(treeId: branchId);
       // Same race guard the post load uses — discard if the user switched
       // branch while this was in flight.
       if (!mounted || _selectedFeedBranchId != branchId) return;
@@ -795,6 +794,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (_) {
       // Best-effort — leave whatever we had; never surface an error.
     }
+  }
+
+  bool _canModerateDeleteForTree(String treeId) {
+    final currentUserId = _authService.currentUserId;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return false;
+    }
+    final trees = _treeProviderInstance?.availableTrees ?? const <FamilyTree>[];
+    for (final tree in trees) {
+      if (tree.id == treeId) {
+        return tree.creatorId == currentUserId;
+      }
+    }
+    return false;
+  }
+
+  void _replacePostInFeed(Post updated) {
+    if (!mounted) return;
+    setState(() {
+      final idx = _posts.indexWhere((p) => p.id == updated.id);
+      if (idx >= 0) {
+        _posts = List<Post>.from(_posts)..[idx] = updated;
+      }
+    });
+  }
+
+  void _replaceGatheringInFeed(Gathering updated) {
+    if (!mounted) return;
+    setState(() {
+      final idx = _gatherings.indexWhere((g) => g.id == updated.id);
+      if (idx >= 0) {
+        _gatherings = List<Gathering>.from(_gatherings)..[idx] = updated;
+      }
+    });
+  }
+
+  void _replacePollInFeed(Poll updated) {
+    if (!mounted) return;
+    setState(() {
+      final idx = _polls.indexWhere((p) => p.id == updated.id);
+      if (idx >= 0) {
+        _polls = List<Poll>.from(_polls)..[idx] = updated;
+      }
+    });
   }
 
   /// Phase E5d: best-effort poll load. Polls support audience mode (the

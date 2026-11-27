@@ -168,8 +168,7 @@ class _FakeGatheringService implements GatheringServiceInterface {
   final List<Gathering> gatherings;
 
   @override
-  Future<List<Gathering>> getGatherings({required String treeId}) async =>
-      gatherings;
+  Future<List<Gathering>> getGatherings({String? treeId}) async => gatherings;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

@@ -13,9 +13,12 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/gathering_service_interface.dart';
 import '../models/gathering.dart';
 import '../models/post.dart' show TreeContentScopeType;
+import '../screens/create_gathering_screen.dart';
 import '../theme/app_theme.dart';
+import '../utils/user_facing_error.dart';
 import 'feed_media_gallery.dart';
 import 'media_lightbox.dart';
+import 'safe_delete_confirmation_dialog.dart';
 
 class GatheringCard extends StatefulWidget {
   const GatheringCard({
@@ -23,6 +26,9 @@ class GatheringCard extends StatefulWidget {
     required this.gathering,
     this.serviceOverride,
     this.currentUserId,
+    this.onDeleted,
+    this.onUpdated,
+    this.canModerateDelete = false,
   });
 
   final Gathering gathering;
@@ -30,6 +36,9 @@ class GatheringCard extends StatefulWidget {
   /// Test seams — production resolves these via GetIt.
   final GatheringServiceInterface? serviceOverride;
   final String? currentUserId;
+  final VoidCallback? onDeleted;
+  final ValueChanged<Gathering>? onUpdated;
+  final bool canModerateDelete;
 
   @override
   State<GatheringCard> createState() => _GatheringCardState();
@@ -39,6 +48,15 @@ class _GatheringCardState extends State<GatheringCard> {
   late Gathering _gathering = widget.gathering;
   late int _myHeadcount;
   bool _submitting = false;
+
+  @override
+  void didUpdateWidget(covariant GatheringCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.gathering != widget.gathering) {
+      _gathering = widget.gathering;
+      _myHeadcount = _gathering.headcountFor(_currentUserId);
+    }
+  }
 
   GatheringServiceInterface? get _service =>
       widget.serviceOverride ??
@@ -116,6 +134,52 @@ class _GatheringCardState extends State<GatheringCard> {
     _respond('yes'); // persist the new headcount
   }
 
+  Future<void> _editGathering() async {
+    final updated = await Navigator.of(context).push<Gathering>(
+      MaterialPageRoute<Gathering>(
+        builder: (_) => CreateGatheringScreen(
+          initialGathering: _gathering,
+          serviceOverride: widget.serviceOverride,
+        ),
+      ),
+    );
+    if (updated != null && mounted) {
+      setState(() {
+        _gathering = updated;
+        _myHeadcount = updated.headcountFor(_currentUserId);
+      });
+      widget.onUpdated?.call(updated);
+    }
+  }
+
+  Future<void> _deleteGathering() async {
+    final service = _service;
+    if (service == null) return;
+    final confirmed = await showSafeDeleteConfirmation(
+      context,
+      title: 'Удалить встречу?',
+      body: 'Встреча исчезнет у всех участников семьи.',
+    );
+    if (!confirmed || !mounted) return;
+    try {
+      await service.deleteGathering(_gathering.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Встреча удалена')),
+      );
+      widget.onDeleted?.call();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(e, fallback: 'Не удалось удалить встречу.'),
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -166,6 +230,9 @@ class _GatheringCardState extends State<GatheringCard> {
   // (чанк 20): Flexible + «·»-разделитель гарантируют одну строку даже
   // на длинных лейблах / крупном системном шрифте.
   Widget _buildHeader(ThemeData theme, RodnyaDesignTokens tokens) {
+    final isAuthor =
+        _currentUserId != null && _currentUserId == _gathering.authorId;
+    final canManage = isAuthor || widget.canModerateDelete;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -224,6 +291,53 @@ class _GatheringCardState extends State<GatheringCard> {
         ),
         SizedBox(width: tokens.space8),
         _buildTypeBadge(theme, tokens),
+        if (canManage) ...[
+          const SizedBox(width: 2),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: PopupMenuButton<String>(
+              key: Key('gathering-menu-${_gathering.id}'),
+              padding: EdgeInsets.zero,
+              iconSize: 18,
+              icon: Icon(
+                Icons.more_horiz_rounded,
+                color: tokens.inkMuted,
+                size: 18,
+              ),
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _editGathering();
+                } else if (value == 'delete') {
+                  _deleteGathering();
+                }
+              },
+              itemBuilder: (_) => [
+                if (isAuthor)
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit_outlined, size: 20),
+                        SizedBox(width: 8),
+                        Text('Редактировать'),
+                      ],
+                    ),
+                  ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      SizedBox(width: 8),
+                      Text('Удалить', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }

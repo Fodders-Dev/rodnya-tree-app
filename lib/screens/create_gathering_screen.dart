@@ -23,6 +23,7 @@ import '../backend/interfaces/gathering_service_interface.dart';
 import '../models/circle.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
+import '../models/gathering.dart';
 import '../models/post.dart' show TreeContentScopeType;
 import '../providers/tree_provider.dart';
 import '../theme/app_theme.dart';
@@ -38,6 +39,7 @@ class CreateGatheringScreen extends StatefulWidget {
     this.circleServiceOverride,
     this.treeId,
     this.initialStartAt,
+    this.initialGathering,
   });
 
   /// Test seams — production resolves these via GetIt / TreeProvider.
@@ -46,6 +48,7 @@ class CreateGatheringScreen extends StatefulWidget {
   final CircleServiceInterface? circleServiceOverride;
   final String? treeId;
   final DateTime? initialStartAt;
+  final Gathering? initialGathering;
 
   @override
   State<CreateGatheringScreen> createState() => _CreateGatheringScreenState();
@@ -93,9 +96,22 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
           ? GetIt.I<CircleServiceInterface>()
           : null);
 
+  bool get _isEditMode => widget.initialGathering != null;
+
   @override
   void initState() {
     super.initState();
+    final editing = widget.initialGathering;
+    if (editing != null) {
+      _titleController.text = editing.title;
+      _placeController.text = editing.place ?? '';
+      _descriptionController.text = editing.description ?? '';
+      _startAt = editing.startAt;
+      _endAt = editing.endAt;
+      _isAllDay = editing.isAllDay;
+      _treeId = editing.treeId;
+      return;
+    }
     _startAt = widget.initialStartAt;
     _treeId = widget.treeId;
     if (_treeId == null) {
@@ -195,7 +211,8 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
     );
     if (date == null || !mounted) return;
     setState(() {
-      _startAt = DateTime(date.year, date.month, date.day, base.hour, base.minute);
+      _startAt =
+          DateTime(date.year, date.month, date.day, base.hour, base.minute);
     });
   }
 
@@ -222,7 +239,8 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
     );
     if (date == null || !mounted) return;
     setState(() {
-      _endAt = DateTime(date.year, date.month, date.day, base.hour, base.minute);
+      _endAt =
+          DateTime(date.year, date.month, date.day, base.hour, base.minute);
     });
   }
 
@@ -239,7 +257,8 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
     });
   }
 
-  String _formatDate(DateTime value) => DateFormat('d MMMM y', 'ru').format(value);
+  String _formatDate(DateTime value) =>
+      DateFormat('d MMMM y', 'ru').format(value);
   String _formatTime(DateTime value) => DateFormat('HH:mm', 'ru').format(value);
 
   Future<void> _pickImages() async {
@@ -288,11 +307,32 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
 
     setState(() => _isLoading = true);
     try {
+      final description = _descriptionController.text.trim();
+      final place = _placeController.text.trim();
+      final editing = widget.initialGathering;
+      if (editing != null) {
+        final updated = await _gatheringService.updateGathering(
+          gatheringId: editing.id,
+          title: title,
+          description: description,
+          clearDescription: description.isEmpty,
+          startAt: _startAt!,
+          endAt: _endAt,
+          clearEndAt: _endAt == null,
+          isAllDay: _isAllDay,
+          place: place,
+          clearPlace: place.isEmpty,
+        );
+        if (mounted) {
+          _showMessage('Встреча обновлена');
+          Navigator.of(context).pop(updated);
+        }
+        return;
+      }
+
       final branchIdsForRequest = _additionalBranchIds.isEmpty
           ? null
           : <String>{treeId, ..._additionalBranchIds}.toList();
-      final description = _descriptionController.text.trim();
-      final place = _placeController.text.trim();
       await _gatheringService.createGathering(
         treeId: treeId,
         title: title,
@@ -314,7 +354,11 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
     } catch (_) {
       if (mounted) {
         setState(() => _isLoading = false);
-        _showMessage('Не удалось создать встречу. Попробуйте ещё раз.');
+        _showMessage(
+          _isEditMode
+              ? 'Не удалось обновить встречу. Попробуйте ещё раз.'
+              : 'Не удалось создать встречу. Попробуйте ещё раз.',
+        );
       }
     }
   }
@@ -339,7 +383,9 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
     // CTA 52dp внизу формы, как в CompleteProfileScreen (чанк 21) /
     // AuthScreen (чанк 18).
     return Scaffold(
-      appBar: AppBar(title: const Text('Новая встреча')),
+      appBar: AppBar(
+        title: Text(_isEditMode ? 'Редактировать встречу' : 'Новая встреча'),
+      ),
       body: SafeArea(
         child: ListView(
           padding: EdgeInsets.fromLTRB(
@@ -388,14 +434,18 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
               minLines: 2,
               maxLines: 8,
             ),
-            const SizedBox(height: 10),
-            _buildMediaSection(theme, tokens),
-            const SizedBox(height: 8),
-            _buildAudienceSection(theme, tokens),
+            if (!_isEditMode) ...[
+              const SizedBox(height: 10),
+              _buildMediaSection(theme, tokens),
+              const SizedBox(height: 8),
+              _buildAudienceSection(theme, tokens),
+            ],
             const SizedBox(height: 8),
             PillButton(
               key: const Key('gathering-submit'),
-              label: _isLoading ? 'Создаём…' : 'Создать встречу',
+              label: _isLoading
+                  ? (_isEditMode ? 'Сохраняем…' : 'Создаём…')
+                  : (_isEditMode ? 'Сохранить' : 'Создать встречу'),
               icon: Icons.event_available_outlined,
               expanded: true,
               height: 52,
@@ -554,7 +604,8 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
       children: [
         Row(
           children: [
-            const Expanded(child: _SectionHeader(title: 'Фото (необязательно)')),
+            const Expanded(
+                child: _SectionHeader(title: 'Фото (необязательно)')),
             TextButton.icon(
               key: const Key('gathering-add-photo'),
               onPressed: _images.length >= _maxImages ? null : _pickImages,
@@ -804,7 +855,8 @@ class _FormField extends StatelessWidget {
       ),
       decoration: InputDecoration(
         hintText: hint,
-        prefixIcon: icon == null ? null : Icon(icon, size: 18, color: tokens.accent),
+        prefixIcon:
+            icon == null ? null : Icon(icon, size: 18, color: tokens.accent),
         hintStyle: AppTheme.sans(
           color: tokens.inkMuted,
           fontSize: AppTheme.formInputFontSize,

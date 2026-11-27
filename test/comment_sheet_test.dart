@@ -53,7 +53,8 @@ void main() {
         reactions: const <ReactionSummary>[],
       );
 
-  testWidgets('renders top-level comments and indented replies', (tester) async {
+  testWidgets('renders top-level comments and indented replies',
+      (tester) async {
     getIt.registerSingleton<PostServiceInterface>(
       _FakePostService(
         comments: [
@@ -239,6 +240,53 @@ void main() {
     expect(fake.lastAddedContent, 'Просто');
     expect(fake.lastAddedParentId, isNull);
   });
+
+  testWidgets('author can edit and delete comment', (tester) async {
+    final fake = _FakePostService(
+      comments: [
+        Comment(
+          id: 'c-own',
+          postId: 'p1',
+          authorId: 'self',
+          authorName: 'Я',
+          content: 'Исходный коммент',
+          createdAt: DateTime(2026, 5, 1, 10),
+        ),
+      ],
+    );
+    getIt.registerSingleton<PostServiceInterface>(fake);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CommentSheet(post: buildPost())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('comment-menu-c-own')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Изменить'));
+    await tester.pumpAndSettle();
+    expect(find.text('Редактируем комментарий'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'Исправленный коммент');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pumpAndSettle();
+
+    expect(fake.lastUpdatedCommentContent, 'Исправленный коммент');
+    expect(find.text('Исправленный коммент'), findsOneWidget);
+    expect(find.textContaining('изм.'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('comment-menu-c-own')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('comment-delete-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(fake.deletedCommentIds, ['c-own']);
+    expect(find.text('Исправленный коммент'), findsNothing);
+  });
 }
 
 class _FakeAuthService implements AuthServiceInterface {
@@ -273,9 +321,33 @@ class _FakePostService implements PostServiceInterface {
   final List<Comment> comments;
   String? lastAddedContent;
   String? lastAddedParentId;
+  String? lastUpdatedCommentContent;
+  final List<String> deletedCommentIds = <String>[];
 
   @override
   Future<List<Comment>> getComments(String postId) async => comments;
+
+  @override
+  Future<Comment> updateComment({
+    required String postId,
+    required String commentId,
+    required String content,
+  }) async {
+    lastUpdatedCommentContent = content;
+    final idx = comments.indexWhere((c) => c.id == commentId);
+    final updated = comments[idx].copyWith(
+      content: content,
+      editedAt: DateTime(2026, 5, 1, 13),
+    );
+    comments[idx] = updated;
+    return updated;
+  }
+
+  @override
+  Future<void> deleteComment(String postId, String commentId) async {
+    deletedCommentIds.add(commentId);
+    comments.removeWhere((c) => c.id == commentId);
+  }
 
   @override
   Future<Comment> addComment(

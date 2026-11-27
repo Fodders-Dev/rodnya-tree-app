@@ -306,6 +306,10 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
           // is last active owner — backstops backend's
           // LAST_OWNER_REMOVE_FORBIDDEN invariant.
           _buildSelfLeaveTile(context, controller, details),
+          if (details.callerRole == SemyaRole.owner &&
+              controller.resolveServiceForAction()
+                  is SemyaManageCapableFamilyTreeService)
+            _buildDeleteSemyaTile(context, controller, details),
           const SizedBox(height: 24),
         ],
       ),
@@ -472,6 +476,93 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
         SnackBar(content: Text('Вы покинули семью ${details.semya.name}')),
       );
       Navigator.of(context).maybePop();
+    }
+  }
+
+  Widget _buildDeleteSemyaTile(
+    BuildContext context,
+    SemyaDetailsController controller,
+    SemyaDetails details,
+  ) {
+    final theme = Theme.of(context);
+    return ListTile(
+      key: const Key('semya-details-delete'),
+      leading: Icon(
+        Icons.delete_forever_outlined,
+        color: theme.colorScheme.error,
+      ),
+      title: Text(
+        'Удалить семью',
+        style: TextStyle(
+          color: theme.colorScheme.error,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      subtitle: const Text(
+        'Доступ для всех участников закроется сразу. Восстановить можно в течение 90 дней.',
+      ),
+      onTap: () => _confirmAndDeleteSemya(context, controller, details),
+    );
+  }
+
+  Future<void> _confirmAndDeleteSemya(
+    BuildContext context,
+    SemyaDetailsController controller,
+    SemyaDetails details,
+  ) async {
+    final service = controller.resolveServiceForAction();
+    if (service is! SemyaManageCapableFamilyTreeService) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text('Удалить семью «${details.semya.name}»?'),
+        content: const Text(
+          'Доступ для всех участников закроется сразу. Восстановить семью можно будет в течение 90 дней.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('semya-delete-cancel'),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            key: const Key('semya-delete-confirm'),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Удалить семью'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await (service as SemyaManageCapableFamilyTreeService)
+          .deleteSemya(details.semya.id);
+      if (!context.mounted) return;
+      if (GetIt.I.isRegistered<TreeProvider>()) {
+        unawaited(GetIt.I<TreeProvider>().loadInitialTree());
+      } else {
+        try {
+          unawaited(
+            Provider.of<TreeProvider>(context, listen: false).loadInitialTree(),
+          );
+        } catch (_) {}
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Семья «${details.semya.name}» удалена')),
+      );
+      Navigator.of(context).maybePop();
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e is SemyaError ? e.message : 'Не удалось удалить семью',
+          ),
+        ),
+      );
     }
   }
 }

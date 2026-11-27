@@ -255,6 +255,37 @@ class CustomApiPostService implements PostServiceInterface {
   }
 
   @override
+  Future<Post?> getPost(String postId) async {
+    final trimmedId = postId.trim();
+    if (trimmedId.isEmpty) return null;
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/posts/$trimmedId',
+      );
+      return Post.fromJson(response);
+    } on CustomApiPostException catch (error) {
+      if (error.statusCode == 404) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<Post> updatePost({
+    required String postId,
+    required String content,
+  }) async {
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/posts/${postId.trim()}',
+      body: <String, dynamic>{'content': content},
+    );
+    return Post.fromJson(response);
+  }
+
+  @override
   Future<void> deletePost(String postId) async {
     await _requestJson(
       method: 'DELETE',
@@ -350,6 +381,20 @@ class CustomApiPostService implements PostServiceInterface {
       body: body,
     );
 
+    return Comment.fromJson(response);
+  }
+
+  @override
+  Future<Comment> updateComment({
+    required String postId,
+    required String commentId,
+    required String content,
+  }) async {
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/posts/${postId.trim()}/comments/${commentId.trim()}',
+      body: <String, dynamic>{'content': content},
+    );
     return Comment.fromJson(response);
   }
 
@@ -467,6 +512,14 @@ class CustomApiPostService implements PostServiceInterface {
         case 'POST':
           return await _httpClient
               .post(
+                uri,
+                headers: headers,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(_requestTimeout);
+        case 'PATCH':
+          return await _httpClient
+              .patch(
                 uri,
                 headers: headers,
                 body: body == null ? null : jsonEncode(body),

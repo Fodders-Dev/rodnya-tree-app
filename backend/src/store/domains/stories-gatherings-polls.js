@@ -437,6 +437,106 @@ module.exports = {
     return gathering;
   },
 
+  async updateGathering({
+    gatheringId,
+    actorUserId,
+    title,
+    description,
+    startAt,
+    endAt,
+    isAllDay,
+    place,
+    imageUrls,
+  }) {
+    const db = await this._read();
+    const gathering = db.gatherings.find((entry) => entry.id === gatheringId);
+    if (!gathering) {
+      return null;
+    }
+    if (gathering.authorId !== actorUserId) {
+      return false;
+    }
+
+    let nextTitle = gathering.title;
+    if (title !== undefined) {
+      nextTitle = String(title ?? "").trim();
+      if (!nextTitle) {
+        return "INVALID_GATHERING";
+      }
+    }
+
+    let nextDescription = gathering.description ?? null;
+    if (description !== undefined) {
+      nextDescription = normalizeNullableString(description);
+    }
+
+    let nextStartAt = gathering.startAt;
+    if (startAt !== undefined) {
+      const trimmedStart = String(startAt ?? "").trim();
+      if (!trimmedStart || !Number.isFinite(Date.parse(trimmedStart))) {
+        return "INVALID_GATHERING";
+      }
+      nextStartAt = new Date(Date.parse(trimmedStart)).toISOString();
+    }
+
+    let nextEndAt = gathering.endAt ?? null;
+    if (endAt !== undefined) {
+      if (endAt === null || String(endAt).trim() === "") {
+        nextEndAt = null;
+      } else {
+        const trimmedEnd = String(endAt).trim();
+        if (!Number.isFinite(Date.parse(trimmedEnd))) {
+          return "INVALID_GATHERING";
+        }
+        nextEndAt = new Date(Date.parse(trimmedEnd)).toISOString();
+      }
+    }
+
+    if (
+      nextStartAt &&
+      nextEndAt &&
+      Date.parse(nextEndAt) < Date.parse(nextStartAt)
+    ) {
+      return "INVALID_RANGE";
+    }
+
+    const nextIsAllDay =
+      isAllDay !== undefined ? Boolean(isAllDay) : gathering.isAllDay === true;
+
+    let nextPlace = gathering.place ?? null;
+    if (place !== undefined) {
+      nextPlace = normalizeNullableString(place);
+    }
+
+    let nextImageUrls = Array.isArray(gathering.imageUrls)
+      ? gathering.imageUrls
+      : [];
+    if (imageUrls !== undefined) {
+      nextImageUrls = Array.isArray(imageUrls)
+        ? Array.from(
+            new Set(
+              imageUrls
+                .map((url) => String(url || "").trim())
+                .filter(Boolean),
+            ),
+          )
+        : [];
+    }
+
+    const timestamp = nowIso();
+    gathering.title = nextTitle;
+    gathering.description = nextDescription;
+    gathering.startAt = nextStartAt;
+    gathering.endAt = nextEndAt;
+    gathering.isAllDay = nextIsAllDay;
+    gathering.place = nextPlace;
+    gathering.imageUrls = nextImageUrls;
+    gathering.updatedAt = timestamp;
+    gathering.editedAt = timestamp;
+    await this._write(db);
+    return structuredClone(gathering);
+  },
+
   async deleteGathering(gatheringId, actorUserId) {
     const db = await this._read();
     const index = db.gatherings.findIndex((entry) => entry.id === gatheringId);
@@ -636,6 +736,68 @@ module.exports = {
     return Array.from(audienceUserIds);
   },
 
+  async updatePoll({
+    pollId,
+    actorUserId,
+    question,
+    closesAt,
+    closeNow = false,
+  }) {
+    const db = await this._read();
+    const poll = db.polls.find((entry) => entry.id === pollId);
+    if (!poll) {
+      return null;
+    }
+
+    const isAuthor = poll.authorId === actorUserId;
+    const isOwner = this._isActiveSemyaOwnerForTree(
+      db,
+      poll.treeId,
+      actorUserId,
+    );
+    const wantsFieldEdit =
+      question !== undefined || (closesAt !== undefined && !closeNow);
+    if (wantsFieldEdit) {
+      if (!isAuthor) {
+        return false;
+      }
+    } else if (closeNow === true) {
+      if (!isAuthor && !isOwner) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+
+    if (question !== undefined) {
+      const trimmedQuestion = String(question ?? "").trim();
+      if (!trimmedQuestion) {
+        return "INVALID_POLL";
+      }
+      poll.question = trimmedQuestion;
+    }
+
+    const timestamp = nowIso();
+    if (closeNow === true) {
+      poll.closesAt = timestamp;
+    } else if (closesAt !== undefined) {
+      if (closesAt === null || String(closesAt).trim() === "") {
+        poll.closesAt = null;
+      } else {
+        const parsedMs = Date.parse(String(closesAt).trim());
+        if (!Number.isFinite(parsedMs)) {
+          return "INVALID_POLL";
+        }
+        poll.closesAt = new Date(parsedMs).toISOString();
+      }
+    }
+
+    poll.updatedAt = timestamp;
+    poll.editedAt = timestamp;
+    await this._write(db);
+    return structuredClone(poll);
+  },
+
   async deletePoll(pollId, actorUserId) {
     const db = await this._read();
     const index = db.polls.findIndex((entry) => entry.id === pollId);
@@ -702,5 +864,27 @@ module.exports = {
     poll.updatedAt = timestamp;
     await this._write(db);
     return poll;
+  },
+
+  async withdrawPollResponse({pollId, userId}) {
+    const db = await this._read();
+    const poll = db.polls.find((entry) => entry.id === pollId);
+    if (!poll) {
+      return null;
+    }
+    if (poll.closesAt) {
+      const closesAtMs = Date.parse(poll.closesAt);
+      if (Number.isFinite(closesAtMs) && closesAtMs <= Date.now()) {
+        return "POLL_CLOSED";
+      }
+    }
+    poll.responses = Array.isArray(poll.responses) ? poll.responses : [];
+    const before = poll.responses.length;
+    poll.responses = poll.responses.filter((entry) => entry.userId !== userId);
+    if (poll.responses.length < before) {
+      poll.updatedAt = nowIso();
+      await this._write(db);
+    }
+    return structuredClone(poll);
   },
 };

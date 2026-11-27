@@ -24,14 +24,11 @@ function registerGatheringRoutes(
 ) {
   app.get("/v1/gatherings", requireAuth, async (req, res) => {
     const treeId = String(req.query.treeId || "").trim() || null;
-    if (!treeId) {
-      res.status(400).json({message: "Нужен treeId"});
-      return;
-    }
-
-    const tree = await requireTreeAccess(req, res, treeId);
-    if (!tree) {
-      return;
+    if (treeId) {
+      const tree = await requireTreeAccess(req, res, treeId);
+      if (!tree) {
+        return;
+      }
     }
 
     const accessibleTrees = await store.listUserTrees(req.auth.user.id);
@@ -392,6 +389,167 @@ function registerGatheringRoutes(
       res.json(mapGathering(updated));
     },
   );
+
+  app.patch("/v1/gatherings/:gatheringId", requireAuth, async (req, res) => {
+    const gathering = await store.findGathering(req.params.gatheringId);
+    if (!gathering) {
+      res.status(404).json({message: "Встреча не найдена"});
+      return;
+    }
+
+    const canView = await store.canUserViewScopedItem({
+      item: gathering,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этой встрече"});
+      return;
+    }
+
+    const body = req.body || {};
+    const hasAnyField =
+      body.title !== undefined ||
+      body.description !== undefined ||
+      body.startAt !== undefined ||
+      body.endAt !== undefined ||
+      body.isAllDay !== undefined ||
+      body.place !== undefined ||
+      body.imageUrls !== undefined;
+    if (!hasAnyField) {
+      res.status(400).json({message: "Нечего обновлять"});
+      return;
+    }
+
+    const patch = {
+      gatheringId: req.params.gatheringId,
+      actorUserId: req.auth.user.id,
+    };
+
+    if (body.title !== undefined) {
+      const titleGuard = enforceTextLimit(body.title, {
+        max: 256,
+        allowMultiline: false,
+        fieldName: "title",
+      });
+      if (!titleGuard.ok) {
+        res.status(titleGuard.status).json({message: titleGuard.message});
+        return;
+      }
+      patch.title = titleGuard.value;
+    }
+
+    if (body.description !== undefined) {
+      if (body.description === null) {
+        patch.description = null;
+      } else {
+        const descriptionGuard = enforceTextLimit(body.description, {
+          max: 8192,
+          allowEmpty: true,
+          fieldName: "description",
+        });
+        if (!descriptionGuard.ok) {
+          res
+            .status(descriptionGuard.status)
+            .json({message: descriptionGuard.message});
+          return;
+        }
+        patch.description = descriptionGuard.value || null;
+      }
+    }
+
+    if (body.startAt !== undefined) {
+      const startAtGuard = enforceTextLimit(body.startAt, {
+        max: 64,
+        allowMultiline: false,
+        fieldName: "startAt",
+      });
+      if (!startAtGuard.ok) {
+        res.status(startAtGuard.status).json({message: startAtGuard.message});
+        return;
+      }
+      patch.startAt = startAtGuard.value;
+    }
+
+    if (body.endAt !== undefined) {
+      if (body.endAt === null || body.endAt === "") {
+        patch.endAt = null;
+      } else {
+        const endAtGuard = enforceTextLimit(body.endAt, {
+          max: 64,
+          allowMultiline: false,
+          allowEmpty: true,
+          fieldName: "endAt",
+        });
+        if (!endAtGuard.ok) {
+          res.status(endAtGuard.status).json({message: endAtGuard.message});
+          return;
+        }
+        patch.endAt = endAtGuard.value || null;
+      }
+    }
+
+    if (body.place !== undefined) {
+      if (body.place === null) {
+        patch.place = null;
+      } else {
+        const placeGuard = enforceTextLimit(body.place, {
+          max: 512,
+          allowEmpty: true,
+          fieldName: "place",
+        });
+        if (!placeGuard.ok) {
+          res.status(placeGuard.status).json({message: placeGuard.message});
+          return;
+        }
+        patch.place = placeGuard.value || null;
+      }
+    }
+
+    if (body.isAllDay !== undefined) {
+      patch.isAllDay = body.isAllDay === true;
+    }
+
+    if (body.imageUrls !== undefined) {
+      const imageUrlsGuard = enforceArrayCap(body.imageUrls, {
+        max: 30,
+        itemValidator: (raw) =>
+          enforceTextLimit(raw, {
+            max: 2048,
+            fieldName: "imageUrl",
+          }),
+        fieldName: "imageUrls",
+      });
+      if (!imageUrlsGuard.ok) {
+        res
+          .status(imageUrlsGuard.status)
+          .json({message: imageUrlsGuard.message});
+        return;
+      }
+      patch.imageUrls = imageUrlsGuard.value;
+    }
+
+    const updated = await store.updateGathering(patch);
+    if (updated === null) {
+      res.status(404).json({message: "Встреча не найдена"});
+      return;
+    }
+    if (updated === false) {
+      res.status(403).json({message: "Можно редактировать только свои встречи"});
+      return;
+    }
+    if (updated === "INVALID_GATHERING") {
+      res.status(400).json({message: "Нужны корректные название и дата встречи"});
+      return;
+    }
+    if (updated === "INVALID_RANGE") {
+      res
+        .status(400)
+        .json({message: "Время окончания не может быть раньше начала"});
+      return;
+    }
+
+    res.json(mapGathering(updated));
+  });
 
   app.delete("/v1/gatherings/:gatheringId", requireAuth, async (req, res) => {
     const gathering = await store.findGathering(req.params.gatheringId);

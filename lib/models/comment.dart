@@ -9,8 +9,11 @@ class Comment {
   final String? _authorPhotoUrl;
   final String content;
   final DateTime createdAt;
+  final DateTime? updatedAt;
+  final DateTime? editedAt;
   final int likeCount;
   final List<String> likedBy;
+
   /// Aggregated emoji reactions on this comment. Backwards-compatible
   /// default empty list — older /v1/posts/:id/comments payloads
   /// without a reactions field deserialise as no reactions.
@@ -26,6 +29,7 @@ class Comment {
   String? get authorPhotoUrl => _authorPhotoUrl;
 
   bool get isReply => parentCommentId != null && parentCommentId!.isNotEmpty;
+  bool get isEdited => editedAt != null;
 
   Comment({
     required this.id,
@@ -35,6 +39,8 @@ class Comment {
     String? authorPhotoUrl,
     required this.content,
     required this.createdAt,
+    this.updatedAt,
+    this.editedAt,
     this.likeCount = 0,
     this.likedBy = const [],
     List<ReactionSummary>? reactions,
@@ -54,6 +60,8 @@ class Comment {
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'].toString())
           : DateTime.now(),
+      updatedAt: _parseDate(json['updatedAt']),
+      editedAt: _parseDate(json['editedAt']),
       likeCount: json['likeCount'] ?? 0,
       likedBy: (json['likedBy'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
@@ -73,6 +81,8 @@ class Comment {
       'authorPhotoUrl': authorPhotoUrl,
       'content': content,
       'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt?.toIso8601String(),
+      'editedAt': editedAt?.toIso8601String(),
       'likeCount': likeCount,
       'likedBy': likedBy,
       'reactions': reactions.map((r) => r.toMap()).toList(),
@@ -80,19 +90,36 @@ class Comment {
     };
   }
 
-  Comment copyWithReactions(List<ReactionSummary> next) {
+  Comment copyWith({
+    String? content,
+    DateTime? updatedAt,
+    DateTime? editedAt,
+    List<ReactionSummary>? reactions,
+  }) {
     return Comment(
       id: id,
       postId: postId,
       authorId: authorId,
       authorName: authorName,
       authorPhotoUrl: authorPhotoUrl,
-      content: content,
+      content: content ?? this.content,
       createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      editedAt: editedAt ?? this.editedAt,
       likeCount: likeCount,
       likedBy: likedBy,
-      reactions: next,
+      reactions: reactions ?? this.reactions,
       parentCommentId: parentCommentId,
     );
+  }
+
+  Comment copyWithReactions(List<ReactionSummary> next) =>
+      copyWith(reactions: next);
+
+  static DateTime? _parseDate(dynamic value) {
+    if (value == null) return null;
+    final raw = value.toString();
+    if (raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
   }
 }

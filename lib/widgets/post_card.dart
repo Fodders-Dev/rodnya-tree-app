@@ -23,10 +23,18 @@ import 'rodnya_avatar.dart';
 import 'safe_delete_confirmation_dialog.dart';
 
 class PostCard extends StatefulWidget {
-  const PostCard({super.key, required this.post, this.onDeleted});
+  const PostCard({
+    super.key,
+    required this.post,
+    this.onDeleted,
+    this.onUpdated,
+    this.canModerateDelete = false,
+  });
 
   final Post post;
   final VoidCallback? onDeleted;
+  final ValueChanged<Post>? onUpdated;
+  final bool canModerateDelete;
 
   @override
   State<PostCard> createState() => _PostCardState();
@@ -37,6 +45,7 @@ class _PostCardState extends State<PostCard>
   final String? _currentUserId = GetIt.I<AuthServiceInterface>().currentUserId;
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
 
+  late Post _post;
   late bool _isLikedByCurrentUser;
   late int _likeCount;
   late int _commentCount;
@@ -67,20 +76,18 @@ class _PostCardState extends State<PostCard>
   @override
   void didUpdateWidget(covariant PostCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.post.id != widget.post.id ||
-        oldWidget.post.likeCount != widget.post.likeCount ||
-        oldWidget.post.commentCount != widget.post.commentCount ||
-        oldWidget.post.likedBy != widget.post.likedBy) {
+    if (oldWidget.post != widget.post) {
       _syncLocalState();
     }
   }
 
   void _syncLocalState() {
+    _post = widget.post;
     _isLikedByCurrentUser =
-        _currentUserId != null && widget.post.likedBy.contains(_currentUserId);
-    _likeCount = widget.post.likeCount;
-    _commentCount = widget.post.commentCount;
-    _reactions = List<ReactionSummary>.from(widget.post.reactions);
+        _currentUserId != null && _post.likedBy.contains(_currentUserId);
+    _likeCount = _post.likeCount;
+    _commentCount = _post.commentCount;
+    _reactions = List<ReactionSummary>.from(_post.reactions);
   }
 
   Future<void> _openReactionPicker() async {
@@ -99,7 +106,7 @@ class _PostCardState extends State<PostCard>
     setState(() => _reactions = next);
     try {
       final fromServer = await _postService.togglePostReaction(
-        postId: widget.post.id,
+        postId: _post.id,
         emoji: emoji,
       );
       if (!mounted) return;
@@ -172,11 +179,12 @@ class _PostCardState extends State<PostCard>
     }
 
     try {
-      final updatedPost = await _postService.toggleLike(widget.post.id);
+      final updatedPost = await _postService.toggleLike(_post.id);
       if (!mounted) {
         return;
       }
       setState(() {
+        _post = updatedPost;
         _isLikedByCurrentUser = updatedPost.likedBy.contains(_currentUserId);
         _likeCount = updatedPost.likeCount;
         _commentCount = updatedPost.commentCount;
@@ -199,31 +207,31 @@ class _PostCardState extends State<PostCard>
   }
 
   void _openAuthorProfile() {
-    if (widget.post.authorId.isEmpty) {
+    if (_post.authorId.isEmpty) {
       return;
     }
-    if (_currentUserId == widget.post.authorId) {
+    if (_currentUserId == _post.authorId) {
       context.push('/profile');
       return;
     }
-    context.push('/user/${widget.post.authorId}');
+    context.push('/user/${_post.authorId}');
   }
 
   Future<void> _sharePost() async {
     final buffer = StringBuffer()
-      ..writeln(widget.post.authorName)
+      ..writeln(_post.authorName)
       ..writeln(
         DateFormat('d MMMM yyyy в HH:mm', 'ru')
-            .format(toLocalForDisplay(widget.post.createdAt)),
+            .format(toLocalForDisplay(_post.createdAt)),
       );
 
-    if (widget.post.content.trim().isNotEmpty) {
+    if (_post.content.trim().isNotEmpty) {
       buffer
         ..writeln()
-        ..writeln(widget.post.content.trim());
+        ..writeln(_post.content.trim());
     }
 
-    final imageUrls = widget.post.renderableImageUrls;
+    final imageUrls = _post.renderableImageUrls;
     if (imageUrls.isNotEmpty) {
       buffer
         ..writeln()
@@ -240,7 +248,7 @@ class _PostCardState extends State<PostCard>
   Future<void> _copyPostLink() async {
     final base = BackendRuntimeConfig.current.publicAppUrl
         .replaceAll(RegExp(r'/+$'), '');
-    final link = '$base/post/${widget.post.id}';
+    final link = '$base/post/${_post.id}';
     await Clipboard.setData(ClipboardData(text: link));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -250,26 +258,26 @@ class _PostCardState extends State<PostCard>
   }
 
   String get _audienceLabel {
-    if (widget.post.circleId?.trim().isNotEmpty == true) {
+    if (_post.circleId?.trim().isNotEmpty == true) {
       return 'Круг';
     }
-    if (widget.post.scopeType == TreeContentScopeType.branches) {
+    if (_post.scopeType == TreeContentScopeType.branches) {
       return 'Ветки';
     }
-    if (widget.post.isPublic) {
+    if (_post.isPublic) {
       return 'Публично';
     }
     return 'Семья';
   }
 
   IconData get _audienceIcon {
-    if (widget.post.circleId?.trim().isNotEmpty == true) {
+    if (_post.circleId?.trim().isNotEmpty == true) {
       return Icons.diversity_3_outlined;
     }
-    if (widget.post.scopeType == TreeContentScopeType.branches) {
+    if (_post.scopeType == TreeContentScopeType.branches) {
       return Icons.alt_route;
     }
-    if (widget.post.isPublic) {
+    if (_post.isPublic) {
       return Icons.public;
     }
     // Reference uses a leaf glyph for the family-scope post audience.
@@ -283,11 +291,52 @@ class _PostCardState extends State<PostCard>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => CommentSheet(post: widget.post),
+      builder: (context) => CommentSheet(
+        post: _post,
+        canModerateDelete: widget.canModerateDelete,
+      ),
     );
 
     if (finalCount != null && mounted && finalCount != _commentCount) {
       setState(() => _commentCount = finalCount);
+    }
+  }
+
+  Future<void> _editPost() async {
+    final editedText = await showDialog<String>(
+      context: context,
+      builder: (_) => _PostEditDialog(
+        initialContent: _post.content,
+        allowEmptyContent: _post.imageUrls?.isNotEmpty ?? false,
+      ),
+    );
+    if (editedText == null || editedText == _post.content || !mounted) return;
+
+    try {
+      final updated = await _postService.updatePost(
+        postId: _post.id,
+        content: editedText,
+      );
+      if (!mounted) return;
+      setState(() {
+        _post = updated;
+        _likeCount = updated.likeCount;
+        _commentCount = updated.commentCount;
+        _reactions = List<ReactionSummary>.from(updated.reactions);
+      });
+      widget.onUpdated?.call(updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Публикация обновлена')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(e, fallback: 'Не удалось обновить публикацию.'),
+          ),
+        ),
+      );
     }
   }
 
@@ -312,7 +361,7 @@ class _PostCardState extends State<PostCard>
     if (!confirmed || !mounted) return;
 
     try {
-      await _postService.deletePost(widget.post.id);
+      await _postService.deletePost(_post.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Публикация удалена')),
@@ -334,9 +383,9 @@ class _PostCardState extends State<PostCard>
 
   @override
   Widget build(BuildContext context) {
-    final renderableImageUrls = widget.post.renderableImageUrls;
-    final hasInvalidOnlyImages = renderableImageUrls.isEmpty &&
-        (widget.post.imageUrls?.isNotEmpty ?? false);
+    final renderableImageUrls = _post.renderableImageUrls;
+    final hasInvalidOnlyImages =
+        renderableImageUrls.isEmpty && (_post.imageUrls?.isNotEmpty ?? false);
     final theme = Theme.of(context);
     final tokens = _tokensFor(theme);
 
@@ -360,7 +409,7 @@ class _PostCardState extends State<PostCard>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildPostHeader(),
-            if (widget.post.content.isNotEmpty)
+            if (_post.content.isNotEmpty)
               Padding(
                 // Плотность (чанк 20): было space16/space12 (16/0/16/12) с
                 // bodyMedium (14sp, height 1.45) — теперь 16sp/1.3 (спека).
@@ -370,7 +419,7 @@ class _PostCardState extends State<PostCard>
                 padding: EdgeInsets.fromLTRB(
                     tokens.space12, 0, tokens.space12, tokens.space4),
                 child: Text(
-                  widget.post.content,
+                  _post.content,
                   style: AppTheme.sans(
                     color: tokens.ink,
                     fontSize: 16,
@@ -403,10 +452,13 @@ class _PostCardState extends State<PostCard>
   Widget _buildPostHeader() {
     final theme = Theme.of(context);
     final tokens = _tokensFor(theme);
-    final authorPhotoUrl = widget.post.renderableAuthorPhotoUrl;
-    final timeText = DateFormat('d MMM • HH:mm', 'ru').format(
-      toLocalForDisplay(widget.post.createdAt),
+    final authorPhotoUrl = _post.renderableAuthorPhotoUrl;
+    final formattedTime = DateFormat('d MMM • HH:mm', 'ru').format(
+      toLocalForDisplay(_post.createdAt),
     );
+    final timeText =
+        _post.isEdited ? '$formattedTime · изменено' : formattedTime;
+    final isAuthor = _currentUserId == _post.authorId;
 
     return Padding(
       // Плотность (чанк 20): было space16/space12/space12/space12 (аватар
@@ -431,7 +483,7 @@ class _PostCardState extends State<PostCard>
             onTap: _openAuthorProfile,
             child: RodnyaAvatar(
               photoUrl: authorPhotoUrl,
-              name: widget.post.authorName,
+              name: _post.authorName,
               size: 40,
             ),
           ),
@@ -454,7 +506,7 @@ class _PostCardState extends State<PostCard>
                         height: 1.15,
                       ),
                       children: [
-                        TextSpan(text: widget.post.authorName),
+                        TextSpan(text: _post.authorName),
                       ],
                     ),
                   ),
@@ -493,7 +545,7 @@ class _PostCardState extends State<PostCard>
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (widget.post.scopeType ==
+                        if (_post.scopeType ==
                             TreeContentScopeType.branches) ...[
                           const SizedBox(width: 6),
                           const Text('·'),
@@ -503,7 +555,7 @@ class _PostCardState extends State<PostCard>
                           const SizedBox(width: 4),
                           Flexible(
                             child: Text(
-                              'Ветки: ${widget.post.anchorPersonIds.length}',
+                              'Ветки: ${_post.anchorPersonIds.length}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -530,6 +582,8 @@ class _PostCardState extends State<PostCard>
             onSelected: (value) {
               if (value == 'copy-link') {
                 _copyPostLink();
+              } else if (value == 'edit') {
+                _editPost();
               } else if (value == 'delete') {
                 _deletePost();
               }
@@ -545,7 +599,18 @@ class _PostCardState extends State<PostCard>
                   ],
                 ),
               ),
-              if (_currentUserId == widget.post.authorId)
+              if (isAuthor)
+                const PopupMenuItem(
+                  value: 'edit',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_outlined, size: 20),
+                      SizedBox(width: 8),
+                      Text('Редактировать'),
+                    ],
+                  ),
+                ),
+              if (isAuthor || widget.canModerateDelete)
                 const PopupMenuItem(
                   value: 'delete',
                   child: Row(
@@ -603,7 +668,7 @@ class _PostCardState extends State<PostCard>
     return FeedMediaGallery(
       imageUrls: images,
       onTap: openLightbox,
-      caption: widget.post.content,
+      caption: _post.content,
       captionPrefix: 'Фото к посту',
       // Плотность (чанк 20): во всю ширину контентной области карточки —
       // без бокового инсета (дефолт галереи даёт space12 слева/справа).
@@ -772,6 +837,75 @@ class _PostActionButton extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PostEditDialog extends StatefulWidget {
+  const _PostEditDialog({
+    required this.initialContent,
+    required this.allowEmptyContent,
+  });
+
+  final String initialContent;
+  final bool allowEmptyContent;
+
+  @override
+  State<_PostEditDialog> createState() => _PostEditDialogState();
+}
+
+class _PostEditDialogState extends State<_PostEditDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialContent);
+  String? _validationError;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Редактировать пост'),
+      content: TextField(
+        key: const Key('post-edit-content-field'),
+        controller: _controller,
+        minLines: 3,
+        maxLines: 8,
+        autofocus: true,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: InputDecoration(
+          hintText: 'Текст публикации',
+          errorText: _validationError,
+        ),
+        onChanged: (_) {
+          if (_validationError != null) {
+            setState(() => _validationError = null);
+          }
+        },
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('post-edit-save-button'),
+          onPressed: () {
+            final trimmed = _controller.text.trim();
+            if (trimmed.isEmpty && !widget.allowEmptyContent) {
+              setState(
+                () => _validationError = 'Пост не должен быть пустым',
+              );
+              return;
+            }
+            Navigator.of(context).pop(trimmed);
+          },
+          child: const Text('Сохранить'),
+        ),
+      ],
     );
   }
 }

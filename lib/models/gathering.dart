@@ -28,9 +28,12 @@ class Gathering {
   final String? circleId;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  final DateTime? editedAt;
 
   /// Opaque RSVP rows from the server — modelled in Phase E3. Empty in E1.
   final List<Map<String, dynamic>> rsvps;
+
+  bool get isEdited => editedAt != null;
 
   String? get authorPhotoUrl => _authorPhotoUrl;
   String? get renderableAuthorPhotoUrl =>
@@ -80,8 +83,19 @@ class Gathering {
     return value > 0 ? value : 0;
   }
 
-  /// Copy with a replaced RSVP list — used for optimistic UI updates.
+  /// Copy with replaced fields — used for optimistic UI updates & edits.
   Gathering copyWith({
+    String? title,
+    String? description,
+    bool clearDescription = false,
+    DateTime? startAt,
+    DateTime? endAt,
+    bool clearEndAt = false,
+    bool? isAllDay,
+    String? place,
+    bool clearPlace = false,
+    DateTime? updatedAt,
+    DateTime? editedAt,
     List<Map<String, dynamic>>? rsvps,
     List<String>? imageUrls,
   }) {
@@ -92,18 +106,19 @@ class Gathering {
       authorId: authorId,
       authorName: authorName,
       authorPhotoUrl: authorPhotoUrl,
-      title: title,
-      description: description,
-      startAt: startAt,
-      endAt: endAt,
-      isAllDay: isAllDay,
-      place: place,
+      title: title ?? this.title,
+      description: clearDescription ? null : (description ?? this.description),
+      startAt: startAt ?? this.startAt,
+      endAt: clearEndAt ? null : (endAt ?? this.endAt),
+      isAllDay: isAllDay ?? this.isAllDay,
+      place: clearPlace ? null : (place ?? this.place),
       imageUrls: imageUrls ?? this.imageUrls,
       scopeType: scopeType,
       anchorPersonIds: anchorPersonIds,
       circleId: circleId,
       createdAt: createdAt,
-      updatedAt: updatedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      editedAt: editedAt ?? this.editedAt,
       rsvps: rsvps ?? this.rsvps,
     );
   }
@@ -126,6 +141,7 @@ class Gathering {
     this.circleId,
     required this.createdAt,
     this.updatedAt,
+    this.editedAt,
     List<Map<String, dynamic>>? rsvps,
     List<String>? branchIds,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
@@ -171,6 +187,7 @@ class Gathering {
       circleId: json['circleId']?.toString(),
       createdAt: _parseDate(json['createdAt']) ?? DateTime.now(),
       updatedAt: _parseDate(json['updatedAt']),
+      editedAt: _parseDate(json['editedAt']),
       rsvps: rawRsvps,
     );
   }
@@ -195,6 +212,7 @@ class Gathering {
       'circleId': circleId,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
+      'editedAt': editedAt?.toIso8601String(),
       'rsvps': rsvps,
     };
   }

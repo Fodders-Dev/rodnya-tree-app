@@ -7,8 +7,9 @@ import '../../models/post.dart' show TreeContentScopeType;
 /// service's audience surface (scopeType / circleId / anchorPersonIds /
 /// branchIds). RSVP endpoints arrive in E3.
 abstract class GatheringServiceInterface {
-  /// Gatherings for a tree the viewer can see, soonest-first.
-  Future<List<Gathering>> getGatherings({required String treeId});
+  /// Gatherings the viewer can see, soonest-first. Optional [treeId]
+  /// scopes to a single tree/branch; null/empty loads all accessible.
+  Future<List<Gathering>> getGatherings({String? treeId});
 
   /// Create a gathering. [title] and [startAt] are required. [images] are
   /// uploaded to the media pipeline and stored as the gathering's photos.
@@ -27,7 +28,21 @@ abstract class GatheringServiceInterface {
     List<String>? branchIds,
   });
 
-  /// Delete a gathering (server enforces author-only).
+  /// Update gathering fields (server enforces author-only).
+  Future<Gathering> updateGathering({
+    required String gatheringId,
+    String? title,
+    String? description,
+    bool clearDescription = false,
+    DateTime? startAt,
+    DateTime? endAt,
+    bool clearEndAt = false,
+    bool? isAllDay,
+    String? place,
+    bool clearPlace = false,
+  });
+
+  /// Delete a gathering (server enforces author or active Semya owner).
   Future<void> deleteGathering(String gatheringId);
 
   /// Set the current user's RSVP. [status] ∈ {'yes','maybe','no'};

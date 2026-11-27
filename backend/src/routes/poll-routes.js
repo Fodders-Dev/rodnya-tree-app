@@ -361,6 +361,120 @@ function registerPollRoutes(
     res.json(mapPoll(updated));
   });
 
+  app.patch("/v1/polls/:pollId", requireAuth, async (req, res) => {
+    const poll = await store.findPoll(req.params.pollId);
+    if (!poll) {
+      res.status(404).json({message: "Опрос не найден"});
+      return;
+    }
+
+    const canView = await store.canUserViewScopedItem({
+      item: poll,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этому опросу"});
+      return;
+    }
+
+    const body = req.body || {};
+    const closeNow = body.closeNow === true;
+    const hasAnyField =
+      body.question !== undefined || body.closesAt !== undefined || closeNow;
+    if (!hasAnyField) {
+      res.status(400).json({message: "Нечего обновлять"});
+      return;
+    }
+
+    const patch = {
+      pollId: req.params.pollId,
+      actorUserId: req.auth.user.id,
+      closeNow,
+    };
+
+    if (body.question !== undefined) {
+      const questionGuard = enforceTextLimit(body.question, {
+        max: 512,
+        fieldName: "question",
+      });
+      if (!questionGuard.ok) {
+        res
+          .status(questionGuard.status)
+          .json({message: questionGuard.message});
+        return;
+      }
+      patch.question = questionGuard.value;
+    }
+
+    if (body.closesAt !== undefined && !closeNow) {
+      if (body.closesAt === null || body.closesAt === "") {
+        patch.closesAt = null;
+      } else {
+        const closesAtGuard = enforceTextLimit(body.closesAt, {
+          max: 64,
+          allowMultiline: false,
+          allowEmpty: true,
+          fieldName: "closesAt",
+        });
+        if (!closesAtGuard.ok) {
+          res
+            .status(closesAtGuard.status)
+            .json({message: closesAtGuard.message});
+          return;
+        }
+        patch.closesAt = closesAtGuard.value || null;
+      }
+    }
+
+    const updated = await store.updatePoll(patch);
+    if (updated === null) {
+      res.status(404).json({message: "Опрос не найден"});
+      return;
+    }
+    if (updated === false) {
+      res.status(403).json({message: "Можно редактировать только свои опросы"});
+      return;
+    }
+    if (updated === "INVALID_POLL") {
+      res.status(400).json({message: "Некорректные параметры опроса"});
+      return;
+    }
+
+    res.json(mapPoll(updated));
+  });
+
+  app.delete("/v1/polls/:pollId/respond", requireAuth, async (req, res) => {
+    const poll = await store.findPoll(req.params.pollId);
+    if (!poll) {
+      res.status(404).json({message: "Опрос не найден"});
+      return;
+    }
+
+    const canView = await store.canUserViewScopedItem({
+      item: poll,
+      userId: req.auth.user.id,
+    });
+    if (!canView) {
+      res.status(403).json({message: "Нет доступа к этому опросу"});
+      return;
+    }
+
+    const updated = await store.withdrawPollResponse({
+      pollId: req.params.pollId,
+      userId: req.auth.user.id,
+    });
+    if (updated === "POLL_CLOSED") {
+      res.status(409).json({message: "Опрос уже завершён"});
+      return;
+    }
+    if (!updated) {
+      res.status(404).json({message: "Опрос не найден"});
+      return;
+    }
+
+    res.json(mapPoll(updated));
+  });
+
   app.delete("/v1/polls/:pollId", requireAuth, async (req, res) => {
     const poll = await store.findPoll(req.params.pollId);
     if (!poll) {

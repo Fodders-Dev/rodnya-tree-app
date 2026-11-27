@@ -38,9 +38,16 @@ class Poll {
   final String? circleId;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  final DateTime? editedAt;
+  final bool? _isClosedOverride;
 
   /// Opaque vote rows from the server: {userId, optionIds:[...]}.
   final List<Map<String, dynamic>> responses;
+
+  bool get isEdited => editedAt != null;
+  bool get isClosed =>
+      _isClosedOverride ??
+      (closesAt != null && !closesAt!.isAfter(DateTime.now()));
 
   String? get authorPhotoUrl => _authorPhotoUrl;
   String? get renderableAuthorPhotoUrl =>
@@ -75,8 +82,14 @@ class Poll {
           .map((e) => e.toString())
           .toList();
 
-  /// Copy with a replaced response list — used for optimistic vote updates.
+  /// Copy with replaced fields — used for optimistic vote & edit updates.
   Poll copyWith({
+    String? question,
+    DateTime? closesAt,
+    bool clearClosesAt = false,
+    DateTime? updatedAt,
+    DateTime? editedAt,
+    bool? isClosed,
     List<Map<String, dynamic>>? responses,
     List<String>? imageUrls,
   }) {
@@ -88,15 +101,17 @@ class Poll {
       authorName: authorName,
       authorPhotoUrl: authorPhotoUrl,
       imageUrls: imageUrls ?? this.imageUrls,
-      question: question,
+      question: question ?? this.question,
       options: options,
       allowMultiple: allowMultiple,
-      closesAt: closesAt,
+      closesAt: clearClosesAt ? null : (closesAt ?? this.closesAt),
       scopeType: scopeType,
       anchorPersonIds: anchorPersonIds,
       circleId: circleId,
       createdAt: createdAt,
-      updatedAt: updatedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      editedAt: editedAt ?? this.editedAt,
+      isClosed: isClosed ?? _isClosedOverride,
       responses: responses ?? this.responses,
     );
   }
@@ -117,9 +132,12 @@ class Poll {
     this.circleId,
     required this.createdAt,
     this.updatedAt,
+    this.editedAt,
+    bool? isClosed,
     List<Map<String, dynamic>>? responses,
     List<String>? branchIds,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
+        _isClosedOverride = isClosed,
         _imageUrls = imageUrls
             ?.map((url) => UrlUtils.normalizeImageUrl(url))
             .whereType<String>()
@@ -164,6 +182,8 @@ class Poll {
       circleId: json['circleId']?.toString(),
       createdAt: _parseDate(json['createdAt']) ?? DateTime.now(),
       updatedAt: _parseDate(json['updatedAt']),
+      editedAt: _parseDate(json['editedAt']),
+      isClosed: json['isClosed'] is bool ? json['isClosed'] as bool : null,
       responses: rawResponses,
     );
   }
@@ -186,6 +206,8 @@ class Poll {
       'circleId': circleId,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
+      'editedAt': editedAt?.toIso8601String(),
+      'isClosed': isClosed,
       'responses': responses,
     };
   }

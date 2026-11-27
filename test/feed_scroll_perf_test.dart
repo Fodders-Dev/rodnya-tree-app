@@ -162,7 +162,7 @@ class _FakeStoryService implements StoryServiceInterface {
 
 class _FakeGatheringService implements GatheringServiceInterface {
   @override
-  Future<List<Gathering>> getGatherings({required String treeId}) async =>
+  Future<List<Gathering>> getGatherings({String? treeId}) async =>
       const <Gathering>[];
 
   @override

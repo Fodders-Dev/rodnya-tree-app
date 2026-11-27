@@ -659,10 +659,11 @@ module.exports = {
         .trim()
         .toLowerCase() === "true";
     if (useSemyaModel && tree.semyaId && db) {
-      const semya = (db.semyi || []).find(
-        (entry) => entry.id === tree.semyaId && !entry.deletedAt,
-      );
+      const semya = (db.semyi || []).find((entry) => entry.id === tree.semyaId);
       if (semya) {
+        if (semya.deletedAt) {
+          return false;
+        }
         return (db.semyaMembers || []).some(
           (m) =>
             m.semyaId === semya.id &&

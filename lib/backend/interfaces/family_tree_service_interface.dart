@@ -22,6 +22,12 @@ abstract class FamilyTreeServiceInterface {
     IncludeRules? includeRules,
   });
   Future<List<FamilyTree>> getUserTrees();
+  Future<FamilyTree> updateTree({
+    required String treeId,
+    String? name,
+    String? description,
+    bool? isPrivate,
+  });
   Future<List<FamilyPerson>> getRelatives(String treeId);
   Future<List<FamilyRelation>> getRelations(String treeId);
   Stream<List<FamilyPerson>> getRelativesStream(String treeId);

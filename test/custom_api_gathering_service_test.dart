@@ -155,6 +155,54 @@ void main() {
     expect(
         sentBody?['imageUrls'], contains('https://cdn.example.ru/photo.jpg'));
   });
+
+  test(
+      'getGatherings without treeId omits queryParam and updateGathering sends PATCH',
+      () async {
+    final client = MockClient((request) async {
+      if (request.method == 'GET' && request.url.path == '/v1/gatherings') {
+        expect(request.url.queryParameters.containsKey('treeId'), isFalse);
+        return http.Response(
+          jsonEncode([_gatheringJson]),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.method == 'PATCH' &&
+          request.url.path == '/v1/gatherings/g1') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            ..._gatheringJson,
+            'title': body['title'],
+            'editedAt': '2026-06-02T10:00:00.000Z',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 400);
+    });
+
+    final service = CustomApiGatheringService(
+      authService: await _createAuthService(client),
+      storageService: _FakeStorageService(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final all = await service.getGatherings();
+    expect(all, hasLength(1));
+
+    final updated = await service.updateGathering(
+      gatheringId: 'g1',
+      title: 'Дача перенесена',
+    );
+    expect(updated.title, 'Дача перенесена');
+    expect(updated.isEdited, isTrue);
+  });
 }
 
 Future<CustomApiAuthService> _createAuthService(http.Client client) async {

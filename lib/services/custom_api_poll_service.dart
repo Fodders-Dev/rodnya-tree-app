@@ -117,6 +117,42 @@ class CustomApiPollService implements PollServiceInterface {
   }
 
   @override
+  Future<Poll> withdrawVote(String pollId) async {
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/polls/${pollId.trim()}/respond',
+    );
+    return Poll.fromJson(response);
+  }
+
+  @override
+  Future<Poll> updatePoll({
+    required String pollId,
+    String? question,
+    DateTime? closesAt,
+    bool clearClosesAt = false,
+    bool closeNow = false,
+  }) async {
+    final body = <String, dynamic>{};
+    if (question != null) {
+      body['question'] = question;
+    }
+    if (closeNow) {
+      body['closeNow'] = true;
+    } else if (clearClosesAt) {
+      body['closesAt'] = null;
+    } else if (closesAt != null) {
+      body['closesAt'] = closesAt.toIso8601String();
+    }
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/polls/${pollId.trim()}',
+      body: body,
+    );
+    return Poll.fromJson(response);
+  }
+
+  @override
   Future<void> deletePoll(String pollId) async {
     await _requestJson(
       method: 'DELETE',
@@ -196,6 +232,14 @@ class CustomApiPollService implements PollServiceInterface {
         case 'POST':
           return await _httpClient
               .post(
+                uri,
+                headers: headers,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(_requestTimeout);
+        case 'PATCH':
+          return await _httpClient
+              .patch(
                 uri,
                 headers: headers,
                 body: body == null ? null : jsonEncode(body),

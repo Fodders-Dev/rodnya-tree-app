@@ -244,6 +244,39 @@ function registerSemyaRoutes(
       throw error;
     }
   });
+
+  // POST /v1/semya/:id/restore — restore soft-deleted Semya within 90d retention (owner only).
+  app.post("/v1/semya/:id/restore", requireAuth, async (req, res) => {
+    try {
+      const restored = await store.restoreSemya({
+        semyaId: req.params.id,
+        actorUserId: req.auth.user.id,
+      });
+      const [mappedSemya] = await resolveSemyaListNames([restored]);
+      res.json({semya: mappedSemya || mapSemya(restored)});
+    } catch (error) {
+      const code = error?.message;
+      if (code === "SEMYA_NOT_FOUND") {
+        res.status(404).json({message: "Семья не найдена"});
+        return;
+      }
+      if (code === "NOT_OWNER") {
+        res
+          .status(403)
+          .json({message: "Только владелец может восстановить семью"});
+        return;
+      }
+      if (code === "SEMYA_NOT_DELETED") {
+        res.status(409).json({message: "Семья не удалена"});
+        return;
+      }
+      if (code === "RETENTION_EXPIRED") {
+        res.status(410).json({message: "Срок восстановления семьи истёк"});
+        return;
+      }
+      throw error;
+    }
+  });
 }
 
 module.exports = {registerSemyaRoutes};

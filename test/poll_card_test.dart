@@ -12,8 +12,49 @@ import 'package:rodnya/widgets/poll_card.dart';
 
 class _FakePollService implements PollServiceInterface {
   int voteCalls = 0;
+  int withdrawCalls = 0;
+  int updateCalls = 0;
+  int deleteCalls = 0;
   List<String>? lastOptionIds;
   Completer<Poll>? deferred;
+
+  @override
+  Future<Poll> withdrawVote(String pollId) async {
+    withdrawCalls++;
+    return _poll(responses: const []);
+  }
+
+  @override
+  Future<Poll> updatePoll({
+    required String pollId,
+    String? question,
+    DateTime? closesAt,
+    bool clearClosesAt = false,
+    bool closeNow = false,
+  }) async {
+    updateCalls++;
+    return Poll(
+      id: pollId,
+      treeId: 't',
+      authorId: 'org',
+      authorName: 'Орг',
+      question: question ?? 'Когда собираемся?',
+      options: const [
+        PollOption(id: 'o1', text: 'Суббота'),
+        PollOption(id: 'o2', text: 'Воскресенье'),
+      ],
+      closesAt: closeNow ? DateTime(2020, 1, 1) : closesAt,
+      createdAt: DateTime(2026, 6, 1),
+      editedAt: DateTime(2026, 6, 2),
+      isClosed: closeNow ? true : null,
+      responses: const [],
+    );
+  }
+
+  @override
+  Future<void> deletePoll(String pollId) async {
+    deleteCalls++;
+  }
 
   @override
   Future<Poll> vote(String pollId, List<String> optionIds) {
@@ -155,5 +196,72 @@ void main() {
     expect(find.text('3 голоса'), findsOneWidget);
     expect(find.text('67%'), findsOneWidget);
     expect(find.text('33%'), findsOneWidget);
+  });
+
+  testWidgets(
+      'voter can withdraw vote and author can edit, close and delete poll',
+      (tester) async {
+    final svc = _FakePollService();
+    var deletedCallbackCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: PollCard(
+            poll: _poll(
+              responses: [
+                {
+                  'userId': 'org',
+                  'optionIds': ['o1'],
+                },
+              ],
+            ),
+            serviceOverride: svc,
+            currentUserId: 'org',
+            onDeleted: () => deletedCallbackCount++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Withdraw own vote
+    await tester.tap(find.byKey(const Key('poll-withdraw-vote-p1')));
+    await tester.pumpAndSettle();
+    expect(svc.withdrawCalls, 1);
+    expect(find.text('0 голосов'), findsOneWidget);
+
+    // Edit poll question
+    await tester.tap(find.byKey(const Key('poll-menu-p1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Редактировать'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('poll-edit-question-field')),
+      'Новый вопрос?',
+    );
+    await tester.tap(find.byKey(const Key('poll-edit-save-button')));
+    await tester.pumpAndSettle();
+    expect(svc.updateCalls, 1);
+    expect(find.text('Новый вопрос?'), findsOneWidget);
+
+    // Close poll early
+    await tester.tap(find.byKey(const Key('poll-menu-p1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Завершить опрос'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('poll-close-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Опрос завершён'), findsOneWidget);
+
+    // Delete poll
+    await tester.tap(find.byKey(const Key('poll-menu-p1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('safe-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(svc.deleteCalls, 1);
+    expect(deletedCallbackCount, 1);
   });
 }

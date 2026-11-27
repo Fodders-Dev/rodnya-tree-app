@@ -15,4 +15,8 @@ abstract class SemyaManageCapableFamilyTreeService {
     String? name,
     String? description,
   });
+
+  Future<Semya> deleteSemya(String semyaId);
+
+  Future<Semya> restoreSemya(String semyaId);
 }

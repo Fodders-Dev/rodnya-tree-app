@@ -35,12 +35,13 @@ class CustomApiGatheringService implements GatheringServiceInterface {
   static const _requestTimeout = Duration(seconds: 12);
 
   @override
-  Future<List<Gathering>> getGatherings({required String treeId}) async {
+  Future<List<Gathering>> getGatherings({String? treeId}) async {
     try {
       final response = await _requestList(
         method: 'GET',
         path: '/v1/gatherings',
-        queryParams: {'treeId': treeId},
+        queryParams:
+            treeId != null && treeId.isNotEmpty ? {'treeId': treeId} : null,
       );
       return response.map((json) => Gathering.fromJson(json)).toList();
     } on CustomApiGatheringException catch (error) {
@@ -104,6 +105,46 @@ class CustomApiGatheringService implements GatheringServiceInterface {
       },
     );
 
+    return Gathering.fromJson(response);
+  }
+
+  @override
+  Future<Gathering> updateGathering({
+    required String gatheringId,
+    String? title,
+    String? description,
+    bool clearDescription = false,
+    DateTime? startAt,
+    DateTime? endAt,
+    bool clearEndAt = false,
+    bool? isAllDay,
+    String? place,
+    bool clearPlace = false,
+  }) async {
+    final body = <String, dynamic>{};
+    if (title != null) body['title'] = title;
+    if (clearDescription) {
+      body['description'] = null;
+    } else if (description != null) {
+      body['description'] = description.trim();
+    }
+    if (startAt != null) body['startAt'] = startAt.toIso8601String();
+    if (clearEndAt) {
+      body['endAt'] = null;
+    } else if (endAt != null) {
+      body['endAt'] = endAt.toIso8601String();
+    }
+    if (isAllDay != null) body['isAllDay'] = isAllDay;
+    if (clearPlace) {
+      body['place'] = null;
+    } else if (place != null) {
+      body['place'] = place.trim();
+    }
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/gatherings/${gatheringId.trim()}',
+      body: body,
+    );
     return Gathering.fromJson(response);
   }
 
@@ -206,6 +247,14 @@ class CustomApiGatheringService implements GatheringServiceInterface {
         case 'POST':
           return await _httpClient
               .post(
+                uri,
+                headers: headers,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(_requestTimeout);
+        case 'PATCH':
+          return await _httpClient
+              .patch(
                 uri,
                 headers: headers,
                 body: body == null ? null : jsonEncode(body),

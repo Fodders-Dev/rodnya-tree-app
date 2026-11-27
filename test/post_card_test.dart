@@ -390,6 +390,53 @@ void main() {
       expect(find.text('Ссылка на пост скопирована'), findsOneWidget);
     },
   );
+
+  testWidgets('author can edit post and moderator can delete post',
+      (tester) async {
+    final postService = _FakePostService(
+      onToggleLike: (_) async => throw Exception('unused'),
+    );
+    getIt.registerSingleton<PostServiceInterface>(postService);
+
+    Post? callbackUpdated;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PostCard(
+            post: Post(
+              id: 'post-edit-1',
+              treeId: 'tree-1',
+              authorId: 'user-1',
+              authorName: 'Анна',
+              content: 'Старый текст',
+              createdAt: DateTime(2026, 4, 13, 10),
+            ),
+            onUpdated: (p) => callbackUpdated = p,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('Редактировать'), findsOneWidget);
+
+    await tester.tap(find.text('Редактировать'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('post-edit-content-field')),
+      'Новый текст поста',
+    );
+    await tester.tap(find.byKey(const Key('post-edit-save-button')));
+    await tester.pumpAndSettle();
+
+    expect(postService.updateCalls, 1);
+    expect(postService.lastUpdatedContent, 'Новый текст поста');
+    expect(callbackUpdated?.content, 'Новый текст поста');
+    expect(find.text('Новый текст поста'), findsOneWidget);
+    expect(find.textContaining('изменено'), findsOneWidget);
+  });
 }
 
 class _FakeAuthService implements AuthServiceInterface {
@@ -425,9 +472,29 @@ class _FakePostService implements PostServiceInterface {
 
   int deleteCalls = 0;
   String? lastDeletedId;
+  int updateCalls = 0;
+  String? lastUpdatedContent;
 
   @override
   Future<Post> toggleLike(String postId) => onToggleLike(postId);
+
+  @override
+  Future<Post> updatePost({
+    required String postId,
+    required String content,
+  }) async {
+    updateCalls += 1;
+    lastUpdatedContent = content;
+    return Post(
+      id: postId,
+      treeId: 'tree-1',
+      authorId: 'user-1',
+      authorName: 'Анна',
+      content: content,
+      createdAt: DateTime(2026, 4, 13, 10),
+      editedAt: DateTime(2026, 4, 13, 11),
+    );
+  }
 
   @override
   Future<void> deletePost(String postId) async {

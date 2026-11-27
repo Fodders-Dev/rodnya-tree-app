@@ -15,8 +15,10 @@ import '../models/poll.dart';
 import '../models/post.dart' show TreeContentScopeType;
 import '../theme/app_theme.dart';
 import '../utils/date_parser.dart';
+import '../utils/user_facing_error.dart';
 import 'feed_media_gallery.dart';
 import 'media_lightbox.dart';
+import 'safe_delete_confirmation_dialog.dart';
 
 class PollCard extends StatefulWidget {
   const PollCard({
@@ -24,6 +26,9 @@ class PollCard extends StatefulWidget {
     required this.poll,
     this.serviceOverride,
     this.currentUserId,
+    this.onDeleted,
+    this.onUpdated,
+    this.canModerateDelete = false,
   });
 
   final Poll poll;
@@ -31,6 +36,9 @@ class PollCard extends StatefulWidget {
   /// Test seams — production resolves these via GetIt.
   final PollServiceInterface? serviceOverride;
   final String? currentUserId;
+  final VoidCallback? onDeleted;
+  final ValueChanged<Poll>? onUpdated;
+  final bool canModerateDelete;
 
   @override
   State<PollCard> createState() => _PollCardState();
@@ -39,6 +47,14 @@ class PollCard extends StatefulWidget {
 class _PollCardState extends State<PollCard> {
   late Poll _poll = widget.poll;
   bool _submitting = false;
+
+  @override
+  void didUpdateWidget(covariant PollCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.poll != widget.poll) {
+      _poll = widget.poll;
+    }
+  }
 
   PollServiceInterface? get _service =>
       widget.serviceOverride ??
@@ -65,7 +81,9 @@ class _PollCardState extends State<PollCard> {
   Future<void> _vote(String optionId) async {
     final service = _service;
     final myId = _currentUserId;
-    if (service == null || myId == null || _submitting) return;
+    if (service == null || myId == null || _submitting || _poll.isClosed) {
+      return;
+    }
 
     final previous = _poll;
     final current = previous.myVotedOptionIds(myId).toSet();
@@ -77,9 +95,15 @@ class _PollCardState extends State<PollCard> {
       } else {
         next.add(optionId);
       }
-      // No un-vote endpoint — keep at least one choice.
-      if (next.isEmpty) return;
+      if (next.isEmpty) {
+        await _withdrawVote();
+        return;
+      }
     } else {
+      if (current.length == 1 && current.contains(optionId)) {
+        await _withdrawVote();
+        return;
+      }
       next = {optionId};
     }
     final nextIds = next.toList();
@@ -103,6 +127,156 @@ class _PollCardState extends State<PollCard> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Не удалось сохранить голос')),
+      );
+    }
+  }
+
+  Poll _withoutMyVote(Poll p, String myId) {
+    final next = <Map<String, dynamic>>[
+      for (final r in p.responses)
+        if (r['userId']?.toString() != myId) Map<String, dynamic>.from(r),
+    ];
+    return p.copyWith(responses: next);
+  }
+
+  Future<void> _withdrawVote() async {
+    final service = _service;
+    final myId = _currentUserId;
+    if (service == null || myId == null || _submitting || _poll.isClosed) {
+      return;
+    }
+    final previous = _poll;
+    setState(() {
+      _poll = _withoutMyVote(previous, myId);
+      _submitting = true;
+    });
+    try {
+      final updated = await service.withdrawVote(previous.id);
+      if (!mounted) return;
+      setState(() {
+        _poll = updated;
+        _submitting = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _poll = previous;
+        _submitting = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось снять голос')),
+      );
+    }
+  }
+
+  Future<void> _editPoll() async {
+    final service = _service;
+    if (service == null) return;
+    final result = await showDialog<_PollEditResult>(
+      context: context,
+      builder: (_) => _PollEditDialog(
+        initialQuestion: _poll.question,
+        initialClosesAt: _poll.closesAt,
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    try {
+      final updated = await service.updatePoll(
+        pollId: _poll.id,
+        question: result.question,
+        closesAt: result.clearClosesAt ? null : result.closesAt,
+        clearClosesAt: result.clearClosesAt,
+      );
+      if (!mounted) return;
+      setState(() => _poll = updated);
+      widget.onUpdated?.call(updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Опрос обновлён')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(e, fallback: 'Не удалось обновить опрос.'),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _closePollEarly() async {
+    final service = _service;
+    if (service == null || _poll.isClosed) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Завершить опрос досрочно?'),
+        content: const Text(
+          'Новые голоса перестанут приниматься, результаты останутся видны.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            key: const Key('poll-close-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Завершить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final updated = await service.updatePoll(
+        pollId: _poll.id,
+        closeNow: true,
+      );
+      if (!mounted) return;
+      setState(() => _poll = updated);
+      widget.onUpdated?.call(updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Опрос завершён')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(e, fallback: 'Не удалось завершить опрос.'),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deletePoll() async {
+    final service = _service;
+    if (service == null) return;
+    final confirmed = await showSafeDeleteConfirmation(
+      context,
+      title: 'Удалить опрос?',
+      body: 'Опрос и все голоса исчезнут у всех участников семьи.',
+    );
+    if (!confirmed || !mounted) return;
+    try {
+      await service.deletePoll(_poll.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Опрос удалён')),
+      );
+      widget.onDeleted?.call();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            humanizeError(e, fallback: 'Не удалось удалить опрос.'),
+          ),
+        ),
       );
     }
   }
@@ -166,6 +340,8 @@ class _PollCardState extends State<PollCard> {
   // дата публикации и аудитория объединены в одну строку метаданных
   // вместо отдельной строки-даты.
   Widget _buildHeader(ThemeData theme, RodnyaDesignTokens tokens) {
+    final isAuthor = _currentUserId != null && _currentUserId == _poll.authorId;
+    final canManage = isAuthor || widget.canModerateDelete;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -225,6 +401,66 @@ class _PollCardState extends State<PollCard> {
         ),
         SizedBox(width: tokens.space8),
         _buildTypeBadge(theme, tokens),
+        if (canManage) ...[
+          const SizedBox(width: 2),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: PopupMenuButton<String>(
+              key: Key('poll-menu-${_poll.id}'),
+              padding: EdgeInsets.zero,
+              iconSize: 18,
+              icon: Icon(
+                Icons.more_horiz_rounded,
+                color: tokens.inkMuted,
+                size: 18,
+              ),
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _editPoll();
+                } else if (value == 'close') {
+                  _closePollEarly();
+                } else if (value == 'delete') {
+                  _deletePoll();
+                }
+              },
+              itemBuilder: (_) => [
+                if (isAuthor)
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit_outlined, size: 20),
+                        SizedBox(width: 8),
+                        Text('Редактировать'),
+                      ],
+                    ),
+                  ),
+                if (!_poll.isClosed)
+                  const PopupMenuItem(
+                    value: 'close',
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock_clock_outlined, size: 20),
+                        SizedBox(width: 8),
+                        Text('Завершить опрос'),
+                      ],
+                    ),
+                  ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      SizedBox(width: 8),
+                      Text('Удалить', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -335,18 +571,42 @@ class _PollCardState extends State<PollCard> {
           _buildOptionBar(theme, tokens, options[i], myVotes, total),
         ],
         SizedBox(height: tokens.space4),
-        Text(
-          key: const Key('poll-vote-count'),
-          '$total ${_votesWord(total)}'
-          '${_poll.allowMultiple ? ' · можно несколько' : ''}'
-          '${closesAt != null ? ' · до ${DateFormat('d MMMM', 'ru').format(closesAt)}' : ''}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: AppTheme.sans(
-            color: tokens.inkMuted,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                key: const Key('poll-vote-count'),
+                '$total ${_votesWord(total)}'
+                '${_poll.allowMultiple ? ' · можно несколько' : ''}'
+                '${_poll.isClosed ? ' · Опрос завершён' : (closesAt != null ? ' · до ${DateFormat('d MMMM', 'ru').format(closesAt)}' : '')}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.sans(
+                  color: tokens.inkMuted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            if (!_poll.isClosed && myVotes.isNotEmpty)
+              InkWell(
+                key: Key('poll-withdraw-vote-${_poll.id}'),
+                onTap: _submitting ? null : _withdrawVote,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Text(
+                    'Снять голос',
+                    style: AppTheme.sans(
+                      color: tokens.accent,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ],
     );
@@ -371,89 +631,89 @@ class _PollCardState extends State<PollCard> {
     return InkWell(
       key: Key('poll-option-${option.id}'),
       borderRadius: radius,
-      onTap: _submitting ? null : () => _vote(option.id),
+      onTap: (_submitting || _poll.isClosed) ? null : () => _vote(option.id),
       child: SizedBox(
         height: 44,
         child: Stack(
           children: [
-              // Track.
-              Container(
-                decoration: BoxDecoration(
-                  color: tokens.surface,
-                  borderRadius: radius,
-                  border: Border.all(
-                    color: selected ? tokens.accent : tokens.surfaceLine,
-                    width: selected ? 1.4 : 1,
+            // Track.
+            Container(
+              decoration: BoxDecoration(
+                color: tokens.surface,
+                borderRadius: radius,
+                border: Border.all(
+                  color: selected ? tokens.accent : tokens.surfaceLine,
+                  width: selected ? 1.4 : 1,
+                ),
+              ),
+            ),
+            // Percent fill.
+            Positioned.fill(
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: fraction.clamp(0.0, 1.0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? tokens.accent.withValues(alpha: 0.22)
+                        : tokens.accentSoft,
+                    borderRadius: radius,
                   ),
                 ),
               ),
-              // Percent fill.
-              Positioned.fill(
-                child: FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: fraction.clamp(0.0, 1.0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? tokens.accent.withValues(alpha: 0.22)
-                          : tokens.accentSoft,
-                      borderRadius: radius,
+            ),
+            // Label + percent.
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      selected
+                          ? (_poll.allowMultiple
+                              ? Icons.check_box_rounded
+                              : Icons.radio_button_checked)
+                          : (_poll.allowMultiple
+                              ? Icons.check_box_outline_blank_rounded
+                              : Icons.radio_button_unchecked),
+                      size: 18,
+                      color: selected ? tokens.accent : tokens.inkMuted,
                     ),
-                  ),
-                ),
-              ),
-              // Label + percent.
-              Positioned.fill(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        selected
-                            ? (_poll.allowMultiple
-                                ? Icons.check_box_rounded
-                                : Icons.radio_button_checked)
-                            : (_poll.allowMultiple
-                                ? Icons.check_box_outline_blank_rounded
-                                : Icons.radio_button_unchecked),
-                        size: 18,
-                        color: selected ? tokens.accent : tokens.inkMuted,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          option.text,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          // Плотность (чанк 24): 16sp явно (было bodyMedium
-                          // без гарантии ≥16sp) — вариант ответа это контент.
-                          style: AppTheme.sans(
-                            color: tokens.ink,
-                            fontSize: 16,
-                            fontWeight:
-                                selected ? FontWeight.w700 : FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '$percent%',
-                        // Плотность (чанк 24): 14sp явно (было labelMedium
-                        // ≈12sp).
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        option.text,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        // Плотность (чанк 24): 16sp явно (было bodyMedium
+                        // без гарантии ≥16sp) — вариант ответа это контент.
                         style: AppTheme.sans(
-                          color: tokens.inkMuted,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
+                          color: tokens.ink,
+                          fontSize: 16,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w600,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$percent%',
+                      // Плотность (чанк 24): 14sp явно (было labelMedium
+                      // ≈12sp).
+                      style: AppTheme.sans(
+                        color: tokens.inkMuted,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      );
+      ),
+    );
   }
 
   String _votesWord(int count) {
@@ -464,5 +724,149 @@ class _PollCardState extends State<PollCard> {
       return 'голоса';
     }
     return 'голосов';
+  }
+}
+
+class _PollEditResult {
+  const _PollEditResult({
+    required this.question,
+    required this.closesAt,
+    required this.clearClosesAt,
+  });
+
+  final String question;
+  final DateTime? closesAt;
+  final bool clearClosesAt;
+}
+
+class _PollEditDialog extends StatefulWidget {
+  const _PollEditDialog({
+    required this.initialQuestion,
+    required this.initialClosesAt,
+  });
+
+  final String initialQuestion;
+  final DateTime? initialClosesAt;
+
+  @override
+  State<_PollEditDialog> createState() => _PollEditDialogState();
+}
+
+class _PollEditDialogState extends State<_PollEditDialog> {
+  late final TextEditingController _questionController =
+      TextEditingController(text: widget.initialQuestion);
+  late DateTime? _selectedClosesAt = widget.initialClosesAt;
+  bool _clearClosesAt = false;
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _questionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Редактировать опрос'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            key: const Key('poll-edit-question-field'),
+            controller: _questionController,
+            minLines: 1,
+            maxLines: 4,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              labelText: 'Вопрос',
+              errorText: _errorText,
+            ),
+            onChanged: (_) {
+              if (_errorText != null) {
+                setState(() => _errorText = null);
+              }
+            },
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _selectedClosesAt == null
+                      ? 'Без даты завершения'
+                      : 'До ${DateFormat('d MMMM yyyy', 'ru').format(toLocalForDisplay(_selectedClosesAt!))}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              TextButton(
+                onPressed: () async {
+                  final now = DateTime.now();
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedClosesAt != null &&
+                            _selectedClosesAt!.isAfter(now)
+                        ? _selectedClosesAt!
+                        : now.add(const Duration(days: 7)),
+                    firstDate: now,
+                    lastDate: now.add(const Duration(days: 365)),
+                  );
+                  if (picked != null) {
+                    setState(() {
+                      _selectedClosesAt = DateTime(
+                        picked.year,
+                        picked.month,
+                        picked.day,
+                        23,
+                        59,
+                      );
+                      _clearClosesAt = false;
+                    });
+                  }
+                },
+                child: const Text('Срок'),
+              ),
+              if (_selectedClosesAt != null)
+                IconButton(
+                  tooltip: 'Убрать срок',
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () {
+                    setState(() {
+                      _selectedClosesAt = null;
+                      _clearClosesAt = true;
+                    });
+                  },
+                ),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('poll-edit-save-button'),
+          onPressed: () {
+            final trimmed = _questionController.text.trim();
+            if (trimmed.isEmpty) {
+              setState(() => _errorText = 'Введите вопрос опроса');
+              return;
+            }
+            Navigator.of(context).pop(
+              _PollEditResult(
+                question: trimmed,
+                closesAt: _selectedClosesAt,
+                clearClosesAt: _clearClosesAt,
+              ),
+            );
+          },
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
   }
 }

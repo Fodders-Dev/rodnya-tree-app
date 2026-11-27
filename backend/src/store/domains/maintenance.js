@@ -231,6 +231,7 @@ module.exports = {
   async hardDeleteExpired({
     now = new Date(),
     retentionDays = 30,
+    semyaRetentionDays = Number(process.env.RODNYA_SEMYA_RETENTION_DAYS) || 90,
     auditRetentionDays = 90,
     maxPerRun = 10_000,
     dryRun = false,
@@ -240,6 +241,7 @@ module.exports = {
     const startedAt = now instanceof Date ? now : new Date(now);
     const startedTs = startedAt.getTime();
     const retentionMs = retentionDays * 86_400_000;
+    const semyaRetentionMs = semyaRetentionDays * 86_400_000;
     const auditRetentionMs = auditRetentionDays * 86_400_000;
     const effectiveRunId = runId || crypto.randomUUID();
 
@@ -260,6 +262,16 @@ module.exports = {
         ? Date.parse(entity.hardDeleteScheduledAt)
         : NaN;
       const fallback = Date.parse(entity.deletedAt) + retentionMs;
+      const scheduledTs = Number.isFinite(explicit) ? explicit : fallback;
+      return Number.isFinite(scheduledTs) && scheduledTs < startedTs;
+    };
+
+    const isSemyaEligible = (semya) => {
+      if (!semya || !semya.deletedAt) return false;
+      const explicit = semya.hardDeleteScheduledAt
+        ? Date.parse(semya.hardDeleteScheduledAt)
+        : NaN;
+      const fallback = Date.parse(semya.deletedAt) + semyaRetentionMs;
       const scheduledTs = Number.isFinite(explicit) ? explicit : fallback;
       return Number.isFinite(scheduledTs) && scheduledTs < startedTs;
     };
@@ -289,6 +301,7 @@ module.exports = {
       deletedPersons: 0,
       // Ship Q4a (2026-05-28, Ship 30b): deletedPosts swept same way.
       deletedPosts: 0,
+      semyi: 0,
       auditPruned: 0,
     };
     const sampleIds = {};
@@ -399,6 +412,30 @@ module.exports = {
       budget -= 1;
     }
 
+    // Wave B1 (P1.2): soft-deleted semyi sweep after 90-day retention.
+    const removeSemyaIds = new Set();
+    for (const semya of db.semyi || []) {
+      if (budget <= 0) break;
+      if (!isSemyaEligible(semya)) continue;
+      newAuditEntries.push({
+        runId: effectiveRunId,
+        entityType: "semya",
+        entityId: semya.id,
+        deletedAt: semya.deletedAt,
+        scheduledAt:
+          semya.hardDeleteScheduledAt ||
+          new Date(Date.parse(semya.deletedAt) + semyaRetentionMs).toISOString(),
+        hardDeletedAt: startedAt.toISOString(),
+      });
+      removeSemyaIds.add(semya.id);
+      deletedCounts.semyi += 1;
+      if (!sampleIds.semya) sampleIds.semya = [];
+      if (sampleIds.semya.length < 5) {
+        sampleIds.semya.push(semya.id);
+      }
+      budget -= 1;
+    }
+
     // Orphan cleanup для branchPersonViews — views ссылающиеся на
     // branches/graphPersons удалёнными в этом run. Views не имеют
     // собственного `deletedAt`, потому отдельный path.
@@ -442,7 +479,8 @@ module.exports = {
       deletedCounts.personIdentities +
       deletedCounts.branchPersonViews +
       deletedCounts.deletedPersons +
-      deletedCounts.deletedPosts;
+      deletedCounts.deletedPosts +
+      deletedCounts.semyi;
 
     // Retention for unbounded log/history collections (blob-shrink). Mutates
     // db in place when !dryRun; the single _write below persists it alongside
@@ -500,8 +538,37 @@ module.exports = {
     db.deletedPosts = (db.deletedPosts || []).filter(
       (r) => !removeDeletedPostIds.has(r.id),
     );
+    if (removeSemyaIds.size > 0) {
+      db.semyi = (db.semyi || []).filter((s) => !removeSemyaIds.has(s.id));
+      db.semyaMembers = (db.semyaMembers || []).filter(
+        (m) => !removeSemyaIds.has(m.semyaId),
+      );
+      db.semyaInvitations = (db.semyaInvitations || []).filter(
+        (inv) => !removeSemyaIds.has(inv.semyaId),
+      );
+      db.semyaBrowseTokens = (db.semyaBrowseTokens || []).filter(
+        (t) => !removeSemyaIds.has(t.semyaId),
+      );
+      db.semyaMemberHiddenPersons = (db.semyaMemberHiddenPersons || []).filter(
+        (h) => !removeSemyaIds.has(h.semyaId),
+      );
+      db.deletedPersons = (db.deletedPersons || []).filter(
+        (r) => !r.semyaId || !removeSemyaIds.has(r.semyaId),
+      );
+      for (const tree of db.trees || []) {
+        if (tree.semyaId && removeSemyaIds.has(tree.semyaId)) {
+          tree.semyaId = null;
+        }
+      }
+    }
     db.hardDeleteAudit = [...survivingAudit, ...newAuditEntries];
     db.hardDeleteLastRunAt = startedAt.toISOString();
+    if (removeSemyaIds.size > 0) {
+      Object.defineProperty(summary, "_sweptSemyaIds", {
+        value: Array.from(removeSemyaIds),
+        enumerable: false,
+      });
+    }
     return summary;
     });
   },

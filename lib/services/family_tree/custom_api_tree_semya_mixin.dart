@@ -74,6 +74,54 @@ mixin _CustomApiTreeSemyaMixin on _CustomApiFamilyTreeHost {
   }
 
   @override
+  Future<Semya> deleteSemya(String semyaId) async {
+    final trimmedId = semyaId.trim();
+    if (trimmedId.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Не указана семья',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'DELETE',
+        path: '/v1/semya/$trimmedId',
+      );
+      final rawSemya = response['semya'];
+      if (rawSemya is! Map) {
+        throw const CustomApiException('deleteSemya не вернул semya объект');
+      }
+      return Semya.fromJson(Map<String, dynamic>.from(rawSemya));
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'semya_delete');
+    }
+  }
+
+  @override
+  Future<Semya> restoreSemya(String semyaId) async {
+    final trimmedId = semyaId.trim();
+    if (trimmedId.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Не указана семья',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/semya/$trimmedId/restore',
+      );
+      final rawSemya = response['semya'];
+      if (rawSemya is! Map) {
+        throw const CustomApiException('restoreSemya не вернул semya объект');
+      }
+      return Semya.fromJson(Map<String, dynamic>.from(rawSemya));
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'semya_restore');
+    }
+  }
+
+  @override
   Future<List<Semya>> listMySemya() async {
     try {
       final response = await _requestJson(

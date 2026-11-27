@@ -1162,6 +1162,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               return PostCard(
                 post: _userPosts[index],
                 onDeleted: () => _loadUserData(),
+                onUpdated: (updated) {
+                  if (!mounted) return;
+                  setState(() {
+                    _userPosts[index] = updated;
+                  });
+                },
               );
             },
             childCount: _userPosts.length,

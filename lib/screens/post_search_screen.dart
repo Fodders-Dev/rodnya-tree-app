@@ -239,7 +239,22 @@ class _PostSearchScreenState extends State<PostSearchScreen> {
       padding: const EdgeInsets.all(8),
       itemCount: _results.length,
       itemBuilder: (context, index) {
-        return PostCard(post: _results[index]);
+        final post = _results[index];
+        return PostCard(
+          post: post,
+          onDeleted: () {
+            if (!mounted) return;
+            setState(() {
+              _results.removeWhere((p) => p.id == post.id);
+            });
+          },
+          onUpdated: (updated) {
+            if (!mounted) return;
+            setState(() {
+              _results[index] = updated;
+            });
+          },
+        );
       },
     );
   }
